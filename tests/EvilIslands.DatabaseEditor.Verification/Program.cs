@@ -1,0 +1,1022 @@
+using System.Text;
+using EvilIslands.DatabaseEditor.Core;
+
+namespace EvilIslands.DatabaseEditor.Verification;
+
+internal static class Program
+{
+    private static async Task<int> Main(string[] args)
+    {
+        Console.OutputEncoding = Encoding.UTF8;
+        var log = new VerificationLog();
+
+        VerificationOptions options;
+        try
+        {
+            options = VerificationOptions.Parse(args);
+        }
+        catch (ArgumentException exception)
+        {
+            log.Fail(exception.Message);
+            PrintUsage();
+            log.PrintSummary();
+            return 2;
+        }
+
+        if (options.ShowHelp)
+        {
+            PrintUsage();
+            return 0;
+        }
+
+        string[] existingSources = options.SourcePaths.Where(File.Exists).ToArray();
+        foreach (string missingSource in options.SourcePaths.Except(existingSources, StringComparer.OrdinalIgnoreCase))
+        {
+            log.Skip($"Источник отсутствует: {missingSource}");
+        }
+
+        if (existingSources.Length == 0)
+        {
+            string message = "Не найдено ни одного database.res; файловые проверки не запускались.";
+            if (options.RequireSources)
+            {
+                log.Fail(message);
+            }
+            else
+            {
+                log.Skip(message);
+            }
+
+            log.PrintSummary();
+            return log.Failures.Count == 0 ? 0 : 1;
+        }
+
+        SafeStagingArea staging = SafeStagingArea.Create();
+        log.Info($"Тестовые результаты создаются только здесь: {staging.RootPath}");
+
+        foreach (string sourcePath in existingSources)
+        {
+            Console.WriteLine();
+            Console.WriteLine($"=== {sourcePath} ===");
+            try
+            {
+                await VerifySourceAsync(sourcePath, existingSources, staging, log).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                log.Fail($"{sourcePath}: {exception.GetType().Name}: {exception.Message}");
+            }
+        }
+
+        log.PrintSummary();
+        return log.Failures.Count == 0 ? 0 : 1;
+    }
+
+    private static async Task VerifySourceAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        VerificationLog log)
+    {
+        FileSnapshot sourceBefore = await FileSnapshot.CaptureAsync(sourcePath).ConfigureAwait(false);
+        log.Info($"Источник: {sourceBefore.Length:N0} bytes; SHA-256 {sourceBefore.Sha256}");
+        try
+        {
+            ResArchiveDocument archive = await log.MeasureAsync(
+                "Открытие RES",
+                () => ResArchiveDocument.OpenAsync(sourcePath)).ConfigureAwait(false);
+
+            log.Assert(archive.Length == sourceBefore.Length, "Размер разобранного RES совпадает с файлом.");
+            log.Assert(archive.Entries.Count > 0, "Каталог RES содержит ресурсы.");
+            log.Assert(
+                archive.DeclaredEntryCount >= archive.Entries.Count,
+                "Количество разобранных ресурсов не превышает объявленное.");
+
+            ValidationDiagnostic[] archiveErrors = archive.Validate()
+                .Where(item => item.Severity == DiagnosticSeverity.Error)
+                .ToArray();
+            log.Assert(archiveErrors.Length == 0, "Заголовок, каталог и диапазоны ресурсов RES корректны.");
+
+            IReadOnlyList<DatabaseBoundarySummary> boundaries = await log.MeasureAsync(
+                "Проверка границ внутренних DB",
+                () => Task.FromResult(DatabaseBoundaryVerifier.Verify(archive))).ConfigureAwait(false);
+            foreach (DatabaseBoundarySummary summary in boundaries)
+            {
+                log.Info(
+                    $"{summary.ResourceName}: top={summary.TopLevelChunks}, " +
+                    $"sections={summary.Sections}, records={summary.Records}, fields={summary.Fields}");
+            }
+
+            log.Assert(boundaries.All(item => item.Fields > 0), "Все внутренние DB разобраны до границ полей.");
+
+            CoreDocumentAdapter coreDocument = await log.MeasureAsync(
+                "Открытие DatabaseDocument",
+                () => CoreDocumentAdapter.OpenAsync(sourcePath)).ConfigureAwait(false);
+            AssertCoreValidation(coreDocument, log, "Исходный DatabaseDocument");
+            AssertDatabaseCatalog(coreDocument, boundaries, log);
+            log.Assert(coreDocument.ContainsPowerHit(), "В spells.sdb найдена запись CodeName=powerhit.");
+
+            string noOpPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-noop.res");
+            staging.AssertOutputPath(noOpPath, allSourcePaths);
+            await log.MeasureAsync(
+                "No-op Save As",
+                async () =>
+                {
+                    await coreDocument.SaveAsAsync(noOpPath).ConfigureAwait(false);
+                    return true;
+                }).ConfigureAwait(false);
+            log.Assert(File.Exists(noOpPath), "No-op копия создана только в staging-каталоге.");
+            log.Assert(
+                await FileByteComparer.AreEqualAsync(sourcePath, noOpPath).ConfigureAwait(false),
+                "No-op Save As побайтово идентичен источнику.");
+
+            CoreDocumentAdapter reopenedNoOp = await log.MeasureAsync(
+                "Повторное открытие no-op копии",
+                () => CoreDocumentAdapter.OpenAsync(noOpPath)).ConfigureAwait(false);
+            AssertCoreValidation(reopenedNoOp, log, "No-op копия");
+            log.Assert(reopenedNoOp.ContainsPowerHit(), "powerhit сохранился в no-op копии.");
+
+            ResArchiveDocument noOpArchive = ResArchiveDocument.Open(noOpPath);
+            AssertResourceIdentity(archive, noOpArchive, changedResourceName: null, log);
+            DatabaseBoundaryVerifier.Verify(noOpArchive);
+            log.Pass("No-op копия повторно разобрана до границ всех DB-полей.");
+
+            await VerifyRowAppendSafetyAsync(
+                sourcePath,
+                allSourcePaths,
+                staging,
+                archive,
+                boundaries.Sum(summary => summary.Records),
+                log).ConfigureAwait(false);
+
+            CoreDocumentAdapter editedDocument = await log.MeasureAsync(
+                "Повторное открытие для тестового изменения",
+                () => CoreDocumentAdapter.OpenAsync(sourcePath)).ConfigureAwait(false);
+            EditProbe edit = editedDocument.ApplyPowerHitScalarEdit();
+            log.Pass(
+                $"Тестовое изменение сделано только в памяти: " +
+                $"{edit.RecordCodeName}.{edit.FieldKey} {edit.OriginalValue} -> {edit.EditedValue}.");
+
+            string editedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-edited.res");
+            staging.AssertOutputPath(editedPath, allSourcePaths);
+            await log.MeasureAsync(
+                "Изменённый Save As",
+                async () =>
+                {
+                    await editedDocument.SaveAsAsync(editedPath).ConfigureAwait(false);
+                    return true;
+                }).ConfigureAwait(false);
+            log.Assert(File.Exists(editedPath), "Изменённая копия создана только в staging-каталоге.");
+
+            CoreDocumentAdapter reopenedEdited = await log.MeasureAsync(
+                "Повторное открытие изменённой копии",
+                () => CoreDocumentAdapter.OpenAsync(editedPath)).ConfigureAwait(false);
+            AssertCoreValidation(reopenedEdited, log, "Изменённая копия");
+            log.Assert(reopenedEdited.ContainsPowerHit(), "powerhit сохранился в изменённой копии.");
+            log.Assert(
+                string.Equals(
+                    reopenedEdited.GetPowerHitFieldValue(edit.FieldKey),
+                    edit.EditedValue,
+                    StringComparison.Ordinal),
+                $"Значение powerhit.{edit.FieldKey} сохранилось и повторно прочитано.");
+
+            ResArchiveDocument editedArchive = ResArchiveDocument.Open(editedPath);
+            AssertResourceIdentity(archive, editedArchive, edit.ResourceName, log);
+            DatabaseBoundaryVerifier.Verify(editedArchive);
+            log.Pass("Изменённая копия повторно разобрана до границ всех DB-полей.");
+
+            CoreDocumentAdapter resizedDocument = await log.MeasureAsync(
+                "Открытие для CP1251-строкового изменения",
+                () => CoreDocumentAdapter.OpenAsync(sourcePath)).ConfigureAwait(false);
+            EditProbe stringEdit = resizedDocument.ApplyPowerHitVariableLengthStringEdit();
+            log.Pass(
+                $"CP1251-строка увеличена на один байт только в памяти: " +
+                $"{stringEdit.RecordCodeName}.{stringEdit.FieldKey}.");
+
+            string resizedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-resized.res");
+            staging.AssertOutputPath(resizedPath, allSourcePaths);
+            await log.MeasureAsync(
+                "Variable-length CP1251 Save As",
+                async () =>
+                {
+                    await resizedDocument.SaveAsAsync(resizedPath).ConfigureAwait(false);
+                    return true;
+                }).ConfigureAwait(false);
+            log.Assert(File.Exists(resizedPath), "Строковая копия создана только в staging-каталоге.");
+
+            CoreDocumentAdapter reopenedResized = await log.MeasureAsync(
+                "Повторное открытие строковой копии",
+                () => CoreDocumentAdapter.OpenAsync(resizedPath)).ConfigureAwait(false);
+            AssertCoreValidation(reopenedResized, log, "Строковая копия");
+            log.Assert(
+                string.Equals(
+                    reopenedResized.GetPowerHitFieldValue(stringEdit.FieldKey),
+                    stringEdit.EditedValue,
+                    StringComparison.Ordinal),
+                "Увеличенное CP1251-значение powerhit.Name сохранилось и повторно прочитано.");
+
+            ResArchiveDocument resizedArchive = ResArchiveDocument.Open(resizedPath);
+            AssertResourceIdentity(archive, resizedArchive, stringEdit.ResourceName, log);
+            AssertResourceResize(archive, resizedArchive, stringEdit.ResourceName, log);
+            DatabaseBoundaryVerifier.Verify(resizedArchive);
+            log.Pass("Строковая копия повторно разобрана до границ всех DB-полей.");
+
+            await SafetyRegressionVerifier.RunAsync(
+                sourcePath,
+                allSourcePaths,
+                staging,
+                log).ConfigureAwait(false);
+
+            FileSnapshot noOpSnapshot = await FileSnapshot.CaptureAsync(noOpPath).ConfigureAwait(false);
+            FileSnapshot editedSnapshot = await FileSnapshot.CaptureAsync(editedPath).ConfigureAwait(false);
+            FileSnapshot resizedSnapshot = await FileSnapshot.CaptureAsync(resizedPath).ConfigureAwait(false);
+            log.Info($"No-op:   {noOpSnapshot.Length:N0} bytes; SHA-256 {noOpSnapshot.Sha256}");
+            log.Info($"Edited:  {editedSnapshot.Length:N0} bytes; SHA-256 {editedSnapshot.Sha256}");
+            log.Info($"Resized: {resizedSnapshot.Length:N0} bytes; SHA-256 {resizedSnapshot.Sha256}");
+        }
+        finally
+        {
+            FileSnapshot sourceAfter = await FileSnapshot.CaptureAsync(sourcePath).ConfigureAwait(false);
+            log.Assert(
+                sourceBefore.ContentEquals(sourceAfter),
+                "SHA-256 источника не изменился после всех операций.");
+        }
+    }
+
+    private static void AssertCoreValidation(
+        CoreDocumentAdapter document,
+        VerificationLog log,
+        string label)
+    {
+        IReadOnlyList<object> diagnostics = document.Validate();
+        object[] errors = diagnostics.Where(CoreDocumentAdapter.IsErrorDiagnostic).ToArray();
+        if (errors.Length > 0)
+        {
+            throw new VerificationException(
+                $"{label}: Core вернул {errors.Length} ошибок валидации; первая: {errors[0]}");
+        }
+
+        if (label.StartsWith("Исходный", StringComparison.Ordinal))
+        {
+            ValidationDiagnostic[] typedDiagnostics = diagnostics
+                .OfType<ValidationDiagnostic>()
+                .ToArray();
+            object[] notices = typedDiagnostics
+                .Where(item => !CoreDocumentAdapter.IsErrorDiagnostic(item))
+                .Cast<object>()
+                .ToArray();
+            log.Info($"{label}: предупреждений/сообщений: {notices.Length}.");
+            foreach (object diagnostic in notices.Take(12))
+            {
+                log.Info($"{label}: {diagnostic}");
+            }
+
+            if (notices.Length > 12)
+            {
+                log.Info($"{label}: ещё {notices.Length - 12} сообщений не выведено.");
+            }
+
+            AssertEmbeddedMagicBaseline(typedDiagnostics, log);
+        }
+
+        log.Pass($"{label}: Core-валидация не содержит ошибок.");
+    }
+
+    private static void AssertDatabaseCatalog(
+        CoreDocumentAdapter document,
+        IReadOnlyList<DatabaseBoundarySummary> boundaries,
+        VerificationLog log)
+    {
+        IReadOnlyList<DatabaseGroup> groups = document.GetDatabases();
+        DatabaseTable[] tables = groups.SelectMany(group => group.Tables).ToArray();
+        string[] expectedGroupKeys =
+        [
+            "items",
+            "levers",
+            "perks",
+            "prints",
+            "spells",
+            "units",
+            "acks",
+            "quests",
+        ];
+
+        log.Assert(groups.Count == expectedGroupKeys.Length, "Core-каталог содержит восемь внутренних баз.");
+        log.Assert(
+            groups.Select(group => group.Key).SequenceEqual(expectedGroupKeys, StringComparer.Ordinal),
+            "Порядок и ключи восьми внутренних баз стабильны.");
+        log.Assert(tables.Length == 26, "Core-каталог содержит 26 отдельных таблиц.");
+        log.Assert(
+            tables.Select(table => table.Key).Distinct(StringComparer.Ordinal).Count() == tables.Length,
+            "Ключи всех таблиц уникальны.");
+        log.Assert(
+            groups.All(group => group.IsAvailable) && tables.All(table => table.IsAvailable),
+            "Все восемь баз и 26 таблиц распознаны в источнике.");
+        log.Assert(
+            groups.Where(group => group.Key is "items" or "units" or "spells")
+                .All(group => group.SupportState == DatabaseSupportState.Editable),
+            "Items, Units и Spells отмечены как редактируемые.");
+        log.Assert(
+            groups.Where(group => group.Key is not ("items" or "units" or "spells"))
+                .All(group => group.SupportState == DatabaseSupportState.ReadOnly),
+            "Остальные пять баз отмечены как read-only.");
+
+        HashSet<string> expectedEditableTables =
+        [
+            "items.materials",
+            "units.hit_locations",
+            "units.races",
+            "units.prototypes",
+            "units.npcs",
+            "spells.prototypes",
+            "spells.modifiers",
+            "spells.templates",
+            "spells.armor_templates",
+            "spells.weapon_templates",
+        ];
+        log.Assert(
+            tables.Where(table => expectedEditableTables.Contains(table.Key))
+                .All(table => table.SupportState == DatabaseSupportState.Editable && table.CanAppendRecords) &&
+            tables.Where(table => !expectedEditableTables.Contains(table.Key))
+                .All(table => table.SupportState == DatabaseSupportState.ReadOnly && !table.CanAppendRecords),
+            "Добавление строк разрешено ровно в 10 проверенных таблицах Materials/Units/Spells.");
+        log.Assert(
+            tables.Where(table => table.SupportState == DatabaseSupportState.ReadOnly)
+                .SelectMany(table => table.Records)
+                .SelectMany(record => record.Fields)
+                .All(field => !field.IsEditable),
+            "Все поля 16 read-only таблиц защищены от редактирования.");
+
+        int boundaryRecordCount = boundaries.Sum(summary => summary.Records);
+        log.Assert(
+            tables.Sum(table => table.RecordCount) == boundaryRecordCount,
+            $"Каталог привязал все {boundaryRecordCount:N0} записей внутренних DB к таблицам.");
+
+        IReadOnlyList<DatabaseResourceDescriptor> resources = document.GetResources();
+        string[] recognizedNames = resources
+            .Where(resource => resource.IsSupported)
+            .Select(resource => resource.Name)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] catalogNames = groups
+            .Select(group => group.ResourceName)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        log.Assert(
+            recognizedNames.SequenceEqual(catalogNames, StringComparer.OrdinalIgnoreCase),
+            "RES-каталог помечает поддерживаемыми ровно восемь распознаваемых DB-ресурсов.");
+        AssertCorrectedSchemas(tables, log);
+    }
+
+    private static void AssertCorrectedSchemas(
+        IReadOnlyList<DatabaseTable> tables,
+        VerificationLog log)
+    {
+        AssertMaterialsSchema(RequireTable(tables, "items.materials"), log);
+
+        DatabaseRecord hitLocation = RequireTable(tables, "units.hit_locations").Records[0];
+        DatabaseRecord race = RequireTable(tables, "units.races").Records[0];
+        DatabaseRecord prototype = RequireTable(tables, "units.prototypes").Records[0];
+        DatabaseRecord npc = RequireTable(tables, "units.npcs").Records[0];
+        log.Assert(
+            RequireField(hitLocation, 4).Kind == "UInt32" &&
+            RequireField(race, 1).Kind == "UInt32" &&
+            RequireField(race, 45).Kind == "Byte" &&
+            Enumerable.Range(47, 4).All(id => RequireField(race, id).Kind == "Int32") &&
+            RequireField(prototype, 41).Kind == "Int32" &&
+            RequireField(npc, 14).Kind == "Byte",
+            "Типы Units соответствуют native-структурам, включая signed координаты рта и уровень.");
+
+        DatabaseTable spellTable = RequireTable(tables, "spells.prototypes");
+        DatabaseRecord powerHit = spellTable.Records.First(record =>
+            string.Equals(record.GetString("CodeName"), "powerhit", StringComparison.OrdinalIgnoreCase));
+        log.Assert(
+            string.Equals(powerHit.Name, RequireField(powerHit, 0).Value.ToString(), StringComparison.Ordinal) &&
+            string.Equals(powerHit.GetString("CodeName"), "powerhit", StringComparison.OrdinalIgnoreCase),
+            "Отображаемое имя заклинания использует поле 0 Name; CodeName остаётся отдельным ключом.");
+        log.Assert(
+            RequireField(powerHit, 6).Kind == "Int32" &&
+            Enumerable.Range(11, 4).All(id => RequireField(powerHit, id).Kind == "Int32") &&
+            RequireField(powerHit, 15).Kind == "UInt32" &&
+            RequireField(powerHit, 18).Kind == "Int32" &&
+            RequireField(powerHit, 19).Kind == "Int32" &&
+            RequireField(powerHit, 21).Kind == "Int32",
+            "SignedLong/UnsignedLong поля прототипа заклинания соответствуют dbtypes.txt.");
+
+        log.Assert(
+            RequireField(powerHit, 16).Kind == "FixedStringList" && !RequireField(powerHit, 16).IsEditable &&
+            RequireField(powerHit, 17).Kind == "FixedStringList" && !RequireField(powerHit, 17).IsEditable &&
+            RequireField(powerHit, 22).Kind == "UInt32" && !RequireField(powerHit, 22).IsEditable &&
+            RequireField(powerHit, 22).Projections.Count == 5,
+            "MinfixedStringList(4) и BitList(5) прототипа заклинания декодируются, оставаясь read-only.");
+
+        string[] lightFieldNames =
+        [
+            "Свет: красный",
+            "Свет: зелёный",
+            "Свет: синий",
+            "Радиус света",
+            "Время затухания",
+        ];
+        log.Assert(
+            lightFieldNames.Select((name, index) =>
+                    string.Equals(RequireField(powerHit, 23 + index).DisplayName, name, StringComparison.Ordinal))
+                .All(matches => matches) &&
+            RequireField(powerHit, 26).Key == "LightRadius" &&
+            RequireField(powerHit, 27).Key == "FadeoutTime",
+            "Поля Spells 23–27 и ключ LightRadius соответствуют dbheaders.txt.");
+
+        DatabaseRecord modifier = RequireTable(tables, "spells.modifiers").Records[0];
+        log.Assert(
+            RequireField(modifier, 6).Kind == "Int32" &&
+            RequireField(modifier, 8).Kind == "UInt32" &&
+            RequireField(modifier, 8).Projections.Count == 5 &&
+            !RequireField(modifier, 8).IsEditable,
+            "Модификаторы заклинаний используют SignedLong и пять read-only shop-битов.");
+        log.Assert(
+            tables.Where(table => table.Key is
+                    "spells.templates" or "spells.armor_templates" or "spells.weapon_templates")
+                .SelectMany(table => table.Records)
+                .All(record =>
+                    RequireField(record, 5).Kind == "UInt32" &&
+                    RequireField(record, 5).Projections.Count == 5 &&
+                    !RequireField(record, 5).IsEditable),
+            "BitList(5) во всех трёх таблицах шаблонов раскрывается в пять read-only shop-битов.");
+        log.Assert(
+            tables.SelectMany(table => table.Records)
+                .SelectMany(record => record.Fields)
+                .All(field => field.Kind != "Hex"),
+            "Все 87 924 известных поля имеют подтверждённый тип; raw Hex не осталось.");
+    }
+
+    private static void AssertMaterialsSchema(DatabaseTable materials, VerificationLog log)
+    {
+        string[] expectedKinds =
+        [
+            "String",
+            "String",
+            "String",
+            "Int32",
+            "Float32",
+            "Float32",
+            "Float32",
+            "Int32",
+            "Float32",
+            "Int32",
+            "Float32",
+            "Float32List",
+            "Int32",
+            "UInt32",
+        ];
+
+        log.Assert(materials.Records.Count == 51, "Items / Материалы содержит 51 запись.");
+        log.Assert(
+            materials.SupportState == DatabaseSupportState.Editable &&
+            materials.CanAppendRecords &&
+            materials.Records.All(record =>
+                record.Fields.Where(field => field.Id != 11).All(field => field.IsEditable) &&
+                !RequireField(record, 11).IsEditable),
+            "Материалы разрешают редактирование примитивов и добавление строк; сложное поглощение остаётся read-only.");
+        log.Assert(
+            materials.Records.All(record =>
+                record.Fields.Count == expectedKinds.Length &&
+                record.Fields.Select(field => field.Id).SequenceEqual(Enumerable.Range(0, expectedKinds.Length)) &&
+                record.Fields.Select(field => field.Kind).SequenceEqual(expectedKinds, StringComparer.Ordinal)),
+            "Все 51 материала имеют точную последовательность и типы полей 0–13 из legacy-схемы.");
+        DatabaseField absorption = RequireField(materials.Records[0], 11);
+        DatabaseField shops = RequireField(materials.Records[0], 13);
+        log.Assert(
+            absorption.Projections.Count == 7 &&
+            absorption.Projections.Select(item => item.Kind)
+                .All(kind => kind == DatabaseFieldProjectionKind.ListElement) &&
+            absorption.Projections.Select(item => item.Index).SequenceEqual(Enumerable.Range(0, 7)) &&
+            absorption.Projections.Select(item => item.DisplayName).SequenceEqual(
+                ["Колющий", "Рубящий", "Дробящий", "Термический", "Химический", "Электрический", "Общий"],
+                StringComparer.Ordinal) &&
+            shops.Projections.Count == 5 &&
+            shops.Projections.Select(item => item.Kind).All(kind => kind == DatabaseFieldProjectionKind.Bit) &&
+            shops.Projections.Select(item => item.Index).SequenceEqual(Enumerable.Range(0, 5)),
+            "FloatList и BitList Материалов разворачиваются в 12 проверенных виртуальных колонок.");
+        log.Assert(
+            materials.Records.All(record =>
+                RequireField(record, 11).Length == 28 &&
+                Enumerable.Range(3, 8).All(id => RequireField(record, id).Length == 4) &&
+                RequireField(record, 12).Length == 4 &&
+                RequireField(record, 13).Length == 4),
+            "Размеры payload Материалов соответствуют 7 float и little-endian 32-bit scalars.");
+
+        DatabaseRecord thin = materials.Records[0];
+        log.Assert(
+            string.Equals(thin.Name, "thin", StringComparison.Ordinal) &&
+            string.Equals(RequireField(thin, 1).Value.ToString(), "Leather", StringComparison.Ordinal) &&
+            string.Equals(RequireField(thin, 2).Value.ToString(), "le", StringComparison.Ordinal) &&
+            Convert.ToInt32(RequireField(thin, 3).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
+            NearlyEqual(RequireField(thin, 4).Value, 4f) &&
+            NearlyEqual(RequireField(thin, 5).Value, 1.2f) &&
+            NearlyEqual(RequireField(thin, 6).Value, 11f) &&
+            Convert.ToInt32(RequireField(thin, 7).Value, System.Globalization.CultureInfo.InvariantCulture) == 6 &&
+            NearlyEqual(RequireField(thin, 8).Value, 32.94f) &&
+            Convert.ToInt32(RequireField(thin, 9).Value, System.Globalization.CultureInfo.InvariantCulture) == 1 &&
+            NearlyEqual(RequireField(thin, 10).Value, 0f) &&
+            string.Equals(
+                RequireField(thin, 11).Value.ToString(),
+                "1.14, 1.2, 1.23, 1.14, 1.2, 1.35, 1.2",
+                StringComparison.Ordinal) &&
+            Convert.ToInt32(RequireField(thin, 12).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
+            Convert.ToUInt32(RequireField(thin, 13).Value, System.Globalization.CultureInfo.InvariantCulture) == 1,
+            "Первая строка thin декодируется в те же понятные значения, что и старый DBEditor.");
+
+        DatabaseRecord last = materials.Records[^1];
+        log.Assert(
+            string.Equals(last.Name, "black panter hide", StringComparison.Ordinal) &&
+            string.Equals(RequireField(last, 1).Value.ToString(), "Fur", StringComparison.Ordinal) &&
+            string.Equals(RequireField(last, 2).Value.ToString(), "pt", StringComparison.Ordinal) &&
+            Convert.ToInt32(RequireField(last, 3).Value, System.Globalization.CultureInfo.InvariantCulture) == 49 &&
+            Convert.ToUInt32(RequireField(last, 13).Value, System.Globalization.CultureInfo.InvariantCulture) == 0,
+            "Последняя строка black panter hide корректно декодируется до конца таблицы.");
+
+        uint[] allowedShopMasks = [0, 1, 4, 8, 12, 16];
+        log.Assert(
+            materials.Records.All(record =>
+                Convert.ToInt32(RequireField(record, 12).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
+                allowedShopMasks.Contains(
+                    Convert.ToUInt32(RequireField(record, 13).Value, System.Globalization.CultureInfo.InvariantCulture))),
+            "Маска травм и пять shop-битов всех материалов декодируются без старших неизвестных битов.");
+    }
+
+    private static void AssertEmbeddedMagicBaseline(
+        IReadOnlyList<ValidationDiagnostic> diagnostics,
+        VerificationLog log)
+    {
+        static int CountCode(IEnumerable<ValidationDiagnostic> source, string code) =>
+            source.Count(diagnostic => diagnostic.Code.Equals(code, StringComparison.Ordinal));
+
+        int itemFormat = CountCode(diagnostics, "SEM_EMBEDDED_MAGIC_FORMAT");
+        int spellFormat = diagnostics.Count(diagnostic =>
+            diagnostic.Code.Equals("SEM_VALUE_FORMAT", StringComparison.Ordinal) &&
+            diagnostic.Location?.TableKey.Equals("units.prototypes", StringComparison.Ordinal) == true &&
+            diagnostic.Location.FieldId == 29);
+        int missingEmbeddedRunes = diagnostics.Count(diagnostic =>
+            diagnostic.Code.Equals("SEM_REFERENCE_NOT_FOUND", StringComparison.Ordinal) &&
+            diagnostic.Location?.TableKey.Equals("units.prototypes", StringComparison.Ordinal) == true &&
+            diagnostic.Location.FieldId == 29 &&
+            diagnostic.Message.Contains("модификатор", StringComparison.OrdinalIgnoreCase));
+        int tooManyRunes = CountCode(diagnostics, "SEM_EMBEDDED_MAGIC_TOO_MANY_RUNES");
+        int energyExceeded = CountCode(diagnostics, "SEM_EMBEDDED_MAGIC_ENERGY_EXCEEDED");
+        int complexityExceeded = CountCode(diagnostics, "SEM_EMBEDDED_MAGIC_COMPLEXITY_EXCEEDED");
+        int materialMismatch = CountCode(diagnostics, "SEM_ITEM_MATERIAL_TYPE_MISMATCH");
+        int missingMaterial = CountCode(diagnostics, "SEM_EMBEDDED_MAGIC_MATERIAL_NOT_FOUND");
+        int missingItemRune = CountCode(diagnostics, "SEM_EMBEDDED_MAGIC_ITEM_RUNE_REQUIRED");
+        int namedEmbeddedDiagnostics = diagnostics.Count(diagnostic =>
+            diagnostic.Code.StartsWith("SEM_EMBEDDED_MAGIC_", StringComparison.Ordinal));
+        int magicRelated = namedEmbeddedDiagnostics + materialMismatch + spellFormat + missingEmbeddedRunes;
+
+        log.Assert(
+            diagnostics.Count == 180 && diagnostics.All(diagnostic => !diagnostic.IsBlocking),
+            "Обе эталонные базы имеют ровно 180 неблокирующих семантических сообщений (5 legacy + 175 по вложенной магии).");
+        log.Assert(
+            itemFormat == 2 && spellFormat == 2 && missingEmbeddedRunes == 2,
+            "Вложенная магия: 2 ошибки item-скобок, 2 spell-скобок и 2 неизвестные руны в склеенных дескрипторах.");
+        log.Assert(
+            tooManyRunes == 3 && energyExceeded == 10 && complexityExceeded == 155,
+            "Вложенная магия: 3 записи содержат >8 рун, 10 превышают энергию и 155 превышают сложность.");
+        log.Assert(
+            materialMismatch == 1 && missingMaterial == 0 && missingItemRune == 0 && magicRelated == 175,
+            "Вложенная магия: 1 несовместимый тип материала, нет пропавших материалов/ic/it; всего 175 сообщений.");
+    }
+
+    private static async Task VerifyRowAppendSafetyAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        ResArchiveDocument sourceArchive,
+        int sourceRecordCount,
+        VerificationLog log)
+    {
+        await VerifyMaterialAppendSafetyAsync(
+            sourcePath,
+            allSourcePaths,
+            staging,
+            sourceArchive,
+            sourceRecordCount,
+            log).ConfigureAwait(false);
+        await VerifyMonsterAppendSafetyAsync(
+            sourcePath,
+            allSourcePaths,
+            staging,
+            sourceArchive,
+            sourceRecordCount,
+            log).ConfigureAwait(false);
+    }
+
+    private static async Task VerifyMaterialAppendSafetyAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        ResArchiveDocument sourceArchive,
+        int sourceRecordCount,
+        VerificationLog log)
+    {
+        DatabaseDocument document = await log.MeasureAsync(
+            "Открытие для добавления материала",
+            () => DatabaseDocument.OpenAsync(sourcePath)).ConfigureAwait(false);
+        DatabaseTable materials = RequireTable(
+            document.Databases.SelectMany(group => group.Tables),
+            "items.materials");
+        int originalCount = materials.RecordCount;
+        DatabaseRecord template = materials.Records[0];
+        DatabaseRawRecord rawTemplate = DatabaseBoundaryVerifier.CaptureRecord(
+            sourceArchive,
+            template.ResourceName,
+            template.SectionId,
+            template.RecordIndex);
+
+        log.Assert(
+            materials.CanAppendRecords && materials.SupportState == DatabaseSupportState.Editable,
+            "Core разрешает append только для проверенной редактируемой таблицы Материалы.");
+        DatabaseRecord added = document.AppendRecordClone(template);
+        log.Assert(
+            added.IsNew && added.RecordIndex == originalCount &&
+            materials.RecordCount == originalCount + 1 &&
+            ReferenceEquals(materials.Records[^1], added),
+            "Клон материала добавлен строго в конец и получил следующий физический индекс.");
+        log.Assert(
+            Convert.ToInt32(RequireField(added, 3).Value, System.Globalization.CultureInfo.InvariantCulture) ==
+            originalCount,
+            "ID нового материала автоматически равен его физическому индексу.");
+        log.Assert(
+            template.Fields.Any(field => !field.IsEditable && field.Id != 11) ||
+            !RequireField(template, 11).IsEditable,
+            "Образец материала содержит сложный read-only payload для побайтовой проверки клона.");
+
+        string duplicateTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-material-duplicate.res");
+        staging.AssertOutputPath(duplicateTarget, allSourcePaths);
+        AssertIdentitySaveBlocked(document, duplicateTarget, "ADD_IDENTITY_DUPLICATE", log);
+
+        DatabaseField identityField = RequireField(added, added.IdentityFieldId);
+        SetFieldValue(identityField, string.Empty, "пустой ключ нового материала");
+        log.Assert(added.IdentityValue.Length == 0, "Тестовый ключ нового материала очищен только в памяти.");
+        string emptyTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-material-empty.res");
+        staging.AssertOutputPath(emptyTarget, allSourcePaths);
+        AssertIdentitySaveBlocked(document, emptyTarget, "ADD_IDENTITY_REQUIRED", log);
+
+        SetFieldValue(identityField, $"codex_material_guard_{Guid.NewGuid():N}", "временный уникальный ключ материала");
+        DatabaseField materialIdField = RequireField(added, 3);
+        SetFieldValue(materialIdField, "0", "неверный физический ID нового материала");
+        string invalidIdTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-material-invalid-id.res");
+        staging.AssertOutputPath(invalidIdTarget, allSourcePaths);
+        AssertIdentitySaveBlocked(document, invalidIdTarget, "ADD_MATERIAL_ID_MISMATCH", log);
+        SetFieldValue(
+            materialIdField,
+            originalCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "восстановление физического ID нового материала");
+        log.Assert(
+            document.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Возврат ID нового материала к физическому индексу снимает блокировку.");
+
+        document.RemoveAddedRecord(added);
+        log.Assert(
+            materials.RecordCount == originalCount && !document.IsModified,
+            "Undo удаления добавленной строки вернул исходное число материалов и no-op состояние.");
+        string undoneTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-material-undone.res");
+        staging.AssertOutputPath(undoneTarget, allSourcePaths);
+        await document.SaveAsAsync(undoneTarget).ConfigureAwait(false);
+        log.Assert(
+            await FileByteComparer.AreEqualAsync(sourcePath, undoneTarget).ConfigureAwait(false),
+            "Save As после удаления добавленной строки побайтово идентичен источнику.");
+
+        document.RestoreAddedRecord(added);
+        log.Assert(
+            document.IsModified && materials.RecordCount == originalCount + 1 &&
+            ReferenceEquals(materials.Records[^1], added),
+            "Redo восстановил тот же клон материала в конец таблицы.");
+
+        string uniqueIdentity = $"codex_material_{Guid.NewGuid():N}";
+        SetFieldValue(identityField, uniqueIdentity, "уникальный ключ нового материала");
+        log.Assert(
+            document.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Уникальный ключ снимает блокировку сохранения нового материала.");
+
+        string savedTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-material-added.res");
+        staging.AssertOutputPath(savedTarget, allSourcePaths);
+        await log.MeasureAsync(
+            "Save As с новым материалом",
+            () => document.SaveAsAsync(savedTarget)).ConfigureAwait(false);
+
+        DatabaseDocument reopened = await DatabaseDocument.OpenAsync(savedTarget).ConfigureAwait(false);
+        DatabaseTable reopenedMaterials = RequireTable(
+            reopened.Databases.SelectMany(group => group.Tables),
+            "items.materials");
+        DatabaseRecord reopenedAdded = reopenedMaterials.Records.Single(record =>
+            record.IdentityValue.Equals(uniqueIdentity, StringComparison.Ordinal));
+        log.Assert(
+            reopenedMaterials.RecordCount == originalCount + 1 &&
+            reopenedAdded.RecordIndex == originalCount && !reopenedAdded.IsNew &&
+            Convert.ToInt32(RequireField(reopenedAdded, 3).Value, System.Globalization.CultureInfo.InvariantCulture) ==
+            originalCount,
+            "Новый материал сохранён, повторно открыт в конце и сохранил физический ID.");
+        log.Assert(
+            reopened.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Повторно открытая копия с новым материалом не содержит блокирующих ошибок.");
+
+        ResArchiveDocument savedArchive = ResArchiveDocument.Open(savedTarget);
+        AssertResourceIdentity(sourceArchive, savedArchive, "items.idb", log);
+        log.Assert(
+            DatabaseBoundaryVerifier.Verify(savedArchive).Sum(summary => summary.Records) == sourceRecordCount + 1,
+            "Добавление материала увеличило число физических DB-записей ровно на одну.");
+        DatabaseRawRecord rawAdded = DatabaseBoundaryVerifier.CaptureRecord(
+            savedArchive,
+            reopenedAdded.ResourceName,
+            reopenedAdded.SectionId,
+            reopenedAdded.RecordIndex);
+        AssertClonedRawFields(rawTemplate, rawAdded, [0, 3], "материала", log);
+    }
+
+    private static async Task VerifyMonsterAppendSafetyAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        ResArchiveDocument sourceArchive,
+        int sourceRecordCount,
+        VerificationLog log)
+    {
+        DatabaseDocument document = await log.MeasureAsync(
+            "Открытие для добавления прототипа монстра",
+            () => DatabaseDocument.OpenAsync(sourcePath)).ConfigureAwait(false);
+        DatabaseTable prototypes = RequireTable(
+            document.Databases.SelectMany(group => group.Tables),
+            "units.prototypes");
+        int originalCount = prototypes.RecordCount;
+        string[] monsterMarkers = ["troll", "orc", "goblin", "dragon", "undead"];
+        DatabaseRecord template = prototypes.Records.FirstOrDefault(record =>
+                monsterMarkers.Any(marker => record.Name.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+            ?? prototypes.Records[0];
+        DatabaseRawRecord rawTemplate = DatabaseBoundaryVerifier.CaptureRecord(
+            sourceArchive,
+            template.ResourceName,
+            template.SectionId,
+            template.RecordIndex);
+
+        DatabaseRecord added = document.AppendRecordClone(template);
+        log.Assert(
+            prototypes.CanAppendRecords && added.IsNew && added.RecordIndex == originalCount &&
+            prototypes.RecordCount == originalCount + 1,
+            $"Прототип монстра клонирован в конец units.prototypes из образца «{template.Name}».");
+        log.Assert(
+            template.Fields.Any(field => !field.IsEditable && field.Id != template.IdentityFieldId),
+            "Образец монстра содержит сложные/read-only поля для побайтовой проверки клона.");
+
+        DatabaseField identityField = RequireField(added, added.IdentityFieldId);
+        string uniqueIdentity = $"codex_monster_{Guid.NewGuid():N}";
+        SetFieldValue(identityField, uniqueIdentity, "уникальный ключ нового монстра");
+        log.Assert(
+            document.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Уникальный ключ разрешает безопасное сохранение нового прототипа монстра.");
+
+        string savedTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-monster-added.res");
+        staging.AssertOutputPath(savedTarget, allSourcePaths);
+        await log.MeasureAsync(
+            "Save As с новым прототипом монстра",
+            () => document.SaveAsAsync(savedTarget)).ConfigureAwait(false);
+
+        DatabaseDocument reopened = await DatabaseDocument.OpenAsync(savedTarget).ConfigureAwait(false);
+        DatabaseTable reopenedPrototypes = RequireTable(
+            reopened.Databases.SelectMany(group => group.Tables),
+            "units.prototypes");
+        DatabaseRecord reopenedAdded = reopenedPrototypes.Records.Single(record =>
+            record.IdentityValue.Equals(uniqueIdentity, StringComparison.Ordinal));
+        log.Assert(
+            reopenedPrototypes.RecordCount == originalCount + 1 &&
+            reopenedAdded.RecordIndex == originalCount && !reopenedAdded.IsNew,
+            "Новый прототип монстра сохранён и повторно открыт последней физической записью.");
+        log.Assert(
+            reopened.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Повторно открытая копия с новым монстром не содержит блокирующих ошибок.");
+
+        ResArchiveDocument savedArchive = ResArchiveDocument.Open(savedTarget);
+        AssertResourceIdentity(sourceArchive, savedArchive, "units.udb", log);
+        log.Assert(
+            DatabaseBoundaryVerifier.Verify(savedArchive).Sum(summary => summary.Records) == sourceRecordCount + 1,
+            "Добавление монстра увеличило число физических DB-записей ровно на одну.");
+        DatabaseRawRecord rawAdded = DatabaseBoundaryVerifier.CaptureRecord(
+            savedArchive,
+            reopenedAdded.ResourceName,
+            reopenedAdded.SectionId,
+            reopenedAdded.RecordIndex);
+        AssertClonedRawFields(
+            rawTemplate,
+            rawAdded,
+            [(byte)template.IdentityFieldId],
+            "прототипа монстра",
+            log);
+    }
+
+    private static void AssertIdentitySaveBlocked(
+        DatabaseDocument document,
+        string targetPath,
+        string expectedCode,
+        VerificationLog log)
+    {
+        ValidationDiagnostic[] matching = document.Validate()
+            .Where(diagnostic => diagnostic.Code.Equals(expectedCode, StringComparison.Ordinal))
+            .ToArray();
+        log.Assert(
+            matching.Length == 1 && matching[0].IsBlocking,
+            $"Проверка {expectedCode} создаёт одну блокирующую диагностику для новой строки.");
+
+        Exception? caught = null;
+        try
+        {
+            document.SaveAs(targetPath);
+        }
+        catch (Exception exception)
+        {
+            caught = exception;
+        }
+
+        log.Assert(
+            caught is InvalidOperationException &&
+            caught.Message.Contains(expectedCode, StringComparison.Ordinal),
+            $"Save As отклонён до записи файла с явной причиной {expectedCode}.");
+        log.Assert(
+            !File.Exists(targetPath) &&
+            !Directory.EnumerateFiles(
+                    Path.GetDirectoryName(targetPath)!,
+                    $".{Path.GetFileName(targetPath)}.partial-*")
+                .Any(),
+            "Заблокированный Save As не оставил целевой или partial-файл.");
+    }
+
+    private static void SetFieldValue(DatabaseField field, string value, string label)
+    {
+        if (!field.TrySetValue(value, out string? error))
+        {
+            throw new VerificationException(
+                $"Core отклонил {label} в поле {field.Path}: {error ?? "причина не указана"}.");
+        }
+    }
+
+    private static void AssertClonedRawFields(
+        DatabaseRawRecord template,
+        DatabaseRawRecord clone,
+        IReadOnlyCollection<byte> changedFieldIds,
+        string label,
+        VerificationLog log)
+    {
+        if (template.Fields.Count != clone.Fields.Count)
+        {
+            throw new VerificationException(
+                $"Raw-структура клона {label} отличается: fields {template.Fields.Count}->{clone.Fields.Count}.");
+        }
+
+        var compared = 0;
+        for (var index = 0; index < template.Fields.Count; index++)
+        {
+            DatabaseRawField expected = template.Fields[index];
+            DatabaseRawField actual = clone.Fields[index];
+            if (expected.Id != actual.Id)
+            {
+                throw new VerificationException(
+                    $"Клон {label}: поле #{index} изменило ID {expected.Id}->{actual.Id}.");
+            }
+
+            if (changedFieldIds.Contains(expected.Id))
+            {
+                continue;
+            }
+
+            if (expected.HeaderSize != actual.HeaderSize ||
+                !expected.Payload.AsSpan().SequenceEqual(actual.Payload))
+            {
+                throw new VerificationException(
+                    $"Клон {label}: неизменённый payload поля {expected.Id} отличается от образца.");
+            }
+
+            compared++;
+        }
+
+        if (changedFieldIds.Any(id => template.Fields.All(field => field.Id != id)))
+        {
+            throw new VerificationException($"Клон {label}: изменяемое поле отсутствовало в исходном образце.");
+        }
+
+        log.Pass(
+            $"Клон {label}: {compared} неизменённых полей, включая сложные/read-only payload, " +
+            "сохранены побайтово вместе с типом и размером заголовка поля; " +
+            $"внешний заголовок записи корректно имеет размер {clone.HeaderSize} байт.");
+    }
+
+    private static bool NearlyEqual(object value, float expected) =>
+        Math.Abs(Convert.ToSingle(value, System.Globalization.CultureInfo.InvariantCulture) - expected) <= 0.0001f;
+
+    private static DatabaseTable RequireTable(
+        IEnumerable<DatabaseTable> tables,
+        string key) =>
+        tables.FirstOrDefault(table => string.Equals(table.Key, key, StringComparison.Ordinal))
+        ?? throw new VerificationException($"Core-каталог не содержит таблицу {key}.");
+
+    private static DatabaseField RequireField(DatabaseRecord record, int id) =>
+        record.Fields.FirstOrDefault(field => field.Id == id)
+        ?? throw new VerificationException($"Запись {record.Path} не содержит поле {id}.");
+
+    private static void AssertResourceIdentity(
+        ResArchiveDocument source,
+        ResArchiveDocument output,
+        string? changedResourceName,
+        VerificationLog log)
+    {
+        if (source.Entries.Count != output.Entries.Count)
+        {
+            throw new VerificationException(
+                $"Число ресурсов изменилось: {source.Entries.Count} -> {output.Entries.Count}.");
+        }
+
+        var unchangedCount = 0;
+        var changedResourceObserved = false;
+        foreach (ResEntry sourceEntry in source.Entries)
+        {
+            if (!output.TryGetEntry(sourceEntry.Name, out ResEntry? outputEntry) || outputEntry is null)
+            {
+                throw new VerificationException($"Ресурс исчез после сохранения: {sourceEntry.Name}.");
+            }
+
+            bool identical = source.GetResourceBytes(sourceEntry).Span.SequenceEqual(
+                output.GetResourceBytes(outputEntry).Span);
+            if (string.Equals(sourceEntry.Name, changedResourceName, StringComparison.OrdinalIgnoreCase))
+            {
+                changedResourceObserved = !identical;
+                continue;
+            }
+
+            if (!identical)
+            {
+                throw new VerificationException(
+                    $"Неизменённый ресурс отличается после сохранения: {sourceEntry.Name}.");
+            }
+
+            unchangedCount++;
+        }
+
+        if (changedResourceName is not null && !changedResourceObserved)
+        {
+            throw new VerificationException(
+                $"Ожидалось изменение ресурса {changedResourceName}, но его байты совпали.");
+        }
+
+        log.Pass(
+            changedResourceName is null
+                ? $"Все {unchangedCount} ресурсов побайтово идентичны источнику."
+                : $"Все {unchangedCount} незатронутых ресурсов побайтово идентичны источнику; " +
+                  $"изменился только {changedResourceName}.");
+    }
+
+    private static void AssertResourceResize(
+        ResArchiveDocument source,
+        ResArchiveDocument output,
+        string changedResourceName,
+        VerificationLog log)
+    {
+        if (!source.TryGetEntry(changedResourceName, out ResEntry? sourceChanged) || sourceChanged is null ||
+            !output.TryGetEntry(changedResourceName, out ResEntry? outputChanged) || outputChanged is null)
+        {
+            throw new VerificationException($"Не найден изменяемый ресурс {changedResourceName}.");
+        }
+
+        int resourceDelta = outputChanged.Size - sourceChanged.Size;
+        int archiveDelta = output.Length - source.Length;
+        int directoryDelta = output.DirectoryOffset - source.DirectoryOffset;
+        if (resourceDelta != 1 || archiveDelta != 1 || directoryDelta != 1)
+        {
+            throw new VerificationException(
+                $"Ожидалось расширение на 1 байт: resource={resourceDelta}, " +
+                $"archive={archiveDelta}, directory={directoryDelta}.");
+        }
+
+        bool laterOffsetShifted = source.Entries
+            .Where(entry => entry.Offset > sourceChanged.Offset)
+            .Any(entry =>
+                output.TryGetEntry(entry.Name, out ResEntry? outputEntry) &&
+                outputEntry is not null &&
+                outputEntry.Offset - entry.Offset == 1);
+        if (!laterOffsetShifted)
+        {
+            throw new VerificationException(
+                "После расширения spells.sdb не обнаружено обновлённого смещения следующего ресурса.");
+        }
+
+        log.Pass(
+            "Variable-length edit увеличил spells.sdb и RES на 1 байт; " +
+            "смещения последующих ресурсов и каталога обновлены.");
+    }
+
+    private static void PrintUsage()
+    {
+        Console.WriteLine(
+            "Использование:\n" +
+            "  dotnet run --project tests/EvilIslands.DatabaseEditor.Verification -- [параметры]\n\n" +
+            "Параметры:\n" +
+            "  --source <path>     Проверить указанный RES; параметр можно повторять.\n" +
+            "  --require-sources   Вернуть ошибку, если ни один источник не найден.\n" +
+            "  --help, -h          Показать эту справку.");
+    }
+}

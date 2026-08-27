@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>EvilIslands.DatabaseEditor.Core</AssemblyName>
+    <RootNamespace>EvilIslands.DatabaseEditor.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="LegacySchemas\dbtypes.txt" />
+    <EmbeddedResource Include="LegacySchemas\dbheaders.txt" />
+  </ItemGroup>
+</Project>

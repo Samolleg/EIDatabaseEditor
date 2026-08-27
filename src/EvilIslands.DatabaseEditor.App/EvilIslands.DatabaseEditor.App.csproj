@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>EvilIslands.DatabaseEditor</AssemblyName>
+    <RootNamespace>EvilIslands.DatabaseEditor.App</RootNamespace>
+    <ApplicationIcon />
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\EvilIslands.DatabaseEditor.Core\EvilIslands.DatabaseEditor.Core.csproj"
+                      Condition="'$(SkipCoreReference)' != 'true'" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvilIslands.DatabaseEditor.UiSmoke" />
+  </ItemGroup>
+</Project>

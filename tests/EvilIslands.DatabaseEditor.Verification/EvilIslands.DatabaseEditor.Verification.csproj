@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>EvilIslands.DatabaseEditor.Verification</AssemblyName>
+    <RootNamespace>EvilIslands.DatabaseEditor.Verification</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EvilIslands.DatabaseEditor.Core\EvilIslands.DatabaseEditor.Core.csproj" />
+  </ItemGroup>
+</Project>

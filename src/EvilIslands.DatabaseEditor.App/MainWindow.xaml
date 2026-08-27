@@ -1,0 +1,923 @@
+<Window x:Class="EvilIslands.DatabaseEditor.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        mc:Ignorable="d"
+        Title="EI Database Studio — Preview"
+        Width="1440"
+        Height="900"
+        MinWidth="1180"
+        MinHeight="680"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        Closing="Window_Closing"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        StateChanged="Window_StateChanged">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            CornerRadius="0"
+                            GlassFrameThickness="0"
+                            ResizeBorderThickness="6"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Window.InputBindings>
+        <KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenCommand}" />
+        <KeyBinding Key="S" Modifiers="Control+Shift" Command="{Binding SaveCopyCommand}" />
+        <KeyBinding Key="E" Modifiers="Control" Command="{Binding ToggleEditModeCommand}" />
+        <KeyBinding Key="Insert" Modifiers="Control" Command="{Binding AppendRecordCommand}" />
+        <KeyBinding Key="F" Modifiers="Control" Command="{Binding FocusSearchCommand}" />
+        <KeyBinding Key="F5" Command="{Binding RefreshValidationCommand}" />
+    </Window.InputBindings>
+
+    <Window.Resources>
+        <Style x:Key="SurfaceCard" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="#3D3D3D" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Padding" Value="18" />
+        </Style>
+
+        <Style x:Key="PageHeading" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="FontSize" Value="21" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <Style x:Key="MutedLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+
+        <Style x:Key="MetricValue" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="FontSize" Value="25" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,8,0,0" />
+        </Style>
+
+        <Style x:Key="SmallIconButton" TargetType="Button" BasedOn="{StaticResource RoundedButton}">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="15" />
+        </Style>
+
+        <DataTemplate x:Key="SpreadsheetColumnHeaderTemplate">
+            <StackPanel Margin="0,3"
+                        ToolTip="{Binding HeaderToolTip}"
+                        ToolTipService.ShowDuration="12000">
+                <TextBlock Text="{Binding Title}"
+                           Foreground="{StaticResource TextBrush}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{Binding Subtitle}"
+                           Foreground="{StaticResource SubtleTextBrush}"
+                           FontFamily="Cascadia Mono, Consolas"
+                           FontSize="9"
+                           Margin="0,3,0,0"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+        </DataTemplate>
+
+        <Style x:Key="SpreadsheetColumnHeaderStyle"
+               TargetType="DataGridColumnHeader"
+               BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+            <Setter Property="Padding" Value="6,0" />
+        </Style>
+
+        <Style x:Key="SpreadsheetCellText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="ToolTipService.ShowDuration" Value="12000" />
+        </Style>
+
+        <Style x:Key="SpreadsheetCellEditor" TargetType="TextBox">
+            <Setter Property="Background" Value="#181818" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="SelectionBrush" Value="#356F62" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="7,3" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="ToolTipService.ShowDuration" Value="12000" />
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{StaticResource WindowBrush}"
+            BorderBrush="#0F0F0F"
+            BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="52" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- Custom dark title bar -->
+            <Border Grid.Row="0"
+                    Background="{StaticResource SidebarBrush}"
+                    BorderBrush="#303030"
+                    BorderThickness="0,0,0,1"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="300" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="15,0,0,0">
+                        <Border Width="28" Height="28" CornerRadius="8" Background="{StaticResource AccentBrush}">
+                            <TextBlock Text="EI" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" />
+                        </Border>
+                        <TextBlock Text="Database Studio" Margin="10,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0">
+                        <TextBlock Text="EI Database Studio" FontWeight="SemiBold" />
+                        <TextBlock Text="  —  Preview" Foreground="{StaticResource MutedTextBrush}" />
+                        <Border Margin="14,0,0,0" Padding="8,3" CornerRadius="6" Background="#263A34"
+                                Visibility="{Binding HasDocument, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="●" FontSize="8" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                                <TextBlock Text="  источник защищён" FontSize="11" Foreground="#B9D7CF" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button Style="{StaticResource ChromeButton}" ToolTip="Свернуть" Click="MinimizeButton_Click" Content="—" />
+                        <Button x:Name="MaximizeButton" Style="{StaticResource ChromeButton}" ToolTip="Развернуть" Click="MaximizeButton_Click" Content="□" />
+                        <Button Style="{StaticResource ChromeButton}" ToolTip="Закрыть" Click="CloseButton_Click" Content="×">
+                            <Button.Resources>
+                                <Style TargetType="Border">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#C42B1C" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Resources>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="300" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Navigation -->
+                <Border Grid.Column="0" Background="{StaticResource SidebarBrush}" BorderBrush="#303030" BorderThickness="0,0,1,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Button Grid.Row="0"
+                                Margin="10,14,10,8"
+                                Style="{StaticResource AccentButton}"
+                                Command="{Binding OpenCommand}"
+                                ToolTip="Открыть RES (Ctrl+O)">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="＋" FontSize="17" Foreground="White" VerticalAlignment="Center" />
+                                <TextBlock Text="  Открыть RES…" Foreground="White" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </Button>
+
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel Margin="0,4,0,8">
+                                <TextBlock Text="ОБЗОР" Margin="18,8,12,5" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SubtleTextBrush}" />
+                                <RadioButton DataContext="{Binding OverviewNavigationItem}"
+                                             Style="{StaticResource SidebarItem}"
+                                             GroupName="WorkspaceNavigation"
+                                             IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                             IsEnabled="{Binding IsEnabled}"
+                                             Command="{Binding DataContext.NavigateCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                             CommandParameter="{Binding}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="24" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="{Binding Glyph}" FontSize="16" Foreground="{Binding RelativeSource={RelativeSource AncestorType=RadioButton}, Path=Foreground}" HorizontalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Title}" Margin="9,0,0,0" Foreground="{Binding RelativeSource={RelativeSource AncestorType=RadioButton}, Path=Foreground}" />
+                                    </Grid>
+                                </RadioButton>
+
+                                <TextBlock Text="ИГРОВЫЕ ДАННЫЕ" Margin="18,15,12,6" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SubtleTextBrush}" />
+                                <ItemsControl ItemsSource="{Binding Databases}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Expander IsExpanded="{Binding IsExpanded, Mode=TwoWay}"
+                                                      IsEnabled="{Binding IsEnabled}"
+                                                      Foreground="{StaticResource TextBrush}"
+                                                      Margin="8,1,8,2">
+                                                <Expander.Header>
+                                                    <Grid Width="226" Margin="4,7,2,7">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                                            <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                                                <TextBlock Text="{Binding ResourceName}" FontSize="10" Foreground="{StaticResource SubtleTextBrush}" />
+                                                                <TextBlock Text="  ·  " FontSize="10" Foreground="{StaticResource SubtleTextBrush}" />
+                                                                <TextBlock Text="{Binding StatusText}" FontSize="10">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsEditable}" Value="True">
+                                                                                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                        <Border Grid.Column="1" Background="#303030" CornerRadius="7" Padding="7,3" MinWidth="32" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding RecordCount, StringFormat=N0}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
+                                                        </Border>
+                                                    </Grid>
+                                                </Expander.Header>
+                                                <ItemsControl ItemsSource="{Binding Tables}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <RadioButton Style="{StaticResource SidebarItem}"
+                                                                         Padding="10,7"
+                                                                         Margin="22,0,0,1"
+                                                                         GroupName="WorkspaceNavigation"
+                                                                         IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                                                         IsEnabled="{Binding IsEnabled}"
+                                                                         Command="{Binding DataContext.SelectTableCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                         CommandParameter="{Binding}">
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="12" />
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="Auto" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <TextBlock Text="●" FontSize="7" VerticalAlignment="Center">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Setter Property="Foreground" Value="{StaticResource SubtleTextBrush}" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding IsEditable}" Value="True">
+                                                                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                    <TextBlock Grid.Column="1" Text="{Binding Title}" Margin="7,0,8,0" FontSize="12" Foreground="{Binding RelativeSource={RelativeSource AncestorType=RadioButton}, Path=Foreground}" TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Grid.Column="2" Text="{Binding RecordCount, StringFormat=N0}" FontSize="10" Foreground="{StaticResource SubtleTextBrush}" />
+                                                                </Grid>
+                                                            </RadioButton>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Expander>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <Border Height="1" Background="#303030" Margin="14,14,14,5" />
+                                <TextBlock Text="СЛУЖЕБНОЕ" Margin="18,8,12,5" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource SubtleTextBrush}" />
+                                <ItemsControl ItemsSource="{Binding ServiceNavigationItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <RadioButton Style="{StaticResource SidebarItem}"
+                                                         GroupName="WorkspaceNavigation"
+                                                         IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                                         IsEnabled="{Binding IsEnabled}"
+                                                         Command="{Binding DataContext.NavigateCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                         CommandParameter="{Binding}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="24" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="{Binding Glyph}" FontSize="15" Foreground="{Binding RelativeSource={RelativeSource AncestorType=RadioButton}, Path=Foreground}" HorizontalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Title}" Margin="9,0,0,0" Foreground="{Binding RelativeSource={RelativeSource AncestorType=RadioButton}, Path=Foreground}" />
+                                                    <Border Grid.Column="2" Background="#303030" CornerRadius="7" Padding="7,2" MinWidth="24">
+                                                        <TextBlock Text="{Binding Badge}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
+                                                    </Border>
+                                                </Grid>
+                                            </RadioButton>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <Border Grid.Row="2" Margin="10,8,10,12" Padding="12" Background="#202020" BorderBrush="#343434" BorderThickness="1" CornerRadius="10">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0" Orientation="Horizontal">
+                                    <Border Width="22" Height="22" CornerRadius="6" Background="#263A34">
+                                        <TextBlock Text="▣" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <TextBlock Text="Только чтение" Margin="8,0,0,0" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Grid.Row="1" Text="{Binding SourceFileName}" Margin="0,9,0,0" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding SourcePath}" />
+                                <TextBlock Grid.Row="2" Text="Исходник заблокирован" Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- Workspace -->
+                <Grid Grid.Column="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="82" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="30" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" BorderBrush="#343434" BorderThickness="0,0,0,1" Padding="22,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding BreadcrumbText}" Foreground="{StaticResource AccentBrush}" FontSize="10" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding PageTitle}" Style="{StaticResource PageHeading}" />
+                                <TextBlock Text="{Binding PageSubtitle}" Margin="0,2,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                                <Button Style="{StaticResource SmallIconButton}" Command="{Binding UndoCommand}" Content="↶" ToolTip="Отменить (Ctrl+Z)" />
+                                <Button Style="{StaticResource SmallIconButton}" Command="{Binding RedoCommand}" Content="↷" ToolTip="Повторить (Ctrl+Y)" Margin="6,0,0,0" />
+                                <Button Style="{StaticResource RoundedButton}" Command="{Binding ToggleEditModeCommand}" Margin="10,0,0,0" ToolTip="Переключить режим (Ctrl+E)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="✎" />
+                                        <TextBlock Text="{Binding EditModeButtonText}" Margin="7,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource AccentButton}" Command="{Binding SaveCopyCommand}" Margin="10,0,0,0" ToolTip="Новая проверенная копия (Ctrl+Shift+S)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="⇩" Foreground="White" />
+                                        <TextBlock Text="Сохранить копию…" Foreground="White" Margin="7,0,0,0" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="1"
+                            Margin="18,12,18,0"
+                            Padding="12,9"
+                            Background="#173C33"
+                            BorderBrush="#286653"
+                            BorderThickness="1"
+                            CornerRadius="9"
+                            Visibility="{Binding IsEditMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="✎" Foreground="#7DD3B8" FontSize="16" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Margin="10,0">
+                                <TextBlock Text="Режим редактирования включён" FontWeight="SemiBold" />
+                                <TextBlock Text="Изменения находятся только в памяти. Исходный database.res не будет перезаписан." FontSize="11" Foreground="#B6D8CE" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <Button Grid.Column="2" Style="{StaticResource RoundedButton}" Command="{Binding ToggleEditModeCommand}" Content="Приостановить" Padding="10,5" MinHeight="30" />
+                        </Grid>
+                    </Border>
+
+                    <Border Grid.Row="2"
+                            Margin="18,10,18,0"
+                            Padding="12,9"
+                            BorderThickness="1"
+                            CornerRadius="9"
+                            Visibility="{Binding HasNotification, Converter={StaticResource BooleanToVisibilityConverter}}">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="#173C33" />
+                                <Setter Property="BorderBrush" Value="#286653" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding NotificationIsError}" Value="True">
+                                        <Setter Property="Background" Value="#452727" />
+                                        <Setter Property="BorderBrush" Value="#704040" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{Binding NotificationMessage}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            <Button Grid.Column="1" Style="{StaticResource SmallIconButton}" Command="{Binding DismissNotificationCommand}" Content="×" Margin="12,0,0,0" />
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="3">
+                        <!-- Welcome state -->
+                        <Grid Visibility="{Binding HasDocument, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                            <StackPanel Width="590" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <Border Width="68" Height="68" CornerRadius="20" Background="#263A34" HorizontalAlignment="Center">
+                                    <TextBlock Text="EI" Foreground="{StaticResource AccentBrush}" FontWeight="Bold" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="Безопасный редактор database.res" FontSize="27" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,22,0,0" />
+                                <TextBlock Text="Откройте файл вручную. Приложение начнёт в режиме только чтения, покажет структуру контейнера и ничего не установит в игру." TextWrapping="Wrap" TextAlignment="Center" Foreground="{StaticResource MutedTextBrush}" FontSize="14" LineHeight="22" Margin="0,12,0,0" />
+                                <Button Style="{StaticResource AccentButton}" Command="{Binding OpenCommand}" Content="Открыть database.res…" HorizontalAlignment="Center" Margin="0,24,0,0" Padding="20,10" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
+                                    <TextBlock Text="▣  исходник защищён" Foreground="{StaticResource AccentBrush}" />
+                                    <TextBlock Text="     •     только «Сохранить копию…»" Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Loaded workspace pages -->
+                        <Grid Visibility="{Binding HasDocument, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <!-- Overview -->
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Overview}">
+                                <StackPanel Margin="22,20,22,28" MaxWidth="1200">
+                                    <UniformGrid Columns="4" Margin="0,0,0,16">
+                                        <Border Style="{StaticResource SurfaceCard}" Margin="0,0,8,0">
+                                            <StackPanel>
+                                                <TextBlock Text="БАЗЫ ДАННЫХ" Style="{StaticResource MutedLabel}" />
+                                                <TextBlock Text="{Binding DatabaseCount, StringFormat=N0}" Style="{StaticResource MetricValue}" />
+                                                <TextBlock Text="структурных ресурсов" Style="{StaticResource MutedLabel}" Margin="0,5,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource SurfaceCard}" Margin="4,0,4,0">
+                                            <StackPanel>
+                                                <TextBlock Text="ТАБЛИЦЫ" Style="{StaticResource MutedLabel}" />
+                                                <TextBlock Text="{Binding TableCount, StringFormat=N0}" Style="{StaticResource MetricValue}" />
+                                                <TextBlock Text="отдельных представлений" Style="{StaticResource MutedLabel}" Margin="0,5,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource SurfaceCard}" Margin="4,0,4,0">
+                                            <StackPanel>
+                                                <TextBlock Text="ЗАПИСИ" Style="{StaticResource MutedLabel}" />
+                                                <TextBlock Text="{Binding RecordCount, StringFormat=N0}" Style="{StaticResource MetricValue}" />
+                                                <TextBlock Text="во всех таблицах" Style="{StaticResource MutedLabel}" Margin="0,5,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Style="{StaticResource SurfaceCard}" Margin="8,0,0,0">
+                                            <StackPanel>
+                                                <TextBlock Text="ПРОВЕРКА" Style="{StaticResource MutedLabel}" />
+                                                <TextBlock Text="{Binding DiagnosticCount, StringFormat=N0}" Style="{StaticResource MetricValue}" />
+                                                <TextBlock Text="диагностических сообщений" Style="{StaticResource MutedLabel}" Margin="0,5,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                    </UniformGrid>
+
+                                    <Border Style="{StaticResource SurfaceCard}" Margin="0,0,0,16">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Border Background="#263A34" CornerRadius="7" Padding="8,4">
+                                                        <TextBlock Text="▣  ИСХОДНЫЙ ФАЙЛ · ТОЛЬКО ЧТЕНИЕ" Foreground="{StaticResource AccentBrush}" FontSize="10" FontWeight="SemiBold" />
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding SourceFileName}" FontSize="18" FontWeight="SemiBold" Margin="0,14,0,0" />
+                                                <TextBlock Text="{Binding SourceDirectory}" Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding SourcePath}" />
+                                                <Grid Margin="0,18,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="190" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="Размер" Style="{StaticResource MutedLabel}" />
+                                                    <TextBlock Grid.Column="1" Text="SHA-256" Style="{StaticResource MutedLabel}" />
+                                                    <TextBlock Grid.Column="0" Text="{Binding FileLength, Converter={StaticResource FileSizeConverter}}" Margin="0,20,0,0" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Sha256}" Margin="0,20,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Sha256}" />
+                                                </Grid>
+                                            </StackPanel>
+                                            <Border Grid.Column="1" Width="118" Height="118" Margin="24,0,0,0" Background="#242424" BorderBrush="#3E3E3E" BorderThickness="1" CornerRadius="16">
+                                                <StackPanel VerticalAlignment="Center">
+                                                    <TextBlock Text="▣" FontSize="33" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" />
+                                                    <TextBlock Text="LOCKED" FontSize="10" FontWeight="Bold" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" Margin="0,7,0,0" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Style="{StaticResource SurfaceCard}" Margin="0,0,8,0">
+                                            <StackPanel>
+                                                <TextBlock Text="Безопасный цикл работы" FontSize="16" FontWeight="SemiBold" />
+                                                <TextBlock Text="1   Открытие без изменений" Margin="0,15,0,0" />
+                                                <TextBlock Text="2   Явное включение редактирования" Margin="0,9,0,0" />
+                                                <TextBlock Text="3   Просмотр отличий и проверка" Margin="0,9,0,0" />
+                                                <TextBlock Text="4   Новая копия + повторное чтение" Margin="0,9,0,0" Foreground="{StaticResource AccentBrush}" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Grid.Column="1" Style="{StaticResource SurfaceCard}" Margin="8,0,0,0">
+                                            <StackPanel>
+                                                <TextBlock Text="Состояние рабочей копии" FontSize="16" FontWeight="SemiBold" />
+                                                <Grid Margin="0,15,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Изменений в памяти" Foreground="{StaticResource MutedTextBrush}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding ChangeCount}" FontWeight="SemiBold" />
+                                                </Grid>
+                                                <Grid Margin="0,10,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Ошибок проверки" Foreground="{StaticResource MutedTextBrush}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding ErrorCount}" FontWeight="SemiBold" Foreground="{StaticResource DangerBrush}" />
+                                                </Grid>
+                                                <Grid Margin="0,10,0,0">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="Предупреждений" Foreground="{StaticResource MutedTextBrush}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding WarningCount}" FontWeight="SemiBold" Foreground="{StaticResource WarningBrush}" />
+                                                </Grid>
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </StackPanel>
+                            </ScrollViewer>
+
+                            <!-- Resources -->
+                            <Grid Margin="22,18,22,22"
+                                  Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Resources}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="380" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid Grid.Column="0">
+                                        <TextBox x:Name="ResourceSearchBox" Style="{StaticResource DarkTextBox}" Text="{Binding ResourceSearchText, UpdateSourceTrigger=PropertyChanged}" Padding="34,8,34,8" />
+                                        <TextBlock Text="⌕" Foreground="{StaticResource MutedTextBrush}" FontSize="17" Margin="11,0,0,1" VerticalAlignment="Center" HorizontalAlignment="Left" IsHitTestVisible="False" />
+                                        <TextBlock Text="Поиск ресурса…" Foreground="{StaticResource SubtleTextBrush}" Margin="34,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ResourceSearchText}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Button Style="{StaticResource RoundedButton}" Command="{Binding ClearResourceSearchCommand}" Content="×" HorizontalAlignment="Right" Width="30" MinHeight="0" Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource MutedTextBrush}" />
+                                    </Grid>
+                                    <TextBlock Grid.Column="2" Text="{Binding ResourceCount, StringFormat={}{0:N0} ресурсов}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                </Grid>
+                                <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <DataGrid ItemsSource="{Binding ResourcesView}" BorderThickness="0" IsReadOnly="True">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="65" />
+                                            <DataGridTextColumn Header="Имя ресурса" Binding="{Binding Name}" Width="*" MinWidth="240" />
+                                            <DataGridTextColumn Header="Тип" Binding="{Binding Kind}" Width="110" />
+                                            <DataGridTextColumn Header="Смещение" Binding="{Binding Offset, StringFormat=N0}" Width="130" />
+                                            <DataGridTextColumn Header="Размер" Binding="{Binding Length, Converter={StaticResource FileSizeConverter}}" Width="120" />
+                                            <DataGridTextColumn Header="Состояние" Binding="{Binding State}" Width="160" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+                            </Grid>
+
+                            <!-- Excel-like database table -->
+                            <Grid Margin="22,18,22,22"
+                                  Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Records}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="34" />
+                                </Grid.RowDefinitions>
+
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="420" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid Grid.Column="0">
+                                        <TextBox x:Name="RecordSearchBox" Style="{StaticResource DarkTextBox}" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="34,8,34,8" />
+                                        <TextBlock Text="⌕" Foreground="{StaticResource MutedTextBrush}" FontSize="17" Margin="11,0,0,1" VerticalAlignment="Center" HorizontalAlignment="Left" IsHitTestVisible="False" />
+                                        <TextBlock Text="Поиск по имени и пути…" Foreground="{StaticResource SubtleTextBrush}" Margin="34,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SearchText}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Button Style="{StaticResource RoundedButton}" Command="{Binding ClearSearchCommand}" Content="×" HorizontalAlignment="Right" Width="30" MinHeight="0" Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource MutedTextBrush}" />
+                                    </Grid>
+
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <Button Style="{StaticResource RoundedButton}"
+                                                Command="{Binding AppendRecordCommand}"
+                                                Content="＋ Добавить по образцу"
+                                                ToolTip="Клонировать выбранную строку и безопасно добавить её в конец таблицы (Ctrl+Insert)"
+                                                Padding="11,6"
+                                                Margin="0,0,10,0" />
+                                        <Button Style="{StaticResource RoundedButton}"
+                                                Command="{Binding ToggleColumnModeCommand}"
+                                                Content="{Binding ColumnModeButtonText}"
+                                                Padding="11,6"
+                                                Margin="0,0,10,0" />
+                                        <TextBlock Text="{Binding SpreadsheetColumnCountText}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        <Border CornerRadius="7" Padding="9,4" Margin="0,0,10,0">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Background" Value="#263A34" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsCurrentTableReadOnly}" Value="True">
+                                                            <Setter Property="Background" Value="#403821" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBlock Text="{Binding CurrentTableStatusText}" FontSize="10">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCurrentTableReadOnly}" Value="True">
+                                                                <Setter Property="Foreground" Value="#F1D58C" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                        </Border>
+                                        <TextBlock Text="{Binding FilteredRecordCount, StringFormat={}{0:N0} строк}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <DataGrid x:Name="RecordsGrid"
+                                              ItemsSource="{Binding RecordsView}"
+                                              SelectedItem="{Binding SelectedRecord}"
+                                              BorderThickness="0"
+                                              IsReadOnly="False"
+                                              RowHeight="32"
+                                              ColumnHeaderHeight="54"
+                                              GridLinesVisibility="All"
+                                              HorizontalGridLinesBrush="#353535"
+                                              VerticalGridLinesBrush="#353535"
+                                              SelectionMode="Extended"
+                                              SelectionUnit="CellOrRowHeader"
+                                              ClipboardCopyMode="IncludeHeader"
+                                              CanUserSortColumns="True"
+                                              BeginningEdit="RecordsGrid_BeginningEdit"
+                                              Sorting="RecordsGrid_Sorting">
+                                        <DataGrid.Columns>
+                                            <DataGridTemplateColumn Header="" Width="34" IsReadOnly="True" CanUserSort="False">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="●" FontSize="8" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"
+                                                                   Visibility="{Binding IsModified, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="#" Binding="{Binding Index, StringFormat=N0}" Width="62" IsReadOnly="True" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </Border>
+
+                                <Grid Grid.Row="3" Margin="2,7,2,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{Binding SelectedRecord.Path, TargetNullValue=Выберите строку · Ctrl+C копирует выбранные клетки}"
+                                               Foreground="{StaticResource SubtleTextBrush}"
+                                               FontFamily="Cascadia Mono, Consolas"
+                                               FontSize="10"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="F2 — изменить клетку · Ctrl+Insert — добавить по образцу · Enter — применить · Esc — отменить"
+                                               Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="10"
+                                               VerticalAlignment="Center" />
+                                </Grid>
+                            </Grid>
+
+                            <!-- Changes -->
+                            <Grid Margin="22,18,22,22"
+                                  Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Changes}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <Border Grid.Row="0" Background="#263A34" BorderBrush="#36564D" BorderThickness="1" CornerRadius="9" Padding="12,9">
+                                    <TextBlock Text="Список формируется относительно открытого исходника. Сохранение создаст новый файл и не затронет источник." Foreground="#B9D7CF" />
+                                </Border>
+                                <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <Grid>
+                                        <DataGrid ItemsSource="{Binding Changes}" BorderThickness="0" IsReadOnly="True">
+                                            <DataGrid.Columns>
+                                                <DataGridTextColumn Header="Запись" Binding="{Binding Record.DisplayName}" Width="15*" MinWidth="150" />
+                                                <DataGridTextColumn Header="Поле" Binding="{Binding FieldName}" Width="12*" MinWidth="130" />
+                                                <DataGridTextColumn Header="Было" Binding="{Binding OriginalValue}" Width="*" MinWidth="120" />
+                                                <DataGridTextColumn Header="Стало" Binding="{Binding NewValue}" Width="*" MinWidth="120" />
+                                                <DataGridTextColumn Header="Путь" Binding="{Binding Path}" Width="15*" MinWidth="180" />
+                                                <DataGridTemplateColumn Header="" Width="110">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Button Style="{StaticResource RoundedButton}"
+                                                                    Padding="9,4"
+                                                                    MinHeight="28"
+                                                                    Content="{Binding ActionText}"
+                                                                    Command="{Binding DataContext.RevertChangeCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                    CommandParameter="{Binding}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                    Visibility="{Binding HasChanges, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
+                                            <TextBlock Text="✓" FontSize="30" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" />
+                                            <TextBlock Text="Изменений пока нет" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,10,0,0" />
+                                            <TextBlock Text="Исходный файл и рабочая модель совпадают." Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+
+                            <!-- Validation -->
+                            <Grid Margin="22,18,22,22"
+                                  Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Validation}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Border Background="#452727" CornerRadius="7" Padding="10,5">
+                                                <TextBlock Text="{Binding ErrorCount, StringFormat={}{0} ошибок}" Foreground="#FFB4B4" />
+                                            </Border>
+                                            <Border Background="#403821" CornerRadius="7" Padding="10,5" Margin="8,0,0,0">
+                                                <TextBlock Text="{Binding WarningCount, StringFormat={}{0} предупреждений}" Foreground="#F1D58C" />
+                                            </Border>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Command="{Binding RefreshValidationCommand}" Content="Проверить снова  ·  F5" />
+                                    </Grid>
+                                    <Border Background="#24352F" CornerRadius="7" Padding="10,7" Margin="0,10,0,0">
+                                        <TextBlock Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap">
+                                            <Run Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" Text="Семантические предупреждения" />
+                                            <Run Text=" — подсказки для ручной проверки. Они не блокируют сохранение копии и не исправляют данные автоматически. Блокирующие структурные ошибки отмечены в столбце «Область»." />
+                                        </TextBlock>
+                                    </Border>
+                                </StackPanel>
+                                <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <Grid>
+                                        <DataGrid ItemsSource="{Binding Diagnostics}" BorderThickness="0" IsReadOnly="True">
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="●" FontSize="9" Foreground="{Binding Severity, Converter={StaticResource SeverityBrushConverter}}" HorizontalAlignment="Center" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="Область" Width="124" SortMemberPath="DomainText">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <StackPanel VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding DomainText}" FontWeight="SemiBold" />
+                                                                <TextBlock Text="{Binding BlockingText}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" Margin="0,2,0,0" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="Место" Width="2*" MinWidth="240" SortMemberPath="Place">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding Place}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="Уровень" Binding="{Binding SeverityText}" Width="118" />
+                                                <DataGridTemplateColumn Header="Код" Width="170" SortMemberPath="Code">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding Code}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Code}" FontFamily="Cascadia Mono, Consolas" FontSize="11" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="Сообщение" Width="4*" MinWidth="320" SortMemberPath="Message">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding Message}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding DiagnosticCount}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <TextBlock Text="✓" FontSize="34" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" />
+                                            <TextBlock Text="Структурных проблем не обнаружено" FontSize="16" FontWeight="SemiBold" Margin="0,10,0,0" />
+                                            <TextBlock Text="Перед установкой копии всё равно рекомендуется отдельное тестирование в игре." Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Grid>
+
+                        <!-- Busy overlay -->
+                        <Border Background="#B8171717" Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Border HorizontalAlignment="Center" VerticalAlignment="Center" Width="410" Style="{StaticResource SurfaceCard}" Padding="24">
+                                <StackPanel>
+                                    <TextBlock Text="{Binding BusyText}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" />
+                                    <ProgressBar Height="4" IsIndeterminate="True" Margin="0,18,0,0" Foreground="{StaticResource AccentBrush}" Background="#1D1D1D" />
+                                    <Button Style="{StaticResource RoundedButton}" Command="{Binding CancelOperationCommand}" Content="Отменить" HorizontalAlignment="Center" Margin="0,18,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Row="4" Background="#1B1B1B" BorderBrush="#303030" BorderThickness="0,1,0,0" Padding="12,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="●" FontSize="7" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{Binding StatusText}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="7,0,10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding ChangeCount, StringFormat={}{0} изм.}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                <TextBlock Text="   ·   Preview" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

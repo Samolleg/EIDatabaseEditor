@@ -1,0 +1,15 @@
+bin/
+obj/
+obj-*/
+publish*/
+artifacts/
+.appdata/
+.dotnet-cli/
+*.user
+*.suo
+*.res
+*.partial-*
+verification-output/
+handoff/
+*.zip
+*.zipp

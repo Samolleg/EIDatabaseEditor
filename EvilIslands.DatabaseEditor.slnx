@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EvilIslands.DatabaseEditor.App/EvilIslands.DatabaseEditor.App.csproj" />
+    <Project Path="src/EvilIslands.DatabaseEditor.Core/EvilIslands.DatabaseEditor.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EvilIslands.DatabaseEditor.UiSmoke/EvilIslands.DatabaseEditor.UiSmoke.csproj" />
+    <Project Path="tests/EvilIslands.DatabaseEditor.Verification/EvilIslands.DatabaseEditor.Verification.csproj" />
+  </Folder>
+</Solution>
