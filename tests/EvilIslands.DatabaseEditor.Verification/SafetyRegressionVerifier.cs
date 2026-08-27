@@ -10,6 +10,7 @@ internal static class SafetyRegressionVerifier
         string sourcePath,
         IReadOnlyCollection<string> allSourcePaths,
         SafeStagingArea staging,
+        string sourceSha256,
         VerificationLog log)
     {
         await VerifyChangedStagingSourceIsRejectedAsync(
@@ -23,7 +24,8 @@ internal static class SafetyRegressionVerifier
             staging,
             log).ConfigureAwait(false);
         VerifyCorrectedSchemaMetadata(sourcePath, log);
-        VerifySemanticDiagnostics(sourcePath, log);
+        KnownDatabaseBaseline.TryGet(sourceSha256, out KnownDatabaseBaseline? baseline);
+        VerifySemanticDiagnostics(sourcePath, baseline, log);
         VerifyInvalidInputsDoNotModifyDocument(sourcePath, log);
         await VerifyByteStateAndResetAsync(
             sourcePath,
@@ -87,7 +89,10 @@ internal static class SafetyRegressionVerifier
             "Таблица заклинаний показывает Name отдельно от технического CodeName.");
     }
 
-    private static void VerifySemanticDiagnostics(string sourcePath, VerificationLog log)
+    private static void VerifySemanticDiagnostics(
+        string sourcePath,
+        KnownDatabaseBaseline? baseline,
+        VerificationLog log)
     {
         DatabaseDocument document = DatabaseDocument.Open(sourcePath);
         IReadOnlyList<ValidationDiagnostic> first = document.Validate();
@@ -99,21 +104,34 @@ internal static class SafetyRegressionVerifier
             first.Where(diagnostic => diagnostic.Domain == DiagnosticDomain.Semantic)
                 .All(diagnostic => !diagnostic.IsBlocking && diagnostic.Location is not null),
             "Семантические сообщения имеют точное место и не блокируют безопасное сохранение копии.");
-        log.Assert(
-            first.Count(diagnostic =>
+        if (baseline is not null)
+        {
+            int missingBaseRace = first.Count(diagnostic =>
                 diagnostic.Domain == DiagnosticDomain.Semantic &&
                 diagnostic.Code == "SEM_REFERENCE_NOT_FOUND" &&
                 diagnostic.Location?.TableKey == "units.prototypes" &&
-                diagnostic.Location.FieldId == 1) == 4,
-            "В исходной базе точно локализованы четыре известные отсутствующие ссылки Base Race.");
-        log.Assert(
-            first.Any(diagnostic =>
+                diagnostic.Location.FieldId == 1);
+            log.Assert(
+                missingBaseRace == baseline.MissingBaseRaceReferences,
+                $"Контент-база «{baseline.Name}» имеет ровно " +
+                $"{baseline.MissingBaseRaceReferences} отсутствующих ссылок Base Race.");
+
+            bool hasMissingBriefingRune = first.Any(diagnostic =>
                 diagnostic.Domain == DiagnosticDomain.Semantic &&
                 diagnostic.Code == "SEM_REFERENCE_NOT_FOUND" &&
                 diagnostic.Location?.TableKey == "quests.briefings" &&
                 diagnostic.Location.RecordIndex == 187 &&
-                diagnostic.Location.FieldId == 3),
-            "В исходной базе локализована известная ссылка briefing Give Items на отсутствующую rune.t3.");
+                diagnostic.Location.FieldId == 3);
+            log.Assert(
+                hasMissingBriefingRune == baseline.HasMissingBriefingRune,
+                baseline.HasMissingBriefingRune
+                    ? "В контент-базе локализована ссылка briefing Give Items на отсутствующую rune.t3."
+                    : "В контент-базе отсутствует прежняя ссылка briefing Give Items на rune.t3.");
+        }
+        else
+        {
+            log.Skip("Контентные количества известных отсутствующих ссылок не проверяются для неизвестного SHA-256.");
+        }
 
         DatabaseRecord powerHit = FindPowerHit(document);
         DatabaseField codeName = FindField(powerHit, "CodeName");

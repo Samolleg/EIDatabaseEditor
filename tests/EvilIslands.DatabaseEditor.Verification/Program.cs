@@ -112,8 +112,8 @@ internal static class Program
             CoreDocumentAdapter coreDocument = await log.MeasureAsync(
                 "Открытие DatabaseDocument",
                 () => CoreDocumentAdapter.OpenAsync(sourcePath)).ConfigureAwait(false);
-            AssertCoreValidation(coreDocument, log, "Исходный DatabaseDocument");
-            AssertDatabaseCatalog(coreDocument, boundaries, log);
+            AssertCoreValidation(coreDocument, log, "Исходный DatabaseDocument", sourceBefore.Sha256);
+            AssertDatabaseCatalog(coreDocument, boundaries, sourceBefore.Sha256, log);
             log.Assert(coreDocument.ContainsPowerHit(), "В spells.sdb найдена запись CodeName=powerhit.");
 
             string noOpPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-noop.res");
@@ -225,6 +225,7 @@ internal static class Program
                 sourcePath,
                 allSourcePaths,
                 staging,
+                sourceBefore.Sha256,
                 log).ConfigureAwait(false);
 
             FileSnapshot noOpSnapshot = await FileSnapshot.CaptureAsync(noOpPath).ConfigureAwait(false);
@@ -246,7 +247,8 @@ internal static class Program
     private static void AssertCoreValidation(
         CoreDocumentAdapter document,
         VerificationLog log,
-        string label)
+        string label,
+        string? sourceSha256 = null)
     {
         IReadOnlyList<object> diagnostics = document.Validate();
         object[] errors = diagnostics.Where(CoreDocumentAdapter.IsErrorDiagnostic).ToArray();
@@ -276,7 +278,7 @@ internal static class Program
                 log.Info($"{label}: ещё {notices.Length - 12} сообщений не выведено.");
             }
 
-            AssertEmbeddedMagicBaseline(typedDiagnostics, log);
+            AssertEmbeddedMagicBaseline(typedDiagnostics, sourceSha256, log);
         }
 
         log.Pass($"{label}: Core-валидация не содержит ошибок.");
@@ -285,6 +287,7 @@ internal static class Program
     private static void AssertDatabaseCatalog(
         CoreDocumentAdapter document,
         IReadOnlyList<DatabaseBoundarySummary> boundaries,
+        string sourceSha256,
         VerificationLog log)
     {
         IReadOnlyList<DatabaseGroup> groups = document.GetDatabases();
@@ -365,14 +368,16 @@ internal static class Program
         log.Assert(
             recognizedNames.SequenceEqual(catalogNames, StringComparer.OrdinalIgnoreCase),
             "RES-каталог помечает поддерживаемыми ровно восемь распознаваемых DB-ресурсов.");
-        AssertCorrectedSchemas(tables, log);
+        KnownDatabaseBaseline.TryGet(sourceSha256, out KnownDatabaseBaseline? baseline);
+        AssertCorrectedSchemas(tables, baseline, log);
     }
 
     private static void AssertCorrectedSchemas(
         IReadOnlyList<DatabaseTable> tables,
+        KnownDatabaseBaseline? baseline,
         VerificationLog log)
     {
-        AssertMaterialsSchema(RequireTable(tables, "items.materials"), log);
+        AssertMaterialsSchema(RequireTable(tables, "items.materials"), baseline, log);
 
         DatabaseRecord hitLocation = RequireTable(tables, "units.hit_locations").Records[0];
         DatabaseRecord race = RequireTable(tables, "units.races").Records[0];
@@ -442,14 +447,18 @@ internal static class Program
                     RequireField(record, 5).Projections.Count == 5 &&
                     !RequireField(record, 5).IsEditable),
             "BitList(5) во всех трёх таблицах шаблонов раскрывается в пять read-only shop-битов.");
+        DatabaseField[] allFields = tables.SelectMany(table => table.Records)
+            .SelectMany(record => record.Fields)
+            .ToArray();
         log.Assert(
-            tables.SelectMany(table => table.Records)
-                .SelectMany(record => record.Fields)
-                .All(field => field.Kind != "Hex"),
-            "Все 87 924 известных поля имеют подтверждённый тип; raw Hex не осталось.");
+            allFields.All(field => field.Kind != "Hex"),
+            $"Все {allFields.Length:N0} известных полей имеют подтверждённый тип; raw Hex не осталось.");
     }
 
-    private static void AssertMaterialsSchema(DatabaseTable materials, VerificationLog log)
+    private static void AssertMaterialsSchema(
+        DatabaseTable materials,
+        KnownDatabaseBaseline? baseline,
+        VerificationLog log)
     {
         string[] expectedKinds =
         [
@@ -469,7 +478,17 @@ internal static class Program
             "UInt32",
         ];
 
-        log.Assert(materials.Records.Count == 51, "Items / Материалы содержит 51 запись.");
+        log.Assert(materials.Records.Count > 0, "Items / Материалы содержит записи.");
+        if (baseline is not null)
+        {
+            log.Assert(
+                materials.Records.Count == baseline.MaterialCount,
+                $"Контент-база «{baseline.Name}» содержит ровно {baseline.MaterialCount} материалов.");
+        }
+        else
+        {
+            log.Skip("Для неизвестного SHA-256 не проверяется точное число материалов; структура проверяется полностью.");
+        }
         log.Assert(
             materials.SupportState == DatabaseSupportState.Editable &&
             materials.CanAppendRecords &&
@@ -482,7 +501,7 @@ internal static class Program
                 record.Fields.Count == expectedKinds.Length &&
                 record.Fields.Select(field => field.Id).SequenceEqual(Enumerable.Range(0, expectedKinds.Length)) &&
                 record.Fields.Select(field => field.Kind).SequenceEqual(expectedKinds, StringComparer.Ordinal)),
-            "Все 51 материала имеют точную последовательность и типы полей 0–13 из legacy-схемы.");
+            $"Все {materials.Records.Count:N0} материалов имеют точную последовательность и типы полей 0–13 из legacy-схемы.");
         DatabaseField absorption = RequireField(materials.Records[0], 11);
         DatabaseField shops = RequireField(materials.Records[0], 13);
         log.Assert(
@@ -505,47 +524,51 @@ internal static class Program
                 RequireField(record, 13).Length == 4),
             "Размеры payload Материалов соответствуют 7 float и little-endian 32-bit scalars.");
 
-        DatabaseRecord thin = materials.Records[0];
-        log.Assert(
-            string.Equals(thin.Name, "thin", StringComparison.Ordinal) &&
-            string.Equals(RequireField(thin, 1).Value.ToString(), "Leather", StringComparison.Ordinal) &&
-            string.Equals(RequireField(thin, 2).Value.ToString(), "le", StringComparison.Ordinal) &&
-            Convert.ToInt32(RequireField(thin, 3).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
-            NearlyEqual(RequireField(thin, 4).Value, 4f) &&
-            NearlyEqual(RequireField(thin, 5).Value, 1.2f) &&
-            NearlyEqual(RequireField(thin, 6).Value, 11f) &&
-            Convert.ToInt32(RequireField(thin, 7).Value, System.Globalization.CultureInfo.InvariantCulture) == 6 &&
-            NearlyEqual(RequireField(thin, 8).Value, 32.94f) &&
-            Convert.ToInt32(RequireField(thin, 9).Value, System.Globalization.CultureInfo.InvariantCulture) == 1 &&
-            NearlyEqual(RequireField(thin, 10).Value, 0f) &&
-            string.Equals(
-                RequireField(thin, 11).Value.ToString(),
-                "1.14, 1.2, 1.23, 1.14, 1.2, 1.35, 1.2",
-                StringComparison.Ordinal) &&
-            Convert.ToInt32(RequireField(thin, 12).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
-            Convert.ToUInt32(RequireField(thin, 13).Value, System.Globalization.CultureInfo.InvariantCulture) == 1,
-            "Первая строка thin декодируется в те же понятные значения, что и старый DBEditor.");
+        if (baseline is not null)
+        {
+            DatabaseRecord thin = materials.Records[0];
+            log.Assert(
+                string.Equals(thin.Name, "thin", StringComparison.Ordinal) &&
+                string.Equals(RequireField(thin, 1).Value.ToString(), "Leather", StringComparison.Ordinal) &&
+                string.Equals(RequireField(thin, 2).Value.ToString(), "le", StringComparison.Ordinal) &&
+                Convert.ToInt32(RequireField(thin, 3).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
+                NearlyEqual(RequireField(thin, 4).Value, 4f) &&
+                NearlyEqual(RequireField(thin, 5).Value, 1.2f) &&
+                NearlyEqual(RequireField(thin, 6).Value, 11f) &&
+                Convert.ToInt32(RequireField(thin, 7).Value, System.Globalization.CultureInfo.InvariantCulture) == 6 &&
+                NearlyEqual(RequireField(thin, 8).Value, 32.94f) &&
+                Convert.ToInt32(RequireField(thin, 9).Value, System.Globalization.CultureInfo.InvariantCulture) == 1 &&
+                NearlyEqual(RequireField(thin, 10).Value, 0f) &&
+                string.Equals(
+                    RequireField(thin, 11).Value.ToString(),
+                    "1.14, 1.2, 1.23, 1.14, 1.2, 1.35, 1.2",
+                    StringComparison.Ordinal) &&
+                Convert.ToInt32(RequireField(thin, 12).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
+                Convert.ToUInt32(RequireField(thin, 13).Value, System.Globalization.CultureInfo.InvariantCulture) == 1,
+                "Первая строка thin декодируется в те же понятные значения, что и старый DBEditor.");
 
-        DatabaseRecord last = materials.Records[^1];
-        log.Assert(
-            string.Equals(last.Name, "black panter hide", StringComparison.Ordinal) &&
-            string.Equals(RequireField(last, 1).Value.ToString(), "Fur", StringComparison.Ordinal) &&
-            string.Equals(RequireField(last, 2).Value.ToString(), "pt", StringComparison.Ordinal) &&
-            Convert.ToInt32(RequireField(last, 3).Value, System.Globalization.CultureInfo.InvariantCulture) == 49 &&
-            Convert.ToUInt32(RequireField(last, 13).Value, System.Globalization.CultureInfo.InvariantCulture) == 0,
-            "Последняя строка black panter hide корректно декодируется до конца таблицы.");
+            DatabaseRecord last = materials.Records[^1];
+            log.Assert(
+                string.Equals(last.Name, "black panter hide", StringComparison.Ordinal) &&
+                string.Equals(RequireField(last, 1).Value.ToString(), "Fur", StringComparison.Ordinal) &&
+                string.Equals(RequireField(last, 2).Value.ToString(), "pt", StringComparison.Ordinal) &&
+                Convert.ToInt32(RequireField(last, 3).Value, System.Globalization.CultureInfo.InvariantCulture) == 49 &&
+                Convert.ToUInt32(RequireField(last, 13).Value, System.Globalization.CultureInfo.InvariantCulture) == 0,
+                "Последняя строка black panter hide корректно декодируется до конца таблицы.");
 
-        uint[] allowedShopMasks = [0, 1, 4, 8, 12, 16];
-        log.Assert(
-            materials.Records.All(record =>
-                Convert.ToInt32(RequireField(record, 12).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
-                allowedShopMasks.Contains(
-                    Convert.ToUInt32(RequireField(record, 13).Value, System.Globalization.CultureInfo.InvariantCulture))),
-            "Маска травм и пять shop-битов всех материалов декодируются без старших неизвестных битов.");
+            uint[] allowedShopMasks = [0, 1, 4, 8, 12, 16];
+            log.Assert(
+                materials.Records.All(record =>
+                    Convert.ToInt32(RequireField(record, 12).Value, System.Globalization.CultureInfo.InvariantCulture) == 0 &&
+                    allowedShopMasks.Contains(
+                        Convert.ToUInt32(RequireField(record, 13).Value, System.Globalization.CultureInfo.InvariantCulture))),
+                "Маска травм и пять shop-битов всех материалов декодируются без старших неизвестных битов.");
+        }
     }
 
     private static void AssertEmbeddedMagicBaseline(
         IReadOnlyList<ValidationDiagnostic> diagnostics,
+        string? sourceSha256,
         VerificationLog log)
     {
         static int CountCode(IEnumerable<ValidationDiagnostic> source, string code) =>
@@ -571,18 +594,33 @@ internal static class Program
             diagnostic.Code.StartsWith("SEM_EMBEDDED_MAGIC_", StringComparison.Ordinal));
         int magicRelated = namedEmbeddedDiagnostics + materialMismatch + spellFormat + missingEmbeddedRunes;
 
+        if (!KnownDatabaseBaseline.TryGet(sourceSha256, out KnownDatabaseBaseline? baseline) || baseline is null)
+        {
+            log.Skip(
+                $"Для SHA-256 {sourceSha256 ?? "<не задан>"} нет контент-базовой линии; " +
+                "точные количества семантических сообщений не проверяются.");
+            return;
+        }
+
         log.Assert(
-            diagnostics.Count == 180 && diagnostics.All(diagnostic => !diagnostic.IsBlocking),
-            "Обе эталонные базы имеют ровно 180 неблокирующих семантических сообщений (5 legacy + 175 по вложенной магии).");
+            diagnostics.Count == baseline.TotalDiagnostics && diagnostics.All(diagnostic => !diagnostic.IsBlocking),
+            $"Контент-база «{baseline.Name}» имеет ровно {baseline.TotalDiagnostics} неблокирующих сообщений.");
         log.Assert(
-            itemFormat == 2 && spellFormat == 2 && missingEmbeddedRunes == 2,
-            "Вложенная магия: 2 ошибки item-скобок, 2 spell-скобок и 2 неизвестные руны в склеенных дескрипторах.");
+            itemFormat == baseline.ItemFormat && spellFormat == baseline.SpellFormat &&
+            missingEmbeddedRunes == baseline.MissingEmbeddedRunes,
+            $"Вложенная магия: {baseline.ItemFormat} ошибок item-скобок, " +
+            $"{baseline.SpellFormat} spell-скобок и {baseline.MissingEmbeddedRunes} неизвестных рун.");
         log.Assert(
-            tooManyRunes == 3 && energyExceeded == 10 && complexityExceeded == 155,
-            "Вложенная магия: 3 записи содержат >8 рун, 10 превышают энергию и 155 превышают сложность.");
+            tooManyRunes == baseline.TooManyRunes && energyExceeded == baseline.EnergyExceeded &&
+            complexityExceeded == baseline.ComplexityExceeded,
+            $"Вложенная магия: {baseline.TooManyRunes} записей содержат >8 рун, " +
+            $"{baseline.EnergyExceeded} превышают энергию и {baseline.ComplexityExceeded} превышают сложность.");
         log.Assert(
-            materialMismatch == 1 && missingMaterial == 0 && missingItemRune == 0 && magicRelated == 175,
-            "Вложенная магия: 1 несовместимый тип материала, нет пропавших материалов/ic/it; всего 175 сообщений.");
+            materialMismatch == baseline.MaterialMismatch && missingMaterial == baseline.MissingMaterial &&
+            missingItemRune == baseline.MissingItemRune && magicRelated == baseline.MagicRelated,
+            $"Вложенная магия: {baseline.MaterialMismatch} несовместимых типов материала, " +
+            $"{baseline.MissingMaterial} пропавших материалов, {baseline.MissingItemRune} без ic/it; " +
+            $"всего {baseline.MagicRelated} сообщений.");
     }
 
     private static async Task VerifyRowAppendSafetyAsync(

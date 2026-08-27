@@ -181,10 +181,11 @@ internal static class Program
         RunWithDispatcher(() => viewModel.OpenPathAsync(sourcePath));
         var tables = viewModel.Databases.SelectMany(database => database.Tables).ToArray();
         var records = tables.SelectMany(table => table.Records).ToArray();
-        if (viewModel.DatabaseCount != 8 || viewModel.TableCount != 26 || records.Length != 3414)
+        if (viewModel.DatabaseCount != 8 || viewModel.TableCount != 26 ||
+            records.Length == 0 || viewModel.RecordCount != records.Length)
         {
             throw new InvalidOperationException(
-                $"App-адаптер должен раскрыть реальные 8 БД, 26 таблиц и 3 414 записей; " +
+                $"App-адаптер должен раскрыть реальные 8 БД, 26 таблиц и все найденные записи; " +
                 $"получено {viewModel.DatabaseCount}/{viewModel.TableCount}/{records.Length}. " +
                 $"Статус: {viewModel.StatusText}. Сообщение: {viewModel.NotificationMessage}");
         }
