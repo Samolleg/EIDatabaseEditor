@@ -1,4 +1,4 @@
-EI Database Studio 0.5.0-preview.1
+EI Database Studio 0.5.0-preview.2
 
 Назначение
 ==========
