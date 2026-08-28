@@ -84,6 +84,61 @@ internal static class SafetyRegressionVerifier
         log.Assert(
             string.Equals(FindField(FindPowerHit(reopened), "Price").EditorText, editedText, StringComparison.Ordinal),
             "Прямо сохранённое значение повторно открывается из staging database.res.");
+
+        string unrelatedBackup = workingPath + ".bak.notes";
+        await File.WriteAllTextAsync(unrelatedBackup, "Пользовательский файл не является бэкапом редактора.")
+            .ConfigureAwait(false);
+
+        FileSnapshot beforeSecondSave = await FileSnapshot.CaptureAsync(workingPath).ConfigureAwait(false);
+        DatabaseDocument secondDocument = DatabaseDocument.Open(workingPath);
+        DatabaseField secondPrice = FindField(FindPowerHit(secondDocument), "Price");
+        string secondEditedText = (float.Parse(secondPrice.EditorText, CultureInfo.InvariantCulture) + 1.0f)
+            .ToString("R", CultureInfo.InvariantCulture);
+        secondPrice.TrySetValue(secondEditedText, out _);
+        SaveResult secondResult = await secondDocument.SaveInPlaceAsync().ConfigureAwait(false);
+        FileSnapshot secondBackup = await FileSnapshot.CaptureAsync(secondResult.BackupPath!).ConfigureAwait(false);
+        log.Assert(
+            beforeSecondSave.ContentEquals(secondBackup) &&
+            !string.Equals(result.BackupPath, secondResult.BackupPath, StringComparison.OrdinalIgnoreCase),
+            "Второе сохранение создаёт отдельный точный бэкап предыдущего состояния.");
+
+        File.SetLastWriteTimeUtc(result.BackupPath!, DateTime.UtcNow.AddMinutes(-2));
+        File.SetLastWriteTimeUtc(secondResult.BackupPath!, DateTime.UtcNow.AddMinutes(-1));
+        FileSnapshot beforeThirdSave = await FileSnapshot.CaptureAsync(workingPath).ConfigureAwait(false);
+        DatabaseDocument thirdDocument = DatabaseDocument.Open(workingPath);
+        DatabaseField thirdPrice = FindField(FindPowerHit(thirdDocument), "Price");
+        string thirdEditedText = (float.Parse(thirdPrice.EditorText, CultureInfo.InvariantCulture) + 1.0f)
+            .ToString("R", CultureInfo.InvariantCulture);
+        thirdPrice.TrySetValue(thirdEditedText, out _);
+        SaveResult thirdResult = await thirdDocument.SaveInPlaceAsync().ConfigureAwait(false);
+
+        string[] retainedBackupPaths = Directory
+            .EnumerateFiles(
+                Path.GetDirectoryName(workingPath)!,
+                Path.GetFileName(workingPath) + ".bak*",
+                SearchOption.TopDirectoryOnly)
+            .Where(path => !string.Equals(path, unrelatedBackup, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        FileSnapshot[] retainedBackups = await Task
+            .WhenAll(retainedBackupPaths.Select(path => FileSnapshot.CaptureAsync(path)))
+            .ConfigureAwait(false);
+        log.Assert(
+            retainedBackupPaths.Length == 2 &&
+            retainedBackups.Any(snapshot => beforeSecondSave.ContentEquals(snapshot)) &&
+            retainedBackups.Any(snapshot => beforeThirdSave.ContentEquals(snapshot)) &&
+            retainedBackups.All(snapshot => !before.ContentEquals(snapshot)),
+            "После третьего сохранения остаются ровно два последних бэкапа.");
+        log.Assert(
+            File.Exists(thirdResult.BackupPath) && File.Exists(unrelatedBackup),
+            "Очистка старых бэкапов не удаляет пользовательские файлы с похожим именем.");
+
+        DatabaseDocument reopenedThird = DatabaseDocument.Open(workingPath);
+        log.Assert(
+            string.Equals(
+                FindField(FindPowerHit(reopenedThird), "Price").EditorText,
+                thirdEditedText,
+                StringComparison.Ordinal),
+            "Третье прямое сохранение с очисткой бэкапов повторно открывается.");
         log.Assert(
             !Directory.EnumerateFiles(staging.RootPath, ".*.partial-*", SearchOption.TopDirectoryOnly).Any(),
             "После прямого сохранения не осталось незавершённых partial-файлов.");

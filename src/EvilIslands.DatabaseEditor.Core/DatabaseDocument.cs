@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace EvilIslands.DatabaseEditor.Core;
 
@@ -302,7 +303,7 @@ public sealed class DatabaseDocument
         var tempPath = Path.Combine(
             directory,
             $".{Path.GetFileName(sourcePath)}.partial-{Guid.NewGuid():N}");
-        var backupPath = CreateAvailableBackupPath(sourcePath);
+        string backupPath;
 
         try
         {
@@ -326,6 +327,8 @@ public sealed class DatabaseDocument
                 throw new IOException("Путь открытого файла изменился и больше не является безопасным.");
             }
 
+            RetainNewestManagedBackupBeforeSave(sourcePath);
+            backupPath = CreateAvailableBackupPath(sourcePath);
             File.Replace(tempPath, sourcePath, backupPath, ignoreMetadataErrors: true);
             EnsureBackupMatches(backupPath);
             EnsureFileMatches(sourcePath, rebuilt);
@@ -667,6 +670,88 @@ public sealed class DatabaseDocument
         }
 
         return $"{basePath}.{Guid.NewGuid():N}";
+    }
+
+    private static void RetainNewestManagedBackupBeforeSave(string sourcePath)
+    {
+        IReadOnlyList<FileInfo> backups = EnumerateManagedBackups(sourcePath);
+        FileInfo[] obsoleteBackups = backups.Skip(1).ToArray();
+
+        foreach (FileInfo backup in obsoleteBackups)
+        {
+            try
+            {
+                FileAttributes attributes = File.GetAttributes(backup.FullName);
+                if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                {
+                    throw new IOException(
+                        $"Старая резервная копия имеет небезопасный тип: {backup.FullName}");
+                }
+
+                File.Delete(backup.FullName);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    $"Не удалось удалить старую резервную копию '{backup.FullName}'. " +
+                    "Сохранение отменено до изменения database.res.",
+                    exception);
+            }
+        }
+
+        if (EnumerateManagedBackups(sourcePath).Count > 1)
+        {
+            throw new IOException(
+                "Не удалось сократить число резервных копий. Сохранение отменено до изменения database.res.");
+        }
+    }
+
+    private static IReadOnlyList<FileInfo> EnumerateManagedBackups(string sourcePath)
+    {
+        var fullSourcePath = Path.GetFullPath(sourcePath);
+        var directoryPath = Path.GetDirectoryName(fullSourcePath)
+            ?? throw new DirectoryNotFoundException("Не найдена папка открытого database.res.");
+        var sourceFileName = Path.GetFileName(fullSourcePath);
+        var backupNamePattern = new Regex(
+            $"^{Regex.Escape(sourceFileName)}\\.bak(?:\\.\\d{{8}}-\\d{{6}}(?:-\\d{{3}})?|\\.[0-9a-f]{{32}})?$",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        var backups = new List<FileInfo>();
+        foreach (string candidatePath in Directory.EnumerateFileSystemEntries(
+                     directoryPath,
+                     sourceFileName + ".bak*",
+                     SearchOption.TopDirectoryOnly))
+        {
+            var candidateName = Path.GetFileName(candidatePath);
+            if (!backupNamePattern.IsMatch(candidateName))
+            {
+                continue;
+            }
+
+            var fullCandidatePath = Path.GetFullPath(candidatePath);
+            if (!string.Equals(
+                    Path.GetDirectoryName(fullCandidatePath),
+                    directoryPath,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                throw new IOException("Резервная копия находится вне папки открытого database.res.");
+            }
+
+            FileAttributes attributes = File.GetAttributes(fullCandidatePath);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            {
+                throw new IOException(
+                    $"Путь резервной копии имеет небезопасный тип: {fullCandidatePath}");
+            }
+
+            backups.Add(new FileInfo(fullCandidatePath));
+        }
+
+        return backups
+            .OrderByDescending(backup => backup.LastWriteTimeUtc)
+            .ThenByDescending(backup => backup.CreationTimeUtc)
+            .ThenByDescending(backup => backup.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static void EnsureFileMatches(string path, ReadOnlySpan<byte> expected)
