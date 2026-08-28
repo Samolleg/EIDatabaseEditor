@@ -143,6 +143,57 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="IndexColumnHeaderStyle"
+               TargetType="DataGridColumnHeader"
+               BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+            <Setter Property="Background" Value="{StaticResource SidebarBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource SubtleTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrongBorderBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,1,1" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="IndexColumnCellStyle"
+               TargetType="DataGridCell"
+               BasedOn="{StaticResource {x:Type DataGridCell}}">
+            <Setter Property="Background" Value="#14171A" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrongBorderBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,1,0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        </Style>
+
+        <Style x:Key="CenteredIndexTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource SubtleTextBrush}" />
+            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="RecordIndexTextStyle"
+               TargetType="TextBlock"
+               BasedOn="{StaticResource CenteredIndexTextStyle}">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsModified}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasDiagnostics}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                    <Setter Property="FontWeight" Value="SemiBold" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasBlockingDiagnostics}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                    <Setter Property="FontWeight" Value="Bold" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <Style x:Key="SpreadsheetCellText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="VerticalAlignment" Value="Center" />
@@ -673,7 +724,12 @@
                                 <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                                     <DataGrid ItemsSource="{Binding ResourcesView}" BorderThickness="0" IsReadOnly="True">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="65" />
+                                            <DataGridTextColumn Header="#"
+                                                                Binding="{Binding Index}"
+                                                                Width="56"
+                                                                HeaderStyle="{StaticResource IndexColumnHeaderStyle}"
+                                                                CellStyle="{StaticResource IndexColumnCellStyle}"
+                                                                ElementStyle="{StaticResource CenteredIndexTextStyle}" />
                                             <DataGridTextColumn Header="Имя ресурса" Binding="{Binding Name}" Width="*" MinWidth="240" />
                                             <DataGridTextColumn Header="Тип" Binding="{Binding Kind}" Width="110" />
                                             <DataGridTextColumn Header="Смещение" Binding="{Binding Offset, StringFormat=N0}" Width="130" />
@@ -758,7 +814,13 @@
                                               EnableRowVirtualization="True"
                                               EnableColumnVirtualization="True">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="#" Binding="{Binding Index}" Width="62" IsReadOnly="True" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn Header="#"
+                                                                Binding="{Binding Index}"
+                                                                Width="56"
+                                                                IsReadOnly="True"
+                                                                HeaderStyle="{StaticResource IndexColumnHeaderStyle}"
+                                                                CellStyle="{StaticResource IndexColumnCellStyle}"
+                                                                ElementStyle="{StaticResource CenteredIndexTextStyle}" />
                                             <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="110" IsReadOnly="True" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                             <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="300" IsReadOnly="True" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                             <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="300" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
@@ -913,31 +975,21 @@
                                               BeginningEdit="RecordsGrid_BeginningEdit"
                                               Sorting="RecordsGrid_Sorting">
                                         <DataGrid.Columns>
-                                            <DataGridTemplateColumn Header="" Width="34" IsReadOnly="True" CanUserSort="False">
+                                            <DataGridTemplateColumn Header="#"
+                                                                    Width="56"
+                                                                    IsReadOnly="True"
+                                                                    CanUserSort="True"
+                                                                    SortMemberPath="Index"
+                                                                    HeaderStyle="{StaticResource IndexColumnHeaderStyle}"
+                                                                    CellStyle="{StaticResource IndexColumnCellStyle}">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
-                                                        <Grid>
-                                                            <TextBlock Text="!" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center"
-                                                                       Visibility="{Binding HasDiagnostics, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                                <TextBlock.Style>
-                                                                    <Style TargetType="TextBlock">
-                                                                        <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding HasBlockingDiagnostics}" Value="True">
-                                                                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </TextBlock.Style>
-                                                            </TextBlock>
-                                                            <TextBlock Text="●" FontSize="7" Foreground="{StaticResource AccentBrush}"
-                                                                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,3,2"
-                                                                       Visibility="{Binding IsModified, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                        </Grid>
+                                                        <TextBlock Text="{Binding Index, StringFormat=N0}"
+                                                                   Style="{StaticResource RecordIndexTextStyle}"
+                                                                   ToolTip="{Binding Path}" />
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="#" Binding="{Binding Index, StringFormat=N0}" Width="62" IsReadOnly="True" />
                                         </DataGrid.Columns>
                                     </DataGrid>
                                         <Border x:Name="LocalizationPanel"

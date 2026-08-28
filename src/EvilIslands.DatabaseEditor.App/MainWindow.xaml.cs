@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using EvilIslands.DatabaseEditor.App.Dialogs;
@@ -21,20 +22,34 @@ namespace EvilIslands.DatabaseEditor.App;
 
 public partial class MainWindow : Window
 {
+    private const int WmGetMinMaxInfo = 0x0024;
+    private const uint MonitorDefaultToNearest = 0x00000002;
+    private const string LocalizationKeyColumnIdentity = "texts:key";
+    private const string LocalizationTitleColumnIdentity = "texts:title";
+    private const string LocalizationDescriptionColumnIdentity = "texts:description";
     private static readonly IValueConverter ProjectionConverter = new SpreadsheetProjectionConverter();
     private readonly MainWindowViewModel _viewModel;
-    private readonly EditorPreferencesStore _preferences = new();
+    private readonly EditorPreferencesStore _preferences;
     private readonly Dictionary<DataGridColumn, SpreadsheetColumnViewModel> _spreadsheetColumns = [];
     private DataGridColumn? _localizationKeyColumn;
     private DataGridColumn? _localizationTitleColumn;
     private DataGridColumn? _localizationDescriptionColumn;
     private MainWindowViewModel? _spreadsheetViewModel;
+    private HwndSource? _windowSource;
+    private string? _columnLayoutTableKey;
     private bool _allowClose;
     private bool _closePromptPending;
 
-    public MainWindow()
+    public MainWindow() : this(new EditorPreferencesStore())
     {
+    }
+
+    internal MainWindow(EditorPreferencesStore preferences)
+    {
+        _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         InitializeComponent();
+        SourceInitialized += Window_SourceInitialized;
+        Closed += Window_Closed;
         RecordsGrid.CommandBindings.Add(new CommandBinding(
             ApplicationCommands.Copy,
             RecordsGrid_CopyExecuted,
@@ -145,7 +160,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        const int fixedColumnCount = 2;
+        PersistCurrentColumnWidths();
+        const int fixedColumnCount = 1;
         while (RecordsGrid.Columns.Count > fixedColumnCount)
         {
             RecordsGrid.Columns.RemoveAt(RecordsGrid.Columns.Count - 1);
@@ -157,10 +173,12 @@ public partial class MainWindow : Window
         _localizationDescriptionColumn = null;
         if (_spreadsheetViewModel?.SelectedTable is null)
         {
+            _columnLayoutTableKey = null;
             RecordsGrid.FrozenColumnCount = Math.Min(fixedColumnCount, RecordsGrid.Columns.Count);
             return;
         }
 
+        string tableKey = _spreadsheetViewModel.SelectedTable.Key;
         var headerTemplate = (DataTemplate)FindResource("SpreadsheetColumnHeaderTemplate");
         var headerStyle = (Style)FindResource("SpreadsheetColumnHeaderStyle");
         var identityHeaderStyle = (Style)FindResource("DatabaseIdentityColumnHeaderStyle");
@@ -200,9 +218,15 @@ public partial class MainWindow : Window
                     ? identityHeaderStyle
                     : headerStyle;
             column.CellStyle = CreateSpreadsheetCellStyle(descriptor);
-            column.Width = new DataGridLength(descriptor.Layout.PreferredWidth);
-            column.MinWidth = descriptor.Layout.MinimumWidth;
-            column.MaxWidth = descriptor.Layout.MaximumWidth;
+            SpreadsheetColumnLayout layout = descriptor.Layout;
+            column.MinWidth = layout.MinimumWidth;
+            column.MaxWidth = layout.MaximumWidth;
+            column.Width = new DataGridLength(GetRememberedColumnWidth(
+                tableKey,
+                descriptor.Identity,
+                layout.PreferredWidth,
+                layout.MinimumWidth,
+                layout.MaximumWidth));
             column.CanUserSort = descriptor.IsSortable;
             RecordsGrid.Columns.Add(column);
             _spreadsheetColumns.Add(column, descriptor);
@@ -211,23 +235,24 @@ public partial class MainWindow : Window
                 descriptor.FieldId == nameFieldId &&
                 _spreadsheetViewModel.HasTextsDocument)
             {
-                AddLocalizationColumns(elementStyle, editingStyle);
+                AddLocalizationColumns(elementStyle, editingStyle, tableKey);
                 localizationColumnsAdded = true;
             }
         }
 
         if (!localizationColumnsAdded && _spreadsheetViewModel.HasTextsDocument)
         {
-            AddLocalizationColumns(elementStyle, editingStyle);
+            AddLocalizationColumns(elementStyle, editingStyle, tableKey);
         }
 
+        _columnLayoutTableKey = tableKey;
         RecordsGrid.FrozenColumnCount = Math.Min(
-            _localizationTitleColumn is null ? 3 : 5,
+            _localizationTitleColumn is null ? 2 : 4,
             RecordsGrid.Columns.Count);
         UpdateSpreadsheetColumnReadOnlyStates();
     }
 
-    private void AddLocalizationColumns(Style elementStyle, Style editingStyle)
+    private void AddLocalizationColumns(Style elementStyle, Style editingStyle, string tableKey)
     {
         var localizationHeaderStyle = (Style)FindResource("LocalizationColumnHeaderStyle");
         _localizationKeyColumn = new DataGridTextColumn
@@ -238,9 +263,14 @@ public partial class MainWindow : Window
             HeaderStyle = localizationHeaderStyle,
             CellStyle = CreateLocalizationCellStyle(nameof(RecordRowViewModel.LocalizationKeyText)),
             IsReadOnly = true,
-            Width = new DataGridLength(250),
             MinWidth = 170,
             MaxWidth = 420,
+            Width = new DataGridLength(GetRememberedColumnWidth(
+                tableKey,
+                LocalizationKeyColumnIdentity,
+                250,
+                170,
+                420)),
         };
         _localizationTitleColumn = new DataGridTextColumn
         {
@@ -254,9 +284,14 @@ public partial class MainWindow : Window
             EditingElementStyle = editingStyle,
             HeaderStyle = localizationHeaderStyle,
             CellStyle = CreateLocalizationCellStyle(nameof(RecordRowViewModel.LocalizationTitle)),
-            Width = new DataGridLength(240),
             MinWidth = 160,
             MaxWidth = 520,
+            Width = new DataGridLength(GetRememberedColumnWidth(
+                tableKey,
+                LocalizationTitleColumnIdentity,
+                240,
+                160,
+                520)),
         };
         _localizationDescriptionColumn = new DataGridTextColumn
         {
@@ -270,13 +305,59 @@ public partial class MainWindow : Window
             EditingElementStyle = editingStyle,
             HeaderStyle = localizationHeaderStyle,
             CellStyle = CreateLocalizationCellStyle(nameof(RecordRowViewModel.LocalizationDescription)),
-            Width = new DataGridLength(320),
             MinWidth = 220,
             MaxWidth = 700,
+            Width = new DataGridLength(GetRememberedColumnWidth(
+                tableKey,
+                LocalizationDescriptionColumnIdentity,
+                320,
+                220,
+                700)),
         };
         RecordsGrid.Columns.Add(_localizationKeyColumn);
         RecordsGrid.Columns.Add(_localizationTitleColumn);
         RecordsGrid.Columns.Add(_localizationDescriptionColumn);
+    }
+
+    private double GetRememberedColumnWidth(
+        string tableKey,
+        string columnIdentity,
+        double preferredWidth,
+        double minimumWidth,
+        double maximumWidth)
+    {
+        double width = _preferences.GetColumnWidth(tableKey, columnIdentity) ?? preferredWidth;
+        return Math.Clamp(width, minimumWidth, maximumWidth);
+    }
+
+    private void PersistCurrentColumnWidths()
+    {
+        if (RecordsGrid is null || string.IsNullOrWhiteSpace(_columnLayoutTableKey))
+        {
+            return;
+        }
+
+        var widths = new Dictionary<string, double>(StringComparer.Ordinal);
+        foreach ((DataGridColumn gridColumn, SpreadsheetColumnViewModel descriptor) in _spreadsheetColumns)
+        {
+            AddWidth(descriptor.Identity, gridColumn);
+        }
+
+        AddWidth(LocalizationKeyColumnIdentity, _localizationKeyColumn);
+        AddWidth(LocalizationTitleColumnIdentity, _localizationTitleColumn);
+        AddWidth(LocalizationDescriptionColumnIdentity, _localizationDescriptionColumn);
+        if (widths.Count > 0)
+        {
+            _preferences.RememberColumnWidths(_columnLayoutTableKey, widths);
+        }
+
+        void AddWidth(string identity, DataGridColumn? column)
+        {
+            if (column is not null && double.IsFinite(column.ActualWidth) && column.ActualWidth > 0)
+            {
+                widths[identity] = column.ActualWidth;
+            }
+        }
     }
 
     private Style CreateLocalizationCellStyle(string toolTipProperty)
@@ -1117,6 +1198,60 @@ public partial class MainWindow : Window
         }
     }
 
+    private void Window_SourceInitialized(object? sender, EventArgs e)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        _windowSource = HwndSource.FromHwnd(handle);
+        _windowSource?.AddHook(WindowMessageHook);
+    }
+
+    private void Window_Closed(object? sender, EventArgs e)
+    {
+        if (_windowSource is not null)
+        {
+            _windowSource.RemoveHook(WindowMessageHook);
+            _windowSource = null;
+        }
+    }
+
+    private static IntPtr WindowMessageHook(
+        IntPtr windowHandle,
+        int message,
+        IntPtr wParam,
+        IntPtr lParam,
+        ref bool handled)
+    {
+        if (message != WmGetMinMaxInfo || lParam == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        IntPtr monitor = MonitorFromWindow(windowHandle, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero)
+        {
+            return IntPtr.Zero;
+        }
+
+        var monitorInfo = new NativeMonitorInfo
+        {
+            Size = (uint)Marshal.SizeOf<NativeMonitorInfo>(),
+        };
+        if (!GetMonitorInfo(monitor, ref monitorInfo))
+        {
+            return IntPtr.Zero;
+        }
+
+        NativeMinMaxInfo minMaxInfo = Marshal.PtrToStructure<NativeMinMaxInfo>(lParam);
+        minMaxInfo.MaxPosition.X = monitorInfo.WorkArea.Left - monitorInfo.MonitorArea.Left;
+        minMaxInfo.MaxPosition.Y = monitorInfo.WorkArea.Top - monitorInfo.MonitorArea.Top;
+        minMaxInfo.MaxSize.X = monitorInfo.WorkArea.Right - monitorInfo.WorkArea.Left;
+        minMaxInfo.MaxSize.Y = monitorInfo.WorkArea.Bottom - monitorInfo.WorkArea.Top;
+        minMaxInfo.MaxTrackSize = minMaxInfo.MaxSize;
+        Marshal.StructureToPtr(minMaxInfo, lParam, false);
+        handled = true;
+        return IntPtr.Zero;
+    }
+
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         // XAML loading can fail before the view model is assigned. In that
@@ -1125,6 +1260,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        PersistCurrentColumnWidths();
 
         if (_allowClose)
         {
@@ -1216,6 +1353,48 @@ public partial class MainWindow : Window
         _viewModel.SaveCopyRequested -= ViewModel_SaveCopyRequested;
         _viewModel.SearchFocusRequested -= ViewModel_SearchFocusRequested;
         _viewModel.Dispose();
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr windowHandle, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref NativeMonitorInfo monitorInfo);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMinMaxInfo
+    {
+        public NativePoint Reserved;
+        public NativePoint MaxSize;
+        public NativePoint MaxPosition;
+        public NativePoint MinTrackSize;
+        public NativePoint MaxTrackSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct NativeMonitorInfo
+    {
+        public uint Size;
+        public NativeRect MonitorArea;
+        public NativeRect WorkArea;
+        public uint Flags;
     }
 
     private sealed class SpreadsheetRecordComparer(

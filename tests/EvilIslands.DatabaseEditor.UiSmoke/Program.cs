@@ -1,10 +1,12 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -23,15 +25,24 @@ internal static class Program
     {
         CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ru-RU");
         CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("ru-RU");
+        string uiSettingsRoot = Path.Combine(
+            Path.GetTempPath(),
+            "EI-Database-Studio-UiSmoke",
+            "window-" + Guid.NewGuid().ToString("N"));
 
         try
         {
+            Directory.CreateDirectory(uiSettingsRoot);
+            var preferences = new EditorPreferencesStore(Path.Combine(uiSettingsRoot, "settings.json"));
+            preferences.RememberColumnWidths(
+                "units.prototypes",
+                new Dictionary<string, double> { ["0"] = 222 });
             var application = new EvilIslands.DatabaseEditor.App.App
             {
                 ShutdownMode = ShutdownMode.OnExplicitShutdown,
             };
             application.InitializeComponent();
-            var window = new MainWindow();
+            var window = new MainWindow(preferences);
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
             VerifySpreadsheetClipboardText();
@@ -52,6 +63,13 @@ internal static class Program
             Console.Error.WriteLine("FAIL: MainWindow XAML не загрузился при культуре ru-RU.");
             Console.Error.WriteLine(exception);
             return 1;
+        }
+        finally
+        {
+            if (Directory.Exists(uiSettingsRoot))
+            {
+                Directory.Delete(uiSettingsRoot, recursive: true);
+            }
         }
     }
 
@@ -153,10 +171,27 @@ internal static class Program
             grid.ClipboardCopyMode != DataGridClipboardCopyMode.None ||
             !grid.CommandBindings.OfType<CommandBinding>().Any(binding => binding.Command == ApplicationCommands.Copy) ||
             !grid.CommandBindings.OfType<CommandBinding>().Any(binding => binding.Command == ApplicationCommands.Paste) ||
-            grid.Columns.Count != 2)
+            grid.Columns.Count != 1 ||
+            !Equals(grid.Columns[0].Header, "#"))
         {
             throw new InvalidOperationException(
-                "RecordsGrid должен иметь две фиксированные колонки, выбор клеток и обе виртуализации.");
+                "RecordsGrid должен иметь одну центрированную колонку нумерации без пустого служебного столбца, выбор клеток и обе виртуализации.");
+        }
+
+        DataGridColumn indexColumn = grid.Columns[0];
+        var expectedHeaderStyle = (Style)window.Resources["IndexColumnHeaderStyle"];
+        var expectedCellStyle = (Style)window.Resources["IndexColumnCellStyle"];
+        var expectedTextStyle = (Style)window.Resources["RecordIndexTextStyle"];
+        if (!ReferenceEquals(indexColumn.HeaderStyle, expectedHeaderStyle) ||
+            !ReferenceEquals(indexColumn.CellStyle, expectedCellStyle) ||
+            indexColumn is not DataGridTemplateColumn templateColumn ||
+            templateColumn.CellTemplate?.LoadContent() is not TextBlock numberText ||
+            !ReferenceEquals(numberText.Style, expectedTextStyle) ||
+            numberText.TextAlignment != TextAlignment.Center ||
+            numberText.VerticalAlignment != VerticalAlignment.Center)
+        {
+            throw new InvalidOperationException(
+                "Номер строки должен быть выровнен по центру по горизонтали и вертикали.");
         }
     }
 
@@ -258,13 +293,32 @@ internal static class Program
         var databasePath = Path.Combine(databaseDirectory, "database.res");
         var store = new EditorPreferencesStore(settingsPath);
         store.RememberDatabasePath(databasePath);
+        store.RememberColumnWidths(
+            "items.materials",
+            new Dictionary<string, double>
+            {
+                ["0"] = 123.5,
+                ["texts:title"] = 211,
+                ["invalid"] = double.NaN,
+            });
         var reopenedStore = new EditorPreferencesStore(settingsPath);
         if (!string.Equals(
                 reopenedStore.GetLastDatabaseDirectory(),
                 Path.GetFullPath(databaseDirectory),
-                StringComparison.OrdinalIgnoreCase))
+                StringComparison.OrdinalIgnoreCase) ||
+            reopenedStore.GetColumnWidth("items.materials", "0") != 123.5 ||
+            reopenedStore.GetColumnWidth("items.materials", "texts:title") != 211 ||
+            reopenedStore.GetColumnWidth("items.materials", "invalid") is not null)
         {
-            throw new InvalidOperationException("Диалог открытия должен запоминать последнюю папку database.res.");
+            throw new InvalidOperationException(
+                "Настройки должны между запусками сохранять последнюю папку database.res и допустимую ширину каждой колонки.");
+        }
+
+        reopenedStore.RememberDatabasePath(databasePath);
+        if (new EditorPreferencesStore(settingsPath).GetColumnWidth("items.materials", "0") != 123.5)
+        {
+            throw new InvalidOperationException(
+                "Обновление последней папки не должно стирать сохранённые ширины таблиц.");
         }
 
         Directory.Delete(root, recursive: true);
@@ -468,6 +522,7 @@ internal static class Program
         window.Show();
         window.UpdateLayout();
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        VerifyMaximizedWindowFitsWorkArea(window);
         HashSet<int> prototypeFieldsWithSpecificProjections = prototypes.Columns
             .Where(column => column.Projection is not null &&
                              column.Projection.Kind != EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue)
@@ -487,11 +542,20 @@ internal static class Program
             _ => true,
         });
         if (window.FindName("RecordsGrid") is not DataGrid recordsGrid ||
-            recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 5 : 2) ||
-            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 5 : 3))
+            recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 4 : 1) ||
+            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 4 : 2))
         {
             throw new InvalidOperationException(
                 "DataGrid должен по умолчанию показать понятные значения без исходных raw-дубликатов и заморозить начало строки.");
+        }
+
+        DataGridColumn prototypeNameGridColumn = recordsGrid.Columns.Single(column =>
+            column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
+        if (prototypeNameGridColumn.Width.UnitType != DataGridLengthUnitType.Pixel ||
+            Math.Abs(prototypeNameGridColumn.Width.Value - 222) > 0.1)
+        {
+            throw new InvalidOperationException(
+                "Сохранённая ширина колонки должна применяться при новом создании окна редактора.");
         }
 
         if (viewModel.ShowAllColumns ||
@@ -515,7 +579,7 @@ internal static class Program
         if (!viewModel.ShowAllColumns ||
             viewModel.ColumnModeButtonText != "Понятные поля" ||
             viewModel.VisibleSpreadsheetColumns.Count != prototypes.Columns.Count ||
-            recordsGrid.Columns.Count != prototypes.Columns.Count + (viewModel.HasTextsDocument ? 5 : 2))
+            recordsGrid.Columns.Count != prototypes.Columns.Count + (viewModel.HasTextsDocument ? 4 : 1))
         {
             throw new InvalidOperationException(
                 "Режим технических полей должен восстановить все физические столбцы и расшифровки.");
@@ -524,7 +588,7 @@ internal static class Program
         viewModel.ToggleColumnModeCommand.Execute(null);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (viewModel.ShowAllColumns ||
-            recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 5 : 2) ||
+            recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 4 : 1) ||
             viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex"))
         {
             throw new InvalidOperationException(
@@ -790,7 +854,7 @@ internal static class Program
             !viewModel.VisibleSpreadsheetColumns.Any(column =>
                 column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue) ||
             recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
-                (viewModel.HasTextsDocument ? 5 : 2))
+                (viewModel.HasTextsDocument ? 4 : 1))
         {
             throw new InvalidOperationException(
                 "acks.db/Ответы и команды должен по умолчанию показывать File/параметры без соседних raw-hex столбцов.");
@@ -868,8 +932,8 @@ internal static class Program
             "Маска травм", "Магазин 1", "Магазин 2", "Магазин 3", "Магазин 4", "Магазин 5",
         ];
         if (recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
-                (viewModel.HasTextsDocument ? 5 : 2) ||
-            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 5 : 3) ||
+                (viewModel.HasTextsDocument ? 4 : 1) ||
+            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 4 : 2) ||
             !viewModel.VisibleSpreadsheetColumns.Select(column => column.Title)
                 .SequenceEqual(readableMaterialHeaders, StringComparer.Ordinal))
         {
@@ -1241,72 +1305,89 @@ internal static class Program
 
     private static void VerifyUnsavedChangesClose(string sourcePath)
     {
-        var closeWindow = new MainWindow();
-        if (closeWindow.DataContext is not MainWindowViewModel closeViewModel)
+        string settingsRoot = Path.Combine(
+            Path.GetTempPath(),
+            "EI-Database-Studio-UiSmoke",
+            "close-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(settingsRoot);
+        var closeWindow = new MainWindow(new EditorPreferencesStore(Path.Combine(settingsRoot, "settings.json")));
+        try
         {
-            throw new InvalidOperationException("MainWindow не создал рабочую модель для close-regression.");
-        }
-
-        RunWithDispatcher(() => closeViewModel.OpenPathAsync(sourcePath));
-        DatabaseTableViewModel table = closeViewModel.Databases
-            .SelectMany(database => database.Tables)
-            .Single(candidate => candidate.Key == "units.prototypes");
-        closeViewModel.SelectTableCommand.Execute(table);
-        RecordFieldViewModel changedCell = table.Records[0].GetCell(0)
-            ?? throw new InvalidOperationException("Close-regression не нашёл редактируемую клетку имени.");
-        changedCell.EditorText += " close-regression";
-        if (!closeViewModel.HasChanges || closeViewModel.ChangeCount != 1)
-        {
-            throw new InvalidOperationException("Close-regression не создал одно несохранённое изменение.");
-        }
-
-        closeWindow.Show();
-        closeWindow.UpdateLayout();
-        bool promptSeen = false;
-        Exception? promptFailure = null;
-        closeWindow.Dispatcher.BeginInvoke(
-            DispatcherPriority.Background,
-            new Action(() =>
+            if (closeWindow.DataContext is not MainWindowViewModel closeViewModel)
             {
-                ConfirmDialog? dialog = null;
-                try
+                throw new InvalidOperationException("MainWindow не создал рабочую модель для close-regression.");
+            }
+
+            RunWithDispatcher(() => closeViewModel.OpenPathAsync(sourcePath));
+            DatabaseTableViewModel table = closeViewModel.Databases
+                .SelectMany(database => database.Tables)
+                .Single(candidate => candidate.Key == "units.prototypes");
+            closeViewModel.SelectTableCommand.Execute(table);
+            RecordFieldViewModel changedCell = table.Records[0].GetCell(0)
+                ?? throw new InvalidOperationException("Close-regression не нашёл редактируемую клетку имени.");
+            changedCell.EditorText += " close-regression";
+            if (!closeViewModel.HasChanges || closeViewModel.ChangeCount != 1)
+            {
+                throw new InvalidOperationException("Close-regression не создал одно несохранённое изменение.");
+            }
+
+            closeWindow.Show();
+            closeWindow.UpdateLayout();
+            bool promptSeen = false;
+            Exception? promptFailure = null;
+            closeWindow.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() =>
                 {
-                    dialog = Application.Current.Windows.OfType<ConfirmDialog>().SingleOrDefault();
-                    if (dialog is null)
+                    ConfirmDialog? dialog = null;
+                    try
                     {
-                        throw new InvalidOperationException(
-                            "Закрытие с изменениями не открыло отложенный ConfirmDialog.");
-                    }
+                        dialog = Application.Current.Windows.OfType<ConfirmDialog>().SingleOrDefault();
+                        if (dialog is null)
+                        {
+                            throw new InvalidOperationException(
+                                "Закрытие с изменениями не открыло отложенный ConfirmDialog.");
+                        }
 
-                    promptSeen = true;
-                    if (dialog.FindName("ConfirmButton") is not Button confirmButton)
+                        promptSeen = true;
+                        if (dialog.FindName("ConfirmButton") is not Button confirmButton)
+                        {
+                            throw new InvalidOperationException("ConfirmDialog не содержит кнопку подтверждения.");
+                        }
+
+                        confirmButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    catch (Exception exception)
                     {
-                        throw new InvalidOperationException("ConfirmDialog не содержит кнопку подтверждения.");
+                        promptFailure = exception;
+                        if (dialog?.IsVisible is true)
+                        {
+                            dialog.DialogResult = false;
+                        }
                     }
+                }));
 
-                    confirmButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                }
-                catch (Exception exception)
-                {
-                    promptFailure = exception;
-                    if (dialog?.IsVisible is true)
-                    {
-                        dialog.DialogResult = false;
-                    }
-                }
-            }));
+            closeWindow.Close();
+            closeWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            if (promptFailure is not null)
+            {
+                throw new InvalidOperationException("Не пройдена проверка безопасного закрытия.", promptFailure);
+            }
 
-        closeWindow.Close();
-        closeWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-        if (promptFailure is not null)
-        {
-            throw new InvalidOperationException("Не пройдена проверка безопасного закрытия.", promptFailure);
+            if (!promptSeen || closeWindow.IsVisible)
+            {
+                throw new InvalidOperationException(
+                    "Подтверждение закрытия без сохранения должно закрыть окно без WPF InvalidOperationException.");
+            }
         }
-
-        if (!promptSeen || closeWindow.IsVisible)
+        finally
         {
-            throw new InvalidOperationException(
-                "Подтверждение закрытия без сохранения должно закрыть окно без WPF InvalidOperationException.");
+            if (closeWindow.IsVisible)
+            {
+                closeWindow.Hide();
+            }
+
+            Directory.Delete(settingsRoot, recursive: true);
         }
     }
 
@@ -1352,6 +1433,35 @@ internal static class Program
         return null;
     }
 
+    private static void VerifyMaximizedWindowFitsWorkArea(MainWindow window)
+    {
+        window.WindowState = WindowState.Maximized;
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+
+        IntPtr handle = new WindowInteropHelper(window).Handle;
+        IntPtr monitor = MonitorFromWindow(handle, 0x00000002);
+        var monitorInfo = new NativeMonitorInfo
+        {
+            Size = (uint)Marshal.SizeOf<NativeMonitorInfo>(),
+        };
+        if (monitor == IntPtr.Zero ||
+            !GetMonitorInfo(monitor, ref monitorInfo) ||
+            !GetWindowRect(handle, out NativeRect windowRect) ||
+            windowRect.Left < monitorInfo.WorkArea.Left - 1 ||
+            windowRect.Top < monitorInfo.WorkArea.Top - 1 ||
+            windowRect.Right > monitorInfo.WorkArea.Right + 1 ||
+            windowRect.Bottom > monitorInfo.WorkArea.Bottom + 1)
+        {
+            throw new InvalidOperationException(
+                "Развёрнутое окно должно оставаться внутри рабочей области и не уходить под панель задач Windows.");
+        }
+
+        window.WindowState = WindowState.Normal;
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+    }
+
     private static void RunWithDispatcher(Func<Task> operation)
     {
         var dispatcher = Dispatcher.CurrentDispatcher;
@@ -1373,6 +1483,35 @@ internal static class Program
         {
             SynchronizationContext.SetSynchronizationContext(previousContext);
         }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr windowHandle, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref NativeMonitorInfo monitorInfo);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(IntPtr windowHandle, out NativeRect rectangle);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct NativeMonitorInfo
+    {
+        public uint Size;
+        public NativeRect MonitorArea;
+        public NativeRect WorkArea;
+        public uint Flags;
     }
 
     private sealed class FakeWorkspaceService : IDatabaseWorkspaceService
