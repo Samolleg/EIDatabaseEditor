@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using EvilIslands.DatabaseEditor.App;
+using EvilIslands.DatabaseEditor.App.Dialogs;
 using EvilIslands.DatabaseEditor.App.Models;
 using EvilIslands.DatabaseEditor.App.Services;
 using EvilIslands.DatabaseEditor.App.ViewModels;
@@ -64,6 +65,21 @@ internal static class Program
         if (!Equals(selectedBackground, Brushes.Transparent))
         {
             throw new InvalidOperationException("Выбранная DataGridCell должна оставлять видимым тёмно-зелёный фон строки.");
+        }
+
+        var referenceItemStyle = (Style)window.Resources["SpreadsheetReferenceItem"];
+        Trigger? selectedReferenceTrigger = referenceItemStyle.Triggers.OfType<Trigger>()
+            .FirstOrDefault(trigger => trigger.Property == ComboBoxItem.IsSelectedProperty && Equals(trigger.Value, true));
+        var selectedReferenceBackground = selectedReferenceTrigger?.Setters.OfType<Setter>()
+            .FirstOrDefault(setter => setter.Property == Control.BackgroundProperty)?.Value;
+        var selectedReferenceForeground = selectedReferenceTrigger?.Setters.OfType<Setter>()
+            .FirstOrDefault(setter => setter.Property == Control.ForegroundProperty)?.Value;
+        if (selectedReferenceBackground is not SolidColorBrush selectedBrush ||
+            selectedBrush.Color != Color.FromRgb(0x16, 0x4C, 0x40) ||
+            !Equals(selectedReferenceForeground, Brushes.White))
+        {
+            throw new InvalidOperationException(
+                "Выбранный пункт ссылочного ComboBox обязан использовать контрастный тёмно-зелёный фон и белый текст.");
         }
     }
 
@@ -333,6 +349,26 @@ internal static class Program
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         ComboBox referenceEditor = FindVisualChild<ComboBox>(raceGridColumn.GetCellContent(referenceRecord))
             ?? throw new InvalidOperationException("DataGrid не создал ComboBox для ссылочной клетки.");
+        referenceEditor.IsDropDownOpen = true;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        object? selectedReferenceItem = referenceEditor.SelectedItem;
+        ComboBoxItem? selectedItem = selectedReferenceItem is null
+            ? null
+            : referenceEditor.ItemContainerGenerator.ContainerFromItem(selectedReferenceItem) as ComboBoxItem;
+        Color? selectedBackgroundColor = (selectedItem?.Background as SolidColorBrush)?.Color;
+        Color? selectedForegroundColor = (selectedItem?.Foreground as SolidColorBrush)?.Color;
+        if (selectedReferenceItem is null ||
+            selectedItem is null ||
+            selectedBackgroundColor != Color.FromRgb(0x16, 0x4C, 0x40) ||
+            selectedForegroundColor != Colors.White)
+        {
+            throw new InvalidOperationException(
+                "Реально открытый список Base Race должен сохранять читаемый выбранный пункт тёмно-зелёным с белым текстом; " +
+                $"item={selectedReferenceItem ?? "<null>"}, container={selectedItem is not null}, " +
+                $"background={selectedBackgroundColor?.ToString() ?? "<null>"}, foreground={selectedForegroundColor?.ToString() ?? "<null>"}.");
+        }
+
+        referenceEditor.IsDropDownOpen = false;
         referenceEditor.SelectedValue = replacementReference.Value;
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         recordsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
@@ -686,6 +722,80 @@ internal static class Program
             encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using var stream = new FileStream(screenshotPath, FileMode.Create, FileAccess.Write, FileShare.None);
             encoder.Save(stream);
+        }
+
+        VerifyUnsavedChangesClose(sourcePath);
+    }
+
+    private static void VerifyUnsavedChangesClose(string sourcePath)
+    {
+        var closeWindow = new MainWindow();
+        if (closeWindow.DataContext is not MainWindowViewModel closeViewModel)
+        {
+            throw new InvalidOperationException("MainWindow не создал рабочую модель для close-regression.");
+        }
+
+        RunWithDispatcher(() => closeViewModel.OpenPathAsync(sourcePath));
+        DatabaseTableViewModel table = closeViewModel.Databases
+            .SelectMany(database => database.Tables)
+            .Single(candidate => candidate.Key == "units.prototypes");
+        closeViewModel.SelectTableCommand.Execute(table);
+        closeViewModel.ConfirmEditMode();
+        RecordFieldViewModel changedCell = table.Records[0].GetCell(0)
+            ?? throw new InvalidOperationException("Close-regression не нашёл редактируемую клетку имени.");
+        changedCell.EditorText += " close-regression";
+        if (!closeViewModel.HasChanges || closeViewModel.ChangeCount != 1)
+        {
+            throw new InvalidOperationException("Close-regression не создал одно несохранённое изменение.");
+        }
+
+        closeWindow.Show();
+        closeWindow.UpdateLayout();
+        bool promptSeen = false;
+        Exception? promptFailure = null;
+        closeWindow.Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() =>
+            {
+                ConfirmDialog? dialog = null;
+                try
+                {
+                    dialog = Application.Current.Windows.OfType<ConfirmDialog>().SingleOrDefault();
+                    if (dialog is null)
+                    {
+                        throw new InvalidOperationException(
+                            "Закрытие с изменениями не открыло отложенный ConfirmDialog.");
+                    }
+
+                    promptSeen = true;
+                    if (dialog.FindName("ConfirmButton") is not Button confirmButton)
+                    {
+                        throw new InvalidOperationException("ConfirmDialog не содержит кнопку подтверждения.");
+                    }
+
+                    confirmButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                catch (Exception exception)
+                {
+                    promptFailure = exception;
+                    if (dialog?.IsVisible is true)
+                    {
+                        dialog.DialogResult = false;
+                    }
+                }
+            }));
+
+        closeWindow.Close();
+        closeWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        if (promptFailure is not null)
+        {
+            throw new InvalidOperationException("Не пройдена проверка безопасного закрытия.", promptFailure);
+        }
+
+        if (!promptSeen || closeWindow.IsVisible)
+        {
+            throw new InvalidOperationException(
+                "Подтверждение закрытия без сохранения должно закрыть окно без WPF InvalidOperationException.");
         }
     }
 

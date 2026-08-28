@@ -128,6 +128,10 @@
                     <Setter Property="Background" Value="#164C40" />
                     <Setter Property="Foreground" Value="White" />
                 </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#164C40" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
             </Style.Triggers>
         </Style>
 

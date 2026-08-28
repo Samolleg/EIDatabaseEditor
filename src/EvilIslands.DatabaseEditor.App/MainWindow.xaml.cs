@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<DataGridColumn, SpreadsheetColumnViewModel> _spreadsheetColumns = [];
     private MainWindowViewModel? _spreadsheetViewModel;
     private bool _allowClose;
+    private bool _closePromptPending;
 
     public MainWindow()
     {
@@ -568,25 +569,43 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!_allowClose && _viewModel.IsBusy)
+        if (_allowClose)
         {
-            e.Cancel = true;
-            ShowSafetyDialog(
-                "Операция ещё выполняется",
-                "Дождитесь завершения текущей операции перед закрытием приложения.",
-                _viewModel.IsOperationCancelable
-                    ? "Чтение можно отменить кнопкой «Отмена», после чего закрыть окно."
-                    : "Атомарное сохранение уже началось и должно завершиться, чтобы не оставить неполный файл.");
+            DetachAndDispose();
             return;
         }
 
-        if (_allowClose || !_viewModel.HasChanges)
+        if (_closePromptPending)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        if (_viewModel.IsBusy)
+        {
+            e.Cancel = true;
+            ScheduleClosePrompt(() =>
+                ShowSafetyDialog(
+                    "Операция ещё выполняется",
+                    "Дождитесь завершения текущей операции перед закрытием приложения.",
+                    _viewModel.IsOperationCancelable
+                        ? "Чтение можно отменить кнопкой «Отмена», после чего закрыть окно."
+                        : "Атомарное сохранение уже началось и должно завершиться, чтобы не оставить неполный файл."));
+            return;
+        }
+
+        if (!_viewModel.HasChanges)
         {
             DetachAndDispose();
             return;
         }
 
         e.Cancel = true;
+        ScheduleClosePrompt(ShowUnsavedChangesClosePrompt);
+    }
+
+    private void ShowUnsavedChangesClosePrompt()
+    {
         var dialog = new ConfirmDialog(
             "Закрыть без сохранения копии?",
             $"В рабочей памяти осталось изменений: {_viewModel.ChangeCount}.",
@@ -602,6 +621,27 @@ public partial class MainWindow : Window
             _allowClose = true;
             Close();
         }
+    }
+
+    private void ScheduleClosePrompt(Action showPrompt)
+    {
+        _closePromptPending = true;
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Normal,
+            new Action(() =>
+            {
+                try
+                {
+                    if (!_allowClose)
+                    {
+                        showPrompt();
+                    }
+                }
+                finally
+                {
+                    _closePromptPending = false;
+                }
+            }));
     }
 
     private void DetachAndDispose()
