@@ -152,8 +152,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         byte sectionId,
         DatabaseSupportState supportState,
         bool canAppendRecords,
-        IReadOnlyList<RecordRowViewModel> records,
-        IReadOnlyDictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>? referenceChoices = null)
+        IReadOnlyList<RecordRowViewModel> records)
     {
         GroupKey = groupKey;
         GroupTitle = groupTitle;
@@ -165,10 +164,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         CanAppendRecords = canAppendRecords;
         Records = new ObservableCollection<RecordRowViewModel>(records);
         Records.CollectionChanged += Records_CollectionChanged;
-        Columns = BuildColumns(
-            records,
-            supportState == DatabaseSupportState.Editable,
-            referenceChoices ?? new Dictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>());
+        Columns = BuildColumns(records, supportState == DatabaseSupportState.Editable);
         ReindexRecords();
     }
 
@@ -247,8 +243,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
     private static IReadOnlyList<SpreadsheetColumnViewModel> BuildColumns(
         IReadOnlyList<RecordRowViewModel> records,
-        bool tableIsEditable,
-        IReadOnlyDictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>> referenceChoices)
+        bool tableIsEditable)
     {
         if (records.Count == 0)
         {
@@ -295,10 +290,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                     new SpreadsheetColumnAccumulator(
                         field,
                         projection,
-                        tableIsEditable && projection is null && field.IsEditable,
-                        projection is null && referenceChoices.TryGetValue(field.Id, out var choices)
-                            ? choices
-                            : []));
+                        tableIsEditable && projection is null && field.IsEditable));
                 return;
             }
 
@@ -316,8 +308,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         public SpreadsheetColumnAccumulator(
             DatabaseField field,
             DatabaseFieldProjection? projection,
-            bool isEditable,
-            RangeObservableCollection<ReferenceChoiceViewModel>? referenceChoices)
+            bool isEditable)
         {
             FieldId = field.Id;
             Projection = projection;
@@ -326,7 +317,6 @@ internal sealed class DatabaseTableViewModel : ObservableObject
             Kind = GetDisplayKind(field.Kind, projection);
             DisplayOrder = projection?.DisplayOrder ?? field.DisplayOrder;
             IsEditable = isEditable;
-            ReferenceChoices = referenceChoices;
         }
 
         public int FieldId { get; }
@@ -342,8 +332,6 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         private int DisplayOrder { get; }
 
         private bool IsEditable { get; set; }
-
-        private RangeObservableCollection<ReferenceChoiceViewModel>? ReferenceChoices { get; }
 
         public void Merge(
             DatabaseField field,
@@ -366,8 +354,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                 IsEditable,
                 isNameField,
                 Projection,
-                DisplayOrder,
-                ReferenceChoices);
+                DisplayOrder);
 
         private static string BuildKey(DatabaseField field, DatabaseFieldProjection? projection) =>
             projection is null ? field.Key : $"{field.Key}[{projection.Index}]";
@@ -384,11 +371,6 @@ internal sealed class DatabaseTableViewModel : ObservableObject
     }
 }
 
-internal sealed record ReferenceChoiceViewModel(
-    string Value,
-    string DisplayText,
-    bool IsKnown);
-
 internal sealed record SpreadsheetColumnViewModel(
     int FieldId,
     string Key,
@@ -397,10 +379,9 @@ internal sealed record SpreadsheetColumnViewModel(
     bool IsEditable,
     bool IsNameField,
     DatabaseFieldProjection? Projection,
-    int DisplayOrder,
-    RangeObservableCollection<ReferenceChoiceViewModel>? ReferenceChoices = null)
+    int DisplayOrder)
 {
-    public string Subtitle => HasReferenceChoices ? $"{Key} · {Kind} · список" : $"{Key} · {Kind}";
+    public string Subtitle => $"{Key} · {Kind}";
 
     public string HeaderToolTip => $"{Title}\n{Subtitle}";
 
@@ -415,8 +396,6 @@ internal sealed record SpreadsheetColumnViewModel(
         "UInt32List" or "Float32List" or "ByteList");
 
     public bool IsPrimitive => Kind is "String" or "FixedString" or "Int32" or "UInt32" or "Float32" or "Byte" or "Boolean";
-
-    public bool HasReferenceChoices => ReferenceChoices is { Count: > 0 };
 }
 
 internal readonly record struct SpreadsheetColumnLayout(

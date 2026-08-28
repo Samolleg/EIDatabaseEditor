@@ -1036,7 +1036,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         RefreshAllCounts();
         OnPropertyChanged(nameof(HasChanges));
-        RefreshReferenceChoicesForTargetTable(table.Key);
     }
 
     private void AddRecordInsertionChange(RecordRowViewModel record)
@@ -1091,7 +1090,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RefreshChangedField(RecordRowViewModel record, RecordFieldViewModel field)
     {
         record.RefreshState();
-        RefreshReferenceChoicesForTargetTable(record.TableKey, field.Id, record.NameFieldId);
         if (record.IsAdded)
         {
             string key = GetRecordInsertionChangeKey(record);
@@ -1130,85 +1128,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
         RecordsView.Refresh();
     }
-
-    private void RefreshReferenceChoicesForTargetTable(
-        string targetTableKey,
-        int? changedFieldId = null,
-        int? changedNameFieldId = null)
-    {
-        foreach (DatabaseScalarReference reference in DatabaseReferenceCatalog.ScalarReferences.Where(rule =>
-                     rule.TargetTableKey.Equals(targetTableKey, StringComparison.Ordinal) &&
-                     (changedFieldId is null ||
-                      changedFieldId == rule.TargetFieldId ||
-                      changedFieldId == changedNameFieldId)))
-        {
-            DatabaseTableViewModel? source = Databases.SelectMany(database => database.Tables)
-                .FirstOrDefault(table => table.Key.Equals(reference.SourceTableKey, StringComparison.Ordinal));
-            DatabaseTableViewModel? target = Databases.SelectMany(database => database.Tables)
-                .FirstOrDefault(table => table.Key.Equals(reference.TargetTableKey, StringComparison.Ordinal));
-            RangeObservableCollection<ReferenceChoiceViewModel>? choices = source?.Columns
-                .FirstOrDefault(column => column.FieldId == reference.SourceFieldId && column.Projection is null)
-                ?.ReferenceChoices;
-            if (source is null || target is null || choices is null)
-            {
-                continue;
-            }
-
-            var byValue = new Dictionary<string, ReferenceChoiceViewModel>(StringComparer.OrdinalIgnoreCase);
-            if (reference.AllowEmpty)
-            {
-                byValue[string.Empty] = new ReferenceChoiceViewModel(string.Empty, "— не задано —", true);
-            }
-
-            if (!string.IsNullOrWhiteSpace(reference.Sentinel))
-            {
-                byValue[reference.Sentinel] = new ReferenceChoiceViewModel(
-                    reference.Sentinel,
-                    $"{reference.Sentinel} — служебное значение",
-                    true);
-            }
-
-            foreach (RecordRowViewModel targetRecord in target.Records)
-            {
-                string value = GetRecordFieldText(targetRecord, reference.TargetFieldId);
-                if (value.Length == 0 || byValue.ContainsKey(value))
-                {
-                    continue;
-                }
-
-                string displayName = targetRecord.DisplayName.Trim();
-                byValue[value] = new ReferenceChoiceViewModel(
-                    value,
-                    displayName.Length == 0 || displayName.Equals(value, StringComparison.OrdinalIgnoreCase)
-                        ? value
-                        : $"{value} — {displayName}",
-                    true);
-            }
-
-            foreach (RecordRowViewModel sourceRecord in source.Records)
-            {
-                string value = GetRecordFieldText(sourceRecord, reference.SourceFieldId);
-                if (value.Length == 0 || byValue.ContainsKey(value))
-                {
-                    continue;
-                }
-
-                byValue[value] = new ReferenceChoiceViewModel(
-                    value,
-                    $"{value} — отсутствует в «{target.Title}»",
-                    false);
-            }
-
-            ReferenceChoiceViewModel[] updated = byValue.Values
-                .OrderBy(choice => choice.Value.Length == 0 ? 0 : choice.IsKnown ? 1 : 2)
-                .ThenBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
-                .ToArray();
-            choices.ReplaceWith(updated);
-        }
-    }
-
-    private static string GetRecordFieldText(RecordRowViewModel record, int fieldId) =>
-        record.FieldDefinitions.FirstOrDefault(field => field.Id == fieldId)?.Value.ToString()?.Trim() ?? string.Empty;
 
     private async void RefreshValidationDeferred() =>
         await RefreshValidationAsync(deferred: true);

@@ -115,47 +115,6 @@
             <Setter Property="ToolTipService.ShowDuration" Value="12000" />
         </Style>
 
-        <Style x:Key="SpreadsheetReferenceItem" TargetType="ComboBoxItem">
-            <Setter Property="Background" Value="#242424" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="Padding" Value="8,5" />
-            <Style.Triggers>
-                <DataTrigger Binding="{Binding IsKnown}" Value="False">
-                    <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
-                    <Setter Property="IsEnabled" Value="False" />
-                </DataTrigger>
-                <Trigger Property="IsHighlighted" Value="True">
-                    <Setter Property="Background" Value="#164C40" />
-                    <Setter Property="Foreground" Value="White" />
-                </Trigger>
-                <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#164C40" />
-                    <Setter Property="Foreground" Value="White" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="SpreadsheetReferenceDisplay" TargetType="ComboBox">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Padding" Value="2,0" />
-            <Setter Property="IsHitTestVisible" Value="False" />
-            <Setter Property="Focusable" Value="False" />
-            <Setter Property="ItemContainerStyle" Value="{StaticResource SpreadsheetReferenceItem}" />
-            <Setter Property="ToolTip" Value="{Binding SelectionBoxItem, RelativeSource={RelativeSource Self}}" />
-        </Style>
-
-        <Style x:Key="SpreadsheetReferenceEditor" TargetType="ComboBox">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="Background" Value="#181818" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="5,2" />
-            <Setter Property="IsTextSearchEnabled" Value="True" />
-            <Setter Property="StaysOpenOnEdit" Value="True" />
-            <Setter Property="ItemContainerStyle" Value="{StaticResource SpreadsheetReferenceItem}" />
-        </Style>
     </Window.Resources>
 
     <Border Background="{StaticResource WindowBrush}"

@@ -1,5 +1,4 @@
 using System.IO;
-using EvilIslands.DatabaseEditor.App.Infrastructure;
 using EvilIslands.DatabaseEditor.App.Models;
 using EvilIslands.DatabaseEditor.Core;
 
@@ -90,8 +89,6 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         IReadOnlyList<DatabaseGroup> groups,
         CancellationToken cancellationToken)
     {
-        IReadOnlyDictionary<string, IReadOnlyDictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>>
-            referenceChoices = BuildReferenceChoices(groups, cancellationToken);
         var result = new DatabaseGroupViewModel[groups.Count];
         for (var groupIndex = 0; groupIndex < result.Length; groupIndex++)
         {
@@ -125,8 +122,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                     table.SectionId,
                     table.SupportState,
                     table.CanAppendRecords,
-                    records,
-                    referenceChoices.TryGetValue(table.Key, out var tableChoices) ? tableChoices : null);
+                    records);
             }
 
             result[groupIndex] = new DatabaseGroupViewModel(
@@ -139,98 +135,6 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 
         return result;
     }
-
-    private static IReadOnlyDictionary<string, IReadOnlyDictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>>
-        BuildReferenceChoices(
-            IReadOnlyList<DatabaseGroup> groups,
-            CancellationToken cancellationToken)
-    {
-        var tables = groups
-            .SelectMany(group => group.Tables)
-            .ToDictionary(table => table.Key, StringComparer.Ordinal);
-        var result = new Dictionary<string, Dictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>>(
-            StringComparer.Ordinal);
-
-        foreach (DatabaseScalarReference reference in DatabaseReferenceCatalog.ScalarReferences)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!tables.TryGetValue(reference.SourceTableKey, out DatabaseTable? source) ||
-                !tables.TryGetValue(reference.TargetTableKey, out DatabaseTable? target) ||
-                !source.IsEditable ||
-                !source.Records.SelectMany(record => record.Fields)
-                    .Any(field => field.Id == reference.SourceFieldId && field.IsEditable))
-            {
-                continue;
-            }
-
-            var byValue = new Dictionary<string, ReferenceChoiceViewModel>(StringComparer.OrdinalIgnoreCase);
-            if (reference.AllowEmpty)
-            {
-                byValue[string.Empty] = new ReferenceChoiceViewModel(string.Empty, "— не задано —", true);
-            }
-
-            if (!string.IsNullOrWhiteSpace(reference.Sentinel))
-            {
-                byValue[reference.Sentinel] = new ReferenceChoiceViewModel(
-                    reference.Sentinel,
-                    $"{reference.Sentinel} — служебное значение",
-                    true);
-            }
-
-            foreach (DatabaseRecord targetRecord in target.Records)
-            {
-                string value = GetFieldText(targetRecord, reference.TargetFieldId);
-                if (value.Length == 0 || byValue.ContainsKey(value))
-                {
-                    continue;
-                }
-
-                string displayName = targetRecord.DisplayName.Trim();
-                byValue[value] = new ReferenceChoiceViewModel(
-                    value,
-                    displayName.Length == 0 || displayName.Equals(value, StringComparison.OrdinalIgnoreCase)
-                        ? value
-                        : $"{value} — {displayName}",
-                    true);
-            }
-
-            foreach (DatabaseRecord sourceRecord in source.Records)
-            {
-                string value = GetFieldText(sourceRecord, reference.SourceFieldId);
-                if (value.Length == 0 || byValue.ContainsKey(value))
-                {
-                    continue;
-                }
-
-                byValue[value] = new ReferenceChoiceViewModel(
-                    value,
-                    $"{value} — отсутствует в «{target.Title}»",
-                    false);
-            }
-
-            ReferenceChoiceViewModel[] orderedChoices = byValue.Values
-                .OrderBy(choice => choice.Value.Length == 0 ? 0 : choice.IsKnown ? 1 : 2)
-                .ThenBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
-                .ToArray();
-            var choices = new RangeObservableCollection<ReferenceChoiceViewModel>();
-            choices.ReplaceWith(orderedChoices);
-            if (!result.TryGetValue(reference.SourceTableKey, out var existing))
-            {
-                existing = new Dictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>();
-                result.Add(reference.SourceTableKey, existing);
-            }
-
-            existing[reference.SourceFieldId] = choices;
-        }
-
-        return result.ToDictionary(
-            pair => pair.Key,
-            pair => (IReadOnlyDictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>)pair.Value,
-            StringComparer.Ordinal);
-    }
-
-    private static string GetFieldText(DatabaseRecord record, int fieldId) =>
-        record.Fields.FirstOrDefault(field => field.Id == fieldId)?.Value.ToString()?.Trim() ?? string.Empty;
 
     private static IReadOnlyList<ResourceRowViewModel> MapResources(
         IReadOnlyList<DatabaseResourceDescriptor> resources,

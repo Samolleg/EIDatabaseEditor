@@ -67,20 +67,6 @@ internal static class Program
             throw new InvalidOperationException("Выбранная DataGridCell должна оставлять видимым тёмно-зелёный фон строки.");
         }
 
-        var referenceItemStyle = (Style)window.Resources["SpreadsheetReferenceItem"];
-        Trigger? selectedReferenceTrigger = referenceItemStyle.Triggers.OfType<Trigger>()
-            .FirstOrDefault(trigger => trigger.Property == ComboBoxItem.IsSelectedProperty && Equals(trigger.Value, true));
-        var selectedReferenceBackground = selectedReferenceTrigger?.Setters.OfType<Setter>()
-            .FirstOrDefault(setter => setter.Property == Control.BackgroundProperty)?.Value;
-        var selectedReferenceForeground = selectedReferenceTrigger?.Setters.OfType<Setter>()
-            .FirstOrDefault(setter => setter.Property == Control.ForegroundProperty)?.Value;
-        if (selectedReferenceBackground is not SolidColorBrush selectedBrush ||
-            selectedBrush.Color != Color.FromRgb(0x16, 0x4C, 0x40) ||
-            !Equals(selectedReferenceForeground, Brushes.White))
-        {
-            throw new InvalidOperationException(
-                "Выбранный пункт ссылочного ComboBox обязан использовать контрастный тёмно-зелёный фон и белый текст.");
-        }
     }
 
     private static void VerifyForegroundSetter(Style style, SolidColorBrush expected, string styleName)
@@ -232,23 +218,10 @@ internal static class Program
             .Select(record => record.FieldDefinitions.First(field => field.Id == 0).Value.ToString() ?? string.Empty)
             .Where(value => value.Length > 0)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        HashSet<string> knownRaceChoices = (raceReferenceColumn.ReferenceChoices ?? [])
-            .Where(choice => choice.IsKnown)
-            .Select(choice => choice.Value)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        string[] missingRaceValues = prototypes.Records
-            .Select(record => record.FieldDefinitions.First(field => field.Id == 1).Value.ToString() ?? string.Empty)
-            .Where(value => value.Length > 0 && !raceNames.Contains(value))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (!raceReferenceColumn.HasReferenceChoices ||
-            !raceNames.IsSubsetOf(knownRaceChoices) ||
-            missingRaceValues.Any(value =>
-                raceReferenceColumn.ReferenceChoices?.Any(choice =>
-                    !choice.IsKnown && choice.Value.Equals(value, StringComparison.OrdinalIgnoreCase)) is not true))
+        if (!raceReferenceColumn.IsEditable || raceReferenceColumn.Kind != "String")
         {
             throw new InvalidOperationException(
-                "Base Race должна использовать общий список рас и сохранять видимыми отсутствующие legacy-ссылки.");
+                "Base Race должна оставаться обычным редактируемым строковым полем.");
         }
 
         foreach (string templateKey in new[]
@@ -260,11 +233,10 @@ internal static class Program
         {
             SpreadsheetColumnViewModel prototypeReference = tables.Single(table => table.Key == templateKey)
                 .Columns.Single(column => column.FieldId == 1);
-            if (!prototypeReference.HasReferenceChoices ||
-                prototypeReference.ReferenceChoices?.FirstOrDefault()?.Value != string.Empty)
+            if (!prototypeReference.IsEditable || prototypeReference.Kind != "String")
             {
                 throw new InvalidOperationException(
-                    $"{templateKey}/field-1 должен предлагать необязательную ссылку на CodeName заклинания.");
+                    $"{templateKey}/field-1 должен оставаться обычным редактируемым строковым полем.");
             }
         }
 
@@ -291,10 +263,10 @@ internal static class Program
 
         DataGridColumn raceGridColumn = recordsGrid.Columns.Single(column =>
             column.Header is SpreadsheetColumnViewModel descriptor && descriptor.FieldId == 1);
-        if (raceGridColumn is not DataGridComboBoxColumn)
+        if (raceGridColumn is not DataGridTextColumn)
         {
             throw new InvalidOperationException(
-                "Проверенное ссылочное поле Base Race должно отрисовываться выпадающим списком.");
+                "Ссылочное поле Base Race должно отрисовываться обычной текстовой колонкой без ComboBox.");
         }
 
         viewModel.ToggleColumnModeCommand.Execute(null);
@@ -326,16 +298,12 @@ internal static class Program
         raceGridColumn = recordsGrid.Columns.Single(column =>
             column.Header is SpreadsheetColumnViewModel descriptor && descriptor.FieldId == 1);
         RecordRowViewModel referenceRecord = prototypes.Records.First(record =>
-            raceReferenceColumn.ReferenceChoices!.Any(choice =>
-                choice.IsKnown &&
-                choice.Value.Length > 0 &&
-                !choice.Value.Equals(record.GetCell(1)?.EditorText, StringComparison.OrdinalIgnoreCase)));
+            raceNames.Any(value => !value.Equals(record.GetCell(1)?.EditorText, StringComparison.OrdinalIgnoreCase)));
         RecordFieldViewModel referenceCell = referenceRecord.GetCell(1)
             ?? throw new InvalidOperationException("Не создана ссылочная клетка Base Race.");
         string originalReference = referenceCell.EditorText;
-        ReferenceChoiceViewModel replacementReference = raceReferenceColumn.ReferenceChoices!
-            .First(choice => choice.IsKnown && choice.Value.Length > 0 &&
-                !choice.Value.Equals(originalReference, StringComparison.OrdinalIgnoreCase));
+        string replacementReference = raceNames.First(value =>
+            !value.Equals(originalReference, StringComparison.OrdinalIgnoreCase));
         recordsGrid.SelectedItem = referenceRecord;
         recordsGrid.CurrentCell = new DataGridCellInfo(referenceRecord, raceGridColumn);
         recordsGrid.ScrollIntoView(referenceRecord, raceGridColumn);
@@ -347,39 +315,19 @@ internal static class Program
         }
 
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-        ComboBox referenceEditor = FindVisualChild<ComboBox>(raceGridColumn.GetCellContent(referenceRecord))
-            ?? throw new InvalidOperationException("DataGrid не создал ComboBox для ссылочной клетки.");
-        referenceEditor.IsDropDownOpen = true;
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
-        object? selectedReferenceItem = referenceEditor.SelectedItem;
-        ComboBoxItem? selectedItem = selectedReferenceItem is null
-            ? null
-            : referenceEditor.ItemContainerGenerator.ContainerFromItem(selectedReferenceItem) as ComboBoxItem;
-        Color? selectedBackgroundColor = (selectedItem?.Background as SolidColorBrush)?.Color;
-        Color? selectedForegroundColor = (selectedItem?.Foreground as SolidColorBrush)?.Color;
-        if (selectedReferenceItem is null ||
-            selectedItem is null ||
-            selectedBackgroundColor != Color.FromRgb(0x16, 0x4C, 0x40) ||
-            selectedForegroundColor != Colors.White)
-        {
-            throw new InvalidOperationException(
-                "Реально открытый список Base Race должен сохранять читаемый выбранный пункт тёмно-зелёным с белым текстом; " +
-                $"item={selectedReferenceItem ?? "<null>"}, container={selectedItem is not null}, " +
-                $"background={selectedBackgroundColor?.ToString() ?? "<null>"}, foreground={selectedForegroundColor?.ToString() ?? "<null>"}.");
-        }
-
-        referenceEditor.IsDropDownOpen = false;
-        referenceEditor.SelectedValue = replacementReference.Value;
+        TextBox referenceEditor = FindVisualChild<TextBox>(raceGridColumn.GetCellContent(referenceRecord))
+            ?? throw new InvalidOperationException("DataGrid не создал TextBox для ссылочной клетки.");
+        referenceEditor.Text = replacementReference;
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         recordsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
         recordsGrid.CommitEdit(DataGridEditingUnit.Row, true);
-        if (referenceCell.EditorText != replacementReference.Value ||
+        if (referenceCell.EditorText != replacementReference ||
             !referenceCell.IsModified ||
             viewModel.ChangeCount != 1 ||
             !viewModel.UndoCommand.CanExecute(null))
         {
             throw new InvalidOperationException(
-                "Выбор Base Race из списка должен изменить точное значение, журнал и Undo.");
+                "Ручной ввод Base Race должен изменить точное значение, журнал и Undo.");
         }
 
         viewModel.UndoCommand.Execute(null);
@@ -387,34 +335,6 @@ internal static class Program
         {
             throw new InvalidOperationException("Undo должен полностью вернуть ссылочную клетку Base Race.");
         }
-
-        viewModel.SelectTableCommand.Execute(races);
-        RecordRowViewModel renamedRace = races.Records[0];
-        RecordFieldViewModel renamedRaceCell = renamedRace.GetCell(0)
-            ?? throw new InvalidOperationException("Не создано ключевое поле расы.");
-        string originalRaceName = renamedRaceCell.EditorText;
-        string temporaryRaceName = originalRaceName + " grid-reference-smoke";
-        renamedRaceCell.EditorText = temporaryRaceName;
-        if (!raceReferenceColumn.ReferenceChoices!.Any(choice =>
-                choice.IsKnown && choice.Value.Equals(temporaryRaceName, StringComparison.Ordinal)) ||
-            raceReferenceColumn.ReferenceChoices!.Any(choice =>
-                choice.IsKnown && choice.Value.Equals(originalRaceName, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException(
-                "Переименование целевой расы должно немедленно обновить общий список ссылок.");
-        }
-
-        viewModel.UndoCommand.Execute(null);
-        if (!raceReferenceColumn.ReferenceChoices!.Any(choice =>
-                choice.IsKnown && choice.Value.Equals(originalRaceName, StringComparison.Ordinal)) ||
-            raceReferenceColumn.ReferenceChoices!.Any(choice =>
-                choice.IsKnown && choice.Value.Equals(temporaryRaceName, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException(
-                "Undo переименования расы должен восстановить исходный список ссылок.");
-        }
-
-        viewModel.SelectTableCommand.Execute(prototypes);
 
         var numericColumn = prototypes.Columns.First(column =>
             column.IsEditable && column.Kind is "Byte" or "Int32" or "UInt32" or "Float32");

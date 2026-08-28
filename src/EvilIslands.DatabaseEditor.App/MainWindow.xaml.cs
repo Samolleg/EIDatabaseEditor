@@ -128,8 +128,6 @@ public partial class MainWindow : Window
         var headerStyle = (Style)FindResource("SpreadsheetColumnHeaderStyle");
         var elementStyle = (Style)FindResource("SpreadsheetCellText");
         var editingStyle = (Style)FindResource("SpreadsheetCellEditor");
-        var referenceElementStyle = (Style)FindResource("SpreadsheetReferenceDisplay");
-        var referenceEditingStyle = (Style)FindResource("SpreadsheetReferenceEditor");
         foreach (var descriptor in _spreadsheetViewModel.VisibleSpreadsheetColumns)
         {
             var bindingPath = descriptor.Projection is null
@@ -138,9 +136,7 @@ public partial class MainWindow : Window
             var binding = new Binding(bindingPath)
             {
                 Mode = descriptor.Projection is null ? BindingMode.TwoWay : BindingMode.OneWay,
-                UpdateSourceTrigger = descriptor.HasReferenceChoices
-                    ? UpdateSourceTrigger.PropertyChanged
-                    : UpdateSourceTrigger.LostFocus,
+                UpdateSourceTrigger = UpdateSourceTrigger.LostFocus,
             };
             if (descriptor.Projection is not null)
             {
@@ -148,28 +144,12 @@ public partial class MainWindow : Window
                 binding.ConverterParameter = descriptor.Projection;
             }
 
-            DataGridColumn column;
-            if (descriptor.HasReferenceChoices)
+            DataGridColumn column = new DataGridTextColumn
             {
-                column = new DataGridComboBoxColumn
-                {
-                    ItemsSource = descriptor.ReferenceChoices,
-                    SelectedValuePath = nameof(ReferenceChoiceViewModel.Value),
-                    DisplayMemberPath = nameof(ReferenceChoiceViewModel.DisplayText),
-                    SelectedValueBinding = binding,
-                    ElementStyle = referenceElementStyle,
-                    EditingElementStyle = referenceEditingStyle,
-                };
-            }
-            else
-            {
-                column = new DataGridTextColumn
-                {
-                    Binding = binding,
-                    ElementStyle = elementStyle,
-                    EditingElementStyle = editingStyle,
-                };
-            }
+                Binding = binding,
+                ElementStyle = elementStyle,
+                EditingElementStyle = editingStyle,
+            };
 
             column.Header = descriptor;
             column.HeaderTemplate = headerTemplate;
