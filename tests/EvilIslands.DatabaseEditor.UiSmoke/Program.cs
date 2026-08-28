@@ -267,6 +267,33 @@ internal static class Program
                 throw new InvalidOperationException("Соседний texts.res должен автоматически подключаться и индексироваться.");
             }
 
+            if (!viewModel.TextsNavigationItem.IsEnabled ||
+                viewModel.TextResources.Count != viewModel.TextResourceCount)
+            {
+                throw new InvalidOperationException(
+                    "Подключённый texts.res должен быть доступен отдельным полным разделом навигации.");
+            }
+
+            viewModel.NavigateCommand.Execute(viewModel.TextsNavigationItem);
+            if (viewModel.CurrentSection != WorkspaceSection.Texts ||
+                viewModel.FilteredTextResourceCount != viewModel.TextResourceCount)
+            {
+                throw new InvalidOperationException(
+                    "Раздел русских текстов должен показывать все ресурсы подключённого texts.res.");
+            }
+
+            LocalizationEntryViewModel searchableText = viewModel.TextResources.First(text =>
+                !string.IsNullOrWhiteSpace(text.Title));
+            viewModel.TextsSearchText = searchableText.ResourceName;
+            if (viewModel.FilteredTextResourceCount == 0 ||
+                !viewModel.TextsView.Cast<object>().Contains(searchableText))
+            {
+                throw new InvalidOperationException(
+                    "Полный раздел texts.res должен искать по ключу, названию и описанию.");
+            }
+
+            viewModel.TextsSearchText = string.Empty;
+
             DatabaseTableViewModel materialsTable = tables.Single(table => table.Key == "items.materials");
             viewModel.SelectTableCommand.Execute(materialsTable);
             RecordRowViewModel material = materialsTable.Records.First();

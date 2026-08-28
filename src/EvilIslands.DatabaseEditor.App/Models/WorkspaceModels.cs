@@ -12,6 +12,7 @@ internal enum WorkspaceSection
     Overview,
     Resources,
     Records,
+    Texts,
     Changes,
     Validation,
 }
@@ -848,9 +849,13 @@ internal sealed class LocalizationEntryViewModel : ObservableObject
 
     public event EventHandler<LocalizationValueCommittedEventArgs>? ValueCommitted;
 
+    public int? Index => _resource.ArchiveIndex is int archiveIndex ? archiveIndex + 1 : null;
+
     public string ResourceName => _resource.Name;
 
     public string Prefix => _resource.Prefix;
+
+    public string SearchText => string.Join('\u001f', ResourceName, Prefix, Title, Description);
 
     public string Title
     {
@@ -868,6 +873,7 @@ internal sealed class LocalizationEntryViewModel : ObservableObject
             ErrorMessage = null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsModified));
+            OnPropertyChanged(nameof(SearchText));
             TextResourceState after = _resource.CaptureState();
             if (!before.IsEquivalentTo(after))
             {
@@ -894,6 +900,7 @@ internal sealed class LocalizationEntryViewModel : ObservableObject
             ErrorMessage = null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsModified));
+            OnPropertyChanged(nameof(SearchText));
             TextResourceState after = _resource.CaptureState();
             if (!before.IsEquivalentTo(after))
             {
@@ -936,6 +943,7 @@ internal sealed class LocalizationEntryViewModel : ObservableObject
         OnPropertyChanged(nameof(Title));
         OnPropertyChanged(nameof(Description));
         OnPropertyChanged(nameof(IsModified));
+        OnPropertyChanged(nameof(SearchText));
     }
 
     internal void RestoreState(TextResourceState state)

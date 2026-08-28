@@ -760,7 +760,9 @@ public partial class MainWindow : Window
         if (!RecordsGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
             !RecordsGrid.CommitEdit(DataGridEditingUnit.Row, true) ||
             !LocalizationGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
-            !LocalizationGrid.CommitEdit(DataGridEditingUnit.Row, true))
+            !LocalizationGrid.CommitEdit(DataGridEditingUnit.Row, true) ||
+            !TextsGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
+            !TextsGrid.CommitEdit(DataGridEditingUnit.Row, true))
         {
             return false;
         }
@@ -783,6 +785,13 @@ public partial class MainWindow : Window
         {
             ResourceSearchBox.Focus();
             ResourceSearchBox.SelectAll();
+            return;
+        }
+
+        if (_viewModel.CurrentSection == WorkspaceSection.Texts)
+        {
+            TextsSearchBox.Focus();
+            TextsSearchBox.SelectAll();
             return;
         }
 
@@ -975,6 +984,7 @@ public partial class MainWindow : Window
         }
 
         _viewModel.OpenFileRequested -= ViewModel_OpenFileRequested;
+        _viewModel.AttachTextsRequested -= ViewModel_AttachTextsRequested;
         _viewModel.SaveRequested -= ViewModel_SaveRequested;
         _viewModel.SaveCopyRequested -= ViewModel_SaveCopyRequested;
         _viewModel.SearchFocusRequested -= ViewModel_SearchFocusRequested;

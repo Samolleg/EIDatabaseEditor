@@ -27,9 +27,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private DatabaseTableViewModel? _selectedTable;
     private ICollectionView _recordsView;
     private ICollectionView _resourcesView;
+    private ICollectionView _textsView;
     private RecordRowViewModel? _selectedRecord;
     private string _searchText = string.Empty;
     private string _resourceSearchText = string.Empty;
+    private string _textsSearchText = string.Empty;
     private string _statusText = "Готово. Откройте database.res для редактирования.";
     private string? _notificationMessage;
     private bool _notificationIsError;
@@ -39,6 +41,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isEditMode;
     private bool _showAllColumns;
     private int _filteredRecordCount;
+    private int _filteredTextResourceCount;
     private string? _lastSavedPath;
     private bool _isApplyingSpreadsheetPaste;
     private bool _disposed;
@@ -53,20 +56,24 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         _service = service;
         Resources = [];
         Databases = [];
+        TextResources = [];
         Changes = [];
         Diagnostics = [];
         _recordsView = CollectionViewSource.GetDefaultView(Array.Empty<RecordRowViewModel>());
         _resourcesView = CollectionViewSource.GetDefaultView(Resources);
+        _textsView = CollectionViewSource.GetDefaultView(TextResources);
 
         NavigationItems =
         [
             new(WorkspaceSection.Overview, "Обзор", "⌂") { IsSelected = true },
+            new(WorkspaceSection.Texts, "Русские тексты", "АЯ") { IsEnabled = false },
             new(WorkspaceSection.Resources, "Ресурсы", "▦") { IsEnabled = false },
             new(WorkspaceSection.Changes, "Изменения", "≠") { IsEnabled = false },
             new(WorkspaceSection.Validation, "Проверка", "✓") { IsEnabled = false },
         ];
         OverviewNavigationItem = NavigationItems[0];
-        ServiceNavigationItems = new ObservableCollection<NavigationItemViewModel>(NavigationItems.Skip(1));
+        TextsNavigationItem = NavigationItems[1];
+        ServiceNavigationItems = new ObservableCollection<NavigationItemViewModel>(NavigationItems.Skip(2));
 
         OpenCommand = new RelayCommand(() => OpenFileRequested?.Invoke(this, EventArgs.Empty), () => !IsBusy);
         AttachTextsCommand = new RelayCommand(
@@ -89,6 +96,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshValidationCommand = new RelayCommand(RefreshValidation, () => HasDocument && !IsBusy);
         ClearSearchCommand = new RelayCommand(() => SearchText = string.Empty, () => !string.IsNullOrEmpty(SearchText));
         ClearResourceSearchCommand = new RelayCommand(() => ResourceSearchText = string.Empty, () => !string.IsNullOrEmpty(ResourceSearchText));
+        ClearTextsSearchCommand = new RelayCommand(() => TextsSearchText = string.Empty, () => !string.IsNullOrEmpty(TextsSearchText));
         ToggleColumnModeCommand = new RelayCommand(
             ToggleColumnMode,
             () => IsRecordsSection && SelectedTable is { Columns.Count: > 12 } && !IsBusy);
@@ -119,11 +127,15 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public NavigationItemViewModel OverviewNavigationItem { get; }
 
+    public NavigationItemViewModel TextsNavigationItem { get; }
+
     public ObservableCollection<NavigationItemViewModel> ServiceNavigationItems { get; }
 
     public RangeObservableCollection<ResourceRowViewModel> Resources { get; }
 
     public RangeObservableCollection<DatabaseGroupViewModel> Databases { get; }
+
+    public RangeObservableCollection<LocalizationEntryViewModel> TextResources { get; }
 
     public ObservableCollection<ChangeEntryViewModel> Changes { get; }
 
@@ -155,6 +167,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ICommand ClearResourceSearchCommand { get; }
 
+    public ICommand ClearTextsSearchCommand { get; }
+
     public ICommand ToggleColumnModeCommand { get; }
 
     public ICommand FocusSearchCommand { get; }
@@ -177,6 +191,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         get => _resourcesView;
         private set => SetProperty(ref _resourcesView, value);
+    }
+
+    public ICollectionView TextsView
+    {
+        get => _textsView;
+        private set => SetProperty(ref _textsView, value);
     }
 
     public WorkspaceSection CurrentSection
@@ -202,6 +222,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(PageTitle));
             OnPropertyChanged(nameof(PageSubtitle));
             OnPropertyChanged(nameof(IsRecordsSection));
+            OnPropertyChanged(nameof(IsTextsSection));
             OnPropertyChanged(nameof(BreadcrumbText));
             RaiseCommandStates();
         }
@@ -212,6 +233,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         WorkspaceSection.Overview => "Обзор базы",
         WorkspaceSection.Resources => "Ресурсы контейнера",
         WorkspaceSection.Records => SelectedTable?.Title ?? "Таблица базы",
+        WorkspaceSection.Texts => "Русские тексты",
         WorkspaceSection.Changes => "Изменения",
         WorkspaceSection.Validation => "Проверка целостности",
         _ => "EI Database Studio",
@@ -223,12 +245,15 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         WorkspaceSection.Resources => "Содержимое RES-контейнера, смещения и размеры внутренних ресурсов.",
         WorkspaceSection.Records when SelectedTable is not null =>
             $"{SelectedTable.GroupTitle} · {SelectedTable.ResourceName} · строки — записи, столбцы — поля · {SelectedTable.StatusText.ToLowerInvariant()}.",
+        WorkspaceSection.Texts => "Полное содержимое подключённого texts.res: ключи, русские названия и описания.",
         WorkspaceSection.Changes => "Только отличия от открытого исходного файла.",
         WorkspaceSection.Validation => "Ошибки структуры и предупреждения по ссылочной целостности.",
         _ => string.Empty,
     };
 
     public bool IsRecordsSection => CurrentSection == WorkspaceSection.Records;
+
+    public bool IsTextsSection => CurrentSection == WorkspaceSection.Texts;
 
     public DatabaseTableViewModel? SelectedTable
     {
@@ -270,9 +295,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    public string BreadcrumbText => CurrentSection == WorkspaceSection.Records && SelectedTable is not null
-        ? $"database.res  ›  {SelectedTable.ResourceName}  ›  {SelectedTable.Title}"
-        : $"database.res  ›  {PageTitle}";
+    public string BreadcrumbText => CurrentSection switch
+    {
+        WorkspaceSection.Records when SelectedTable is not null =>
+            $"database.res  ›  {SelectedTable.ResourceName}  ›  {SelectedTable.Title}",
+        WorkspaceSection.Texts => $"{TextsFileName}  ›  Все русские тексты",
+        _ => $"database.res  ›  {PageTitle}",
+    };
 
     public string CurrentTableStatusText => SelectedTable?.StatusText ?? "—";
 
@@ -373,10 +402,29 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public string TextsSearchText
+    {
+        get => _textsSearchText;
+        set
+        {
+            if (SetProperty(ref _textsSearchText, value))
+            {
+                (ClearTextsSearchCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                RefreshTextsFilter();
+            }
+        }
+    }
+
     public int FilteredRecordCount
     {
         get => _filteredRecordCount;
         private set => SetProperty(ref _filteredRecordCount, value);
+    }
+
+    public int FilteredTextResourceCount
+    {
+        get => _filteredTextResourceCount;
+        private set => SetProperty(ref _filteredTextResourceCount, value);
     }
 
     public string StatusText
@@ -476,11 +524,15 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string TextsPath => _workspace?.TextsPath ?? "Рядом с database.res файл texts.res не найден.";
 
-    public int TextResourceCount => _workspace?.TextResourceCount ?? 0;
+    public int TextResourceCount => TextResources.Count;
 
     public string TextsStatusText => HasTextsDocument
         ? $"Подключён {TextsFileName} · {TextResourceCount:N0} текстов"
         : "texts.res не подключён";
+
+    public string AttachTextsButtonText => HasTextsDocument
+        ? $"✓ {TextsFileName} · {TextResourceCount:N0}"
+        : "＋ Подключить texts.res…";
 
     public int ResourceCount => Resources.Count;
 
@@ -716,14 +768,14 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         CancelValidation();
         ApplyTableEditMode(SelectedTable, false);
         UnsubscribeWorkspaceRecords(Databases);
-        UnsubscribeWorkspaceTexts(_workspace?.TextResources ?? []);
+        UnsubscribeWorkspaceTexts(TextResources);
     }
 
     private void ApplyWorkspace(WorkspaceSnapshot workspace)
     {
         ApplyTableEditMode(SelectedTable, false);
         UnsubscribeWorkspaceRecords(Databases);
-        UnsubscribeWorkspaceTexts(_workspace?.TextResources ?? []);
+        UnsubscribeWorkspaceTexts(TextResources);
         _workspace = workspace;
         IsEditMode = true;
         _undo.Clear();
@@ -733,16 +785,20 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         LastSavedPath = null;
         SearchText = string.Empty;
         ResourceSearchText = string.Empty;
+        TextsSearchText = string.Empty;
 
         ReplaceCollection(Resources, workspace.Resources);
         ReplaceCollection(Databases, workspace.Databases);
+        ReplaceCollection(TextResources, workspace.TextResources);
         ReplaceCollection(Diagnostics, workspace.Diagnostics);
         SubscribeWorkspaceRecords(Databases);
-        SubscribeWorkspaceTexts(workspace.TextResources);
+        SubscribeWorkspaceTexts(TextResources);
         ApplyDiagnosticsToRecords(Diagnostics);
 
         ResourcesView = CollectionViewSource.GetDefaultView(Resources);
         ResourcesView.Filter = FilterResource;
+        TextsView = CollectionViewSource.GetDefaultView(TextResources);
+        TextsView.Filter = FilterTextResource;
         foreach (var group in Databases)
         {
             group.IsExpanded = false;
@@ -753,6 +809,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectedRecord = null;
         RecordsView = CollectionViewSource.GetDefaultView(Array.Empty<RecordRowViewModel>());
         FilteredRecordCount = 0;
+        RefreshTextsFilter();
         SetNavigationEnabled(true);
         RefreshAllCounts();
         NotifyWorkspaceProperties();
@@ -805,6 +862,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         CurrentSection = item.Section;
+        if (item.Section == WorkspaceSection.Texts)
+        {
+            RefreshTextsFilter();
+            StatusText = $"{TextsFileName} · {FilteredTextResourceCount:N0} из {TextResourceCount:N0} ресурсов.";
+        }
     }
 
     private void SelectTable(DatabaseTableViewModel? table)
@@ -886,6 +948,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             foreach (LocalizationEntryViewModel entry in added)
             {
                 entry.ValueCommitted += OnLocalizationValueCommitted;
+                if (!TextResources.Contains(entry))
+                {
+                    TextResources.Add(entry);
+                }
                 AddTextInsertionChange(entry);
             }
 
@@ -894,6 +960,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(SelectedRecordHasTexts));
             OnPropertyChanged(nameof(SelectedRecordTextCount));
             OnPropertyChanged(nameof(HasChanges));
+            RefreshTextsFilter();
+            RefreshAllCounts();
+            NotifyWorkspaceProperties();
             StatusText = $"Добавлено записей texts.res: {added.Count:N0}. Заполните русские названия и описания.";
             RaiseCommandStates();
         }
@@ -923,6 +992,24 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         var query = ResourceSearchText.Trim();
         return resource.Name.Contains(query, StringComparison.CurrentCultureIgnoreCase) ||
                resource.Kind.Contains(query, StringComparison.CurrentCultureIgnoreCase);
+    }
+
+    private bool FilterTextResource(object item)
+    {
+        if (item is not LocalizationEntryViewModel text || string.IsNullOrWhiteSpace(TextsSearchText))
+        {
+            return true;
+        }
+
+        return text.SearchText.Contains(
+            TextsSearchText.Trim(),
+            StringComparison.CurrentCultureIgnoreCase);
+    }
+
+    private void RefreshTextsFilter()
+    {
+        TextsView.Refresh();
+        FilteredTextResourceCount = TextsView.Cast<object>().Count();
     }
 
     private async void ScheduleRecordSearch()
@@ -976,6 +1063,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshLocalizationChanges(entry);
         SelectedRecord?.RefreshState();
         RecordsView.Refresh();
+        RefreshTextsFilter();
         StatusText = $"Изменён {entry.ResourceName} · {eventArgs.FieldName}";
         RaiseCommandStates();
     }
@@ -1275,17 +1363,25 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             _service.RestoreAddedText(entry);
             entry.ValueCommitted -= OnLocalizationValueCommitted;
             entry.ValueCommitted += OnLocalizationValueCommitted;
+            if (!TextResources.Contains(entry))
+            {
+                TextResources.Add(entry);
+            }
             AddTextInsertionChange(entry);
         }
         else
         {
             _service.RemoveAddedText(entry);
             entry.ValueCommitted -= OnLocalizationValueCommitted;
+            TextResources.Remove(entry);
             RemoveTextChanges(entry);
         }
 
         SelectedRecord?.RefreshState();
         RecordsView.Refresh();
+        RefreshTextsFilter();
+        RefreshAllCounts();
+        NotifyWorkspaceProperties();
         OnPropertyChanged(nameof(HasChanges));
     }
 
@@ -1628,6 +1724,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void RefreshAllCounts()
     {
+        NavigationItems.First(item => item.Section == WorkspaceSection.Texts).Badge = HasTextsDocument
+            ? TextResourceCount.ToString("N0")
+            : null;
         NavigationItems.First(item => item.Section == WorkspaceSection.Resources).Badge = Resources.Count.ToString("N0");
         NavigationItems.First(item => item.Section == WorkspaceSection.Changes).Badge = Changes.Count == 0 ? null : Changes.Count.ToString("N0");
         NavigationItems.First(item => item.Section == WorkspaceSection.Validation).Badge = Diagnostics.Count == 0 ? "✓" : Diagnostics.Count.ToString("N0");
@@ -1643,6 +1742,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(DiagnosticCount));
         OnPropertyChanged(nameof(ErrorCount));
         OnPropertyChanged(nameof(WarningCount));
+        OnPropertyChanged(nameof(FilteredTextResourceCount));
     }
 
     private void ApplyDiagnosticsToRecords(IEnumerable<ValidationMessageViewModel> diagnostics)
@@ -1680,6 +1780,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(TextsPath));
         OnPropertyChanged(nameof(TextResourceCount));
         OnPropertyChanged(nameof(TextsStatusText));
+        OnPropertyChanged(nameof(AttachTextsButtonText));
         OnPropertyChanged(nameof(HasChanges));
     }
 
@@ -1687,7 +1788,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         foreach (var item in NavigationItems)
         {
-            item.IsEnabled = enabled || item.Section == WorkspaceSection.Overview;
+            item.IsEnabled = item.Section switch
+            {
+                WorkspaceSection.Overview => true,
+                WorkspaceSection.Texts => enabled && HasTextsDocument,
+                _ => enabled,
+            };
         }
 
         foreach (var database in Databases)
@@ -1709,6 +1815,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (SelectTableCommand as RelayCommand<DatabaseTableViewModel>)?.RaiseCanExecuteChanged();
         (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (AddMissingTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (ClearTextsSearchCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (RefreshValidationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (CancelOperationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (FocusSearchCommand as RelayCommand)?.RaiseCanExecuteChanged();
