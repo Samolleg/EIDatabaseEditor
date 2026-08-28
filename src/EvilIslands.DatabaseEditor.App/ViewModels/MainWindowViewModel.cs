@@ -372,8 +372,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string SpreadsheetColumnCountText => SelectedTable is null
         ? "0 столбцов"
-        : $"{VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} полей" +
-          (HasTextsDocument ? " + 3 столбца texts.res" : string.Empty);
+        : $"{VisibleSpreadsheetColumns.Count:N0}/{SelectedTable.Columns.Count:N0} полей" +
+          (HasTextsDocument ? " · +3 RU" : string.Empty);
 
     public string ColumnModeButtonText => ShowAllColumns ? "Понятные поля" : "Технические поля";
 

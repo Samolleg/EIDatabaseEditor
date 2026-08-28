@@ -60,6 +60,7 @@ internal static class Program
         var expected = (SolidColorBrush)application.Resources["TextBrush"];
         VerifyForegroundSetter((Style)window.Resources["PageHeading"], expected, "PageHeading");
         VerifyForegroundSetter((Style)window.Resources["MetricValue"], expected, "MetricValue");
+        VerifySemanticPalette(application, window);
         var cellStyle = (Style)application.Resources[typeof(DataGridCell)];
         var selectedTrigger = cellStyle.Triggers.OfType<Trigger>()
             .FirstOrDefault(trigger => trigger.Property == DataGridCell.IsSelectedProperty && Equals(trigger.Value, true));
@@ -73,6 +74,57 @@ internal static class Program
                 "Выбранная DataGridCell должна иметь отдельный видимый Excel-подобный фон.");
         }
 
+    }
+
+    private static void VerifySemanticPalette(Application application, MainWindow window)
+    {
+        var databaseAccent = (SolidColorBrush)application.Resources["DatabaseAccentBrush"];
+        var localizationAccent = (SolidColorBrush)application.Resources["LocalizationAccentBrush"];
+        var technicalAccent = (SolidColorBrush)application.Resources["TechnicalAccentBrush"];
+        var modifiedAccent = (SolidColorBrush)application.Resources["AccentBrush"];
+        var dangerAccent = (SolidColorBrush)application.Resources["DangerBrush"];
+        if (new[]
+            {
+                databaseAccent.Color,
+                localizationAccent.Color,
+                technicalAccent.Color,
+                modifiedAccent.Color,
+                dangerAccent.Color,
+            }.Distinct().Count() != 5)
+        {
+            throw new InvalidOperationException(
+                "Database, texts, technical, modified и error состояния должны иметь разные семантические цвета.");
+        }
+
+        VerifyBackgroundSetter(
+            (Style)window.Resources["DatabaseIdentityColumnHeaderStyle"],
+            (SolidColorBrush)application.Resources["DatabaseHeaderBrush"],
+            "DatabaseIdentityColumnHeaderStyle",
+            allowDerivedShade: true);
+        VerifyBackgroundSetter(
+            (Style)window.Resources["LocalizationColumnHeaderStyle"],
+            (SolidColorBrush)application.Resources["LocalizationHeaderBrush"],
+            "LocalizationColumnHeaderStyle");
+        VerifyBackgroundSetter(
+            (Style)window.Resources["TechnicalColumnHeaderStyle"],
+            (SolidColorBrush)application.Resources["TechnicalHeaderBrush"],
+            "TechnicalColumnHeaderStyle");
+    }
+
+    private static void VerifyBackgroundSetter(
+        Style style,
+        SolidColorBrush expected,
+        string styleName,
+        bool allowDerivedShade = false)
+    {
+        var setter = style.Setters.OfType<Setter>()
+            .FirstOrDefault(candidate => candidate.Property == Control.BackgroundProperty);
+        if (setter?.Value is not SolidColorBrush actual ||
+            (!allowDerivedShade && actual.Color != expected.Color))
+        {
+            throw new InvalidOperationException(
+                $"Стиль {styleName} обязан явно задавать свой семантический фон.");
+        }
     }
 
     private static void VerifyForegroundSetter(Style style, SolidColorBrush expected, string styleName)
@@ -686,6 +738,17 @@ internal static class Program
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
             DataGridColumn weaponNameColumn = recordsGrid.Columns.Single(column =>
                 column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
+            var databaseIdentityStyle = (Style)window.Resources["DatabaseIdentityColumnHeaderStyle"];
+            var localizationHeaderStyle = (Style)window.Resources["LocalizationColumnHeaderStyle"];
+            if (!ReferenceEquals(weaponNameColumn.HeaderStyle, databaseIdentityStyle) ||
+                recordsGrid.Columns.Where(column => column.Header is string header &&
+                        header is "Ключ texts.res" or "Название RU" or "Описание RU")
+                    .Any(column => !ReferenceEquals(column.HeaderStyle, localizationHeaderStyle)))
+            {
+                throw new InvalidOperationException(
+                    "Реальная таблица должна визуально разделять идентификатор database.res и три столбца texts.res.");
+            }
+
             recordsGrid.CurrentCell = new DataGridCellInfo(weaponWithVariants, weaponNameColumn);
             recordsGrid.SelectedCells.Clear();
             recordsGrid.SelectedCells.Add(new DataGridCellInfo(weaponWithVariants, weaponNameColumn));
@@ -695,6 +758,7 @@ internal static class Program
             if (!ReferenceEquals(viewModel.SelectedRecord, weaponWithVariants) ||
                 localizationPanel?.Visibility != Visibility.Visible ||
                 localizationGrid?.Items.Count != weaponWithVariants.RelatedTextCount ||
+                !weaponWithVariants.HasMultipleLocalizations ||
                 !weaponWithVariants.LocalizationTitle.Contains("смотрите ниже", StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException(
@@ -734,6 +798,15 @@ internal static class Program
 
         viewModel.ToggleColumnModeCommand.Execute(null);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        var technicalHeaderStyle = (Style)window.Resources["TechnicalColumnHeaderStyle"];
+        if (!recordsGrid.Columns.Any(column =>
+                column.Header is SpreadsheetColumnViewModel descriptor &&
+                descriptor.Kind == "RawHex" &&
+                ReferenceEquals(column.HeaderStyle, technicalHeaderStyle)))
+        {
+            throw new InvalidOperationException(
+                "Технический режим должен выделять raw-поля отдельным янтарным стилем.");
+        }
         if (!viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex") ||
             viewModel.VisibleSpreadsheetColumns.Count != acks.Columns.Count)
         {

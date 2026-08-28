@@ -626,6 +626,12 @@ internal sealed class RecordRowViewModel : ObservableObject
 
     public bool CanEditPrimaryLocalization => _primaryText is not null;
 
+    public bool HasMissingLocalization => ExpectedTextKeys.Count > 0 && RelatedTexts.Count == 0;
+
+    public bool HasMultipleLocalizations => RelatedTexts.Count > 1;
+
+    public bool PrimaryLocalizationIsModified => _primaryText?.IsModified is true;
+
     public string LocalizationKeyText => _primaryText?.ResourceName ?? (RelatedTexts.Count, ExpectedTextKeys.Count) switch
     {
         (> 1, _) => $"{RelatedTexts.Count:N0} вариантов texts.res",
@@ -773,6 +779,9 @@ internal sealed class RecordRowViewModel : ObservableObject
         _primaryText = SelectPrimaryText(texts);
         OnPropertyChanged(nameof(ExpectedTextKeys));
         OnPropertyChanged(nameof(CanEditPrimaryLocalization));
+        OnPropertyChanged(nameof(HasMissingLocalization));
+        OnPropertyChanged(nameof(HasMultipleLocalizations));
+        OnPropertyChanged(nameof(PrimaryLocalizationIsModified));
         OnPropertyChanged(nameof(LocalizationKeyText));
         OnPropertyChanged(nameof(LocalizationTitle));
         OnPropertyChanged(nameof(LocalizationDescription));
@@ -785,6 +794,7 @@ internal sealed class RecordRowViewModel : ObservableObject
         OnPropertyChanged(nameof(LocalizationKeyText));
         OnPropertyChanged(nameof(LocalizationTitle));
         OnPropertyChanged(nameof(LocalizationDescription));
+        OnPropertyChanged(nameof(PrimaryLocalizationIsModified));
         SearchText = BuildSearchText();
         OnPropertyChanged(nameof(SearchText));
     }

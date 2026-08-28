@@ -163,6 +163,8 @@ public partial class MainWindow : Window
 
         var headerTemplate = (DataTemplate)FindResource("SpreadsheetColumnHeaderTemplate");
         var headerStyle = (Style)FindResource("SpreadsheetColumnHeaderStyle");
+        var identityHeaderStyle = (Style)FindResource("DatabaseIdentityColumnHeaderStyle");
+        var technicalHeaderStyle = (Style)FindResource("TechnicalColumnHeaderStyle");
         var elementStyle = (Style)FindResource("SpreadsheetCellText");
         var editingStyle = (Style)FindResource("SpreadsheetCellEditor");
         int nameFieldId = _spreadsheetViewModel.SelectedTable.Records.FirstOrDefault()?.NameFieldId ?? -1;
@@ -192,7 +194,11 @@ public partial class MainWindow : Window
 
             column.Header = descriptor;
             column.HeaderTemplate = headerTemplate;
-            column.HeaderStyle = headerStyle;
+            column.HeaderStyle = descriptor.Kind == "RawHex"
+                ? technicalHeaderStyle
+                : descriptor.IsNameField
+                    ? identityHeaderStyle
+                    : headerStyle;
             column.CellStyle = CreateSpreadsheetCellStyle(descriptor);
             column.Width = new DataGridLength(descriptor.Layout.PreferredWidth);
             column.MinWidth = descriptor.Layout.MinimumWidth;
@@ -223,11 +229,14 @@ public partial class MainWindow : Window
 
     private void AddLocalizationColumns(Style elementStyle, Style editingStyle)
     {
+        var localizationHeaderStyle = (Style)FindResource("LocalizationColumnHeaderStyle");
         _localizationKeyColumn = new DataGridTextColumn
         {
             Header = "Ключ texts.res",
             Binding = new Binding(nameof(RecordRowViewModel.LocalizationKeyText)),
             ElementStyle = elementStyle,
+            HeaderStyle = localizationHeaderStyle,
+            CellStyle = CreateLocalizationCellStyle(nameof(RecordRowViewModel.LocalizationKeyText)),
             IsReadOnly = true,
             Width = new DataGridLength(250),
             MinWidth = 170,
@@ -243,6 +252,8 @@ public partial class MainWindow : Window
             },
             ElementStyle = elementStyle,
             EditingElementStyle = editingStyle,
+            HeaderStyle = localizationHeaderStyle,
+            CellStyle = CreateLocalizationCellStyle(nameof(RecordRowViewModel.LocalizationTitle)),
             Width = new DataGridLength(240),
             MinWidth = 160,
             MaxWidth = 520,
@@ -257,6 +268,8 @@ public partial class MainWindow : Window
             },
             ElementStyle = elementStyle,
             EditingElementStyle = editingStyle,
+            HeaderStyle = localizationHeaderStyle,
+            CellStyle = CreateLocalizationCellStyle(nameof(RecordRowViewModel.LocalizationDescription)),
             Width = new DataGridLength(320),
             MinWidth = 220,
             MaxWidth = 700,
@@ -264,6 +277,60 @@ public partial class MainWindow : Window
         RecordsGrid.Columns.Add(_localizationKeyColumn);
         RecordsGrid.Columns.Add(_localizationTitleColumn);
         RecordsGrid.Columns.Add(_localizationDescriptionColumn);
+    }
+
+    private Style CreateLocalizationCellStyle(string toolTipProperty)
+    {
+        var baseStyle = (Style)Application.Current.FindResource(typeof(DataGridCell));
+        var style = new Style(typeof(DataGridCell), baseStyle);
+        style.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("LocalizationSurfaceBrush")));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("LocalizationTextBrush")));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 0, 8, 0)));
+        style.Setters.Add(new Setter(
+            ToolTipService.ToolTipProperty,
+            new Binding(toolTipProperty)));
+
+        var missingTrigger = new DataTrigger
+        {
+            Binding = new Binding(nameof(RecordRowViewModel.HasMissingLocalization)),
+            Value = true,
+        };
+        missingTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("WarningSurfaceBrush")));
+        missingTrigger.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("WarningBrush")));
+        missingTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("WarningBrush")));
+        missingTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(2, 0, 0, 0)));
+        style.Triggers.Add(missingTrigger);
+
+        var multipleTrigger = new DataTrigger
+        {
+            Binding = new Binding(nameof(RecordRowViewModel.HasMultipleLocalizations)),
+            Value = true,
+        };
+        multipleTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("LocalizationHeaderBrush")));
+        multipleTrigger.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("LocalizationAccentBrush")));
+        style.Triggers.Add(multipleTrigger);
+
+        var modifiedTrigger = new DataTrigger
+        {
+            Binding = new Binding(nameof(RecordRowViewModel.PrimaryLocalizationIsModified)),
+            Value = true,
+        };
+        modifiedTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("ModifiedSurfaceBrush")));
+        modifiedTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("AccentBrush")));
+        modifiedTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 0, 2)));
+        style.Triggers.Add(modifiedTrigger);
+
+        var selectedTrigger = new Trigger
+        {
+            Property = DataGridCell.IsSelectedProperty,
+            Value = true,
+        };
+        selectedTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("SpreadsheetSelectionBrush")));
+        selectedTrigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+        selectedTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("AccentBrush")));
+        selectedTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        style.Triggers.Add(selectedTrigger);
+        return style;
     }
 
     private Style CreateSpreadsheetCellStyle(SpreadsheetColumnViewModel descriptor)
@@ -274,6 +341,23 @@ public partial class MainWindow : Window
         style.Setters.Add(new Setter(
             ToolTipService.ToolTipProperty,
             new Binding($"Cells[{descriptor.FieldId}].Path")));
+        if (descriptor.IsNameField)
+        {
+            style.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("DatabaseSurfaceBrush")));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("DatabaseTextBrush")));
+            style.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("DatabaseBorderBrush")));
+            style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(2, 0, 0, 0)));
+        }
+        else if (descriptor.Kind == "RawHex")
+        {
+            style.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("TechnicalSurfaceBrush")));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("TechnicalAccentBrush")));
+        }
+        else if (descriptor.Projection is not null)
+        {
+            style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(28, 32, 36))));
+        }
+
         if (!descriptor.IsEditable)
         {
             style.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("MutedTextBrush")));
@@ -286,6 +370,7 @@ public partial class MainWindow : Window
         };
         modifiedTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("AccentBrush")));
         modifiedTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 0, 2)));
+        modifiedTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("ModifiedSurfaceBrush")));
         style.Triggers.Add(modifiedTrigger);
 
         var diagnosticTrigger = new DataTrigger
@@ -295,6 +380,7 @@ public partial class MainWindow : Window
         };
         diagnosticTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("WarningBrush")));
         diagnosticTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        diagnosticTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("WarningSurfaceBrush")));
         diagnosticTrigger.Setters.Add(new Setter(
             ToolTipService.ToolTipProperty,
             new Binding($"Cells[{descriptor.FieldId}].DiagnosticText")));
@@ -307,6 +393,7 @@ public partial class MainWindow : Window
         };
         blockingDiagnosticTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("DangerBrush")));
         blockingDiagnosticTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        blockingDiagnosticTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("DangerSurfaceBrush")));
         style.Triggers.Add(blockingDiagnosticTrigger);
 
         var errorTrigger = new DataTrigger
@@ -316,10 +403,22 @@ public partial class MainWindow : Window
         };
         errorTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("DangerBrush")));
         errorTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        errorTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("DangerSurfaceBrush")));
         errorTrigger.Setters.Add(new Setter(
             ToolTipService.ToolTipProperty,
             new Binding($"Cells[{descriptor.FieldId}].ErrorMessage")));
         style.Triggers.Add(errorTrigger);
+
+        var selectedTrigger = new Trigger
+        {
+            Property = DataGridCell.IsSelectedProperty,
+            Value = true,
+        };
+        selectedTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("SpreadsheetSelectionBrush")));
+        selectedTrigger.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+        selectedTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("AccentBrush")));
+        selectedTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        style.Triggers.Add(selectedTrigger);
         return style;
     }
 
