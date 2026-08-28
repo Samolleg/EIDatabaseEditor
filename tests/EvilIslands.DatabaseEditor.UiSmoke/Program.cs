@@ -679,6 +679,32 @@ internal static class Program
                 "и сохранять расшифрованные native-проекции рядом с исходным редактором.");
         }
 
+        if (viewModel.HasTextsDocument)
+        {
+            RecordRowViewModel weaponWithVariants = weapons.Records.First(record => record.RelatedTextCount > 1);
+            viewModel.SelectTableCommand.Execute(weapons);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            DataGridColumn weaponNameColumn = recordsGrid.Columns.Single(column =>
+                column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
+            recordsGrid.CurrentCell = new DataGridCellInfo(weaponWithVariants, weaponNameColumn);
+            recordsGrid.SelectedCells.Clear();
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(weaponWithVariants, weaponNameColumn));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            Border? localizationPanel = window.FindName("LocalizationPanel") as Border;
+            DataGrid? localizationGrid = window.FindName("LocalizationGrid") as DataGrid;
+            if (!ReferenceEquals(viewModel.SelectedRecord, weaponWithVariants) ||
+                localizationPanel?.Visibility != Visibility.Visible ||
+                localizationGrid?.Items.Count != weaponWithVariants.RelatedTextCount ||
+                !weaponWithVariants.LocalizationTitle.Contains("смотрите ниже", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Выбор клетки оружия должен выбрать всю запись и немедленно показать все варианты texts.res снизу. " +
+                    $"selected={ReferenceEquals(viewModel.SelectedRecord, weaponWithVariants)}; " +
+                    $"panel={localizationPanel?.Visibility}; rows={localizationGrid?.Items.Count}; " +
+                    $"expected={weaponWithVariants.RelatedTextCount}; title={weaponWithVariants.LocalizationTitle}");
+            }
+        }
+
         var acks = tables.Single(table => table.Key == "acks.answers");
         var nonEmptyAck = acks.Records
             .SelectMany(record => acks.Columns
@@ -1049,14 +1075,15 @@ internal static class Program
         {
             if (viewModel.HasTextsDocument)
             {
-                viewModel.SelectTableCommand.Execute(prototypes);
+                viewModel.SelectTableCommand.Execute(weapons);
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-                RecordRowViewModel linkedUnit = prototypes.Records.First(record =>
-                    record.CanEditPrimaryLocalization &&
-                    record.LocalizationKeyText.StartsWith("UNIT ", StringComparison.OrdinalIgnoreCase));
-                viewModel.SelectedRecord = linkedUnit;
-                recordsGrid.SelectedItem = linkedUnit;
-                recordsGrid.ScrollIntoView(linkedUnit);
+                RecordRowViewModel weaponWithVariants = weapons.Records.First(record => record.RelatedTextCount > 1);
+                DataGridColumn weaponNameColumn = recordsGrid.Columns.Single(column =>
+                    column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
+                recordsGrid.CurrentCell = new DataGridCellInfo(weaponWithVariants, weaponNameColumn);
+                recordsGrid.SelectedCells.Clear();
+                recordsGrid.SelectedCells.Add(new DataGridCellInfo(weaponWithVariants, weaponNameColumn));
+                recordsGrid.ScrollIntoView(weaponWithVariants, weaponNameColumn);
             }
 
             window.UpdateLayout();

@@ -636,7 +636,7 @@ internal sealed class RecordRowViewModel : ObservableObject
 
     public string LocalizationTitle
     {
-        get => _primaryText?.Title ?? (RelatedTexts.Count > 1 ? $"{RelatedTexts.Count:N0} вариантов — выберите строку" : string.Empty);
+        get => _primaryText?.Title ?? (RelatedTexts.Count > 1 ? $"{RelatedTexts.Count:N0} вариантов — смотрите ниже" : string.Empty);
         set
         {
             if (_primaryText is null)

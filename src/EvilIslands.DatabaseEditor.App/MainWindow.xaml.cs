@@ -363,6 +363,32 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RecordsGrid_CurrentCellChanged(object? sender, EventArgs e)
+    {
+        SelectSpreadsheetRecord(RecordsGrid.CurrentCell.Item);
+    }
+
+    private void RecordsGrid_SelectedCellsChanged(object? sender, SelectedCellsChangedEventArgs e)
+    {
+        object? candidate = RecordsGrid.CurrentCell.Item;
+        if (candidate is not RecordRowViewModel)
+        {
+            candidate = e.AddedCells.LastOrDefault().Item;
+        }
+
+        SelectSpreadsheetRecord(candidate);
+    }
+
+    private void SelectSpreadsheetRecord(object? candidate)
+    {
+        if (_spreadsheetViewModel is not null &&
+            candidate is RecordRowViewModel record &&
+            !ReferenceEquals(_spreadsheetViewModel.SelectedRecord, record))
+        {
+            _spreadsheetViewModel.SelectedRecord = record;
+        }
+    }
+
     private void RecordsGrid_CopyCanExecute(object sender, CanExecuteRoutedEventArgs e)
     {
         e.CanExecute = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&

@@ -817,7 +817,7 @@
                                         </Grid.RowDefinitions>
                                     <DataGrid x:Name="RecordsGrid"
                                               ItemsSource="{Binding RecordsView}"
-                                              SelectedItem="{Binding SelectedRecord}"
+                                              SelectedItem="{Binding SelectedRecord, Mode=OneWay}"
                                               BorderThickness="0"
                                               IsReadOnly="False"
                                               RowHeight="32"
@@ -829,6 +829,8 @@
                                               SelectionUnit="CellOrRowHeader"
                                               ClipboardCopyMode="None"
                                               CanUserSortColumns="True"
+                                              CurrentCellChanged="RecordsGrid_CurrentCellChanged"
+                                              SelectedCellsChanged="RecordsGrid_SelectedCellsChanged"
                                               BeginningEdit="RecordsGrid_BeginningEdit"
                                               Sorting="RecordsGrid_Sorting">
                                         <DataGrid.Columns>
@@ -859,13 +861,14 @@
                                             <DataGridTextColumn Header="#" Binding="{Binding Index, StringFormat=N0}" Width="62" IsReadOnly="True" />
                                         </DataGrid.Columns>
                                     </DataGrid>
-                                        <Border Grid.Row="1"
+                                        <Border x:Name="LocalizationPanel"
+                                                Grid.Row="1"
                                                 Background="#1B1B1B"
                                                 BorderBrush="{StaticResource BorderBrush}"
                                                 BorderThickness="0,1,0,0"
                                                 Padding="10"
                                                 MaxHeight="260"
-                                                Visibility="{Binding SelectedRecord.HasRelatedTexts, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                Visibility="{Binding SelectedRecordHasTexts, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid>
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
