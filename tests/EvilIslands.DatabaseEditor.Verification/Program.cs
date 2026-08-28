@@ -148,6 +148,11 @@ internal static class Program
                 archive,
                 boundaries.Sum(summary => summary.Records),
                 log).ConfigureAwait(false);
+            await VerifyComplexFieldRoundTripAsync(
+                sourcePath,
+                allSourcePaths,
+                staging,
+                log).ConfigureAwait(false);
 
             CoreDocumentAdapter editedDocument = await log.MeasureAsync(
                 "Повторное открытие для тестового изменения",
@@ -316,41 +321,18 @@ internal static class Program
             groups.All(group => group.IsAvailable) && tables.All(table => table.IsAvailable),
             "Все восемь баз и 26 таблиц распознаны в источнике.");
         log.Assert(
-            groups.Where(group => group.Key is "items" or "units" or "spells")
-                .All(group => group.SupportState == DatabaseSupportState.Editable),
-            "Items, Units и Spells отмечены как редактируемые.");
+            groups.All(group => group.SupportState == DatabaseSupportState.Editable),
+            "Все восемь внутренних баз отмечены как редактируемые.");
         log.Assert(
-            groups.Where(group => group.Key is not ("items" or "units" or "spells"))
-                .All(group => group.SupportState == DatabaseSupportState.ReadOnly),
-            "Остальные пять баз отмечены как read-only.");
-
-        HashSet<string> expectedEditableTables =
-        [
-            "items.materials",
-            "items.weapons",
-            "items.armors",
-            "units.hit_locations",
-            "units.races",
-            "units.prototypes",
-            "units.npcs",
-            "spells.prototypes",
-            "spells.modifiers",
-            "spells.templates",
-            "spells.armor_templates",
-            "spells.weapon_templates",
-        ];
+            tables.All(table =>
+                table.SupportState == DatabaseSupportState.Editable && table.CanAppendRecords),
+            "Редактирование и добавление строк разрешены во всех 26 таблицах.");
         log.Assert(
-            tables.Where(table => expectedEditableTables.Contains(table.Key))
-                .All(table => table.SupportState == DatabaseSupportState.Editable && table.CanAppendRecords) &&
-            tables.Where(table => !expectedEditableTables.Contains(table.Key))
-                .All(table => table.SupportState == DatabaseSupportState.ReadOnly && !table.CanAppendRecords),
-            "Добавление строк разрешено ровно в 12 проверенных таблицах Items/Units/Spells.");
-        log.Assert(
-            tables.Where(table => table.SupportState == DatabaseSupportState.ReadOnly)
+            tables
                 .SelectMany(table => table.Records)
                 .SelectMany(record => record.Fields)
-                .All(field => !field.IsEditable),
-            "Все поля 14 read-only таблиц защищены от редактирования.");
+                .All(field => field.IsEditable),
+            "Все физические поля всех 26 таблиц имеют редактор своего типа.");
 
         int boundaryRecordCount = boundaries.Sum(summary => summary.Records);
         log.Assert(
@@ -423,11 +405,11 @@ internal static class Program
             "SignedLong/UnsignedLong поля прототипа заклинания соответствуют dbtypes.txt.");
 
         log.Assert(
-            RequireField(powerHit, 16).Kind == "FixedStringList" && !RequireField(powerHit, 16).IsEditable &&
-            RequireField(powerHit, 17).Kind == "FixedStringList" && !RequireField(powerHit, 17).IsEditable &&
-            RequireField(powerHit, 22).Kind == "UInt32" && !RequireField(powerHit, 22).IsEditable &&
+            RequireField(powerHit, 16).Kind == "FixedStringList" && RequireField(powerHit, 16).IsEditable &&
+            RequireField(powerHit, 17).Kind == "FixedStringList" && RequireField(powerHit, 17).IsEditable &&
+            RequireField(powerHit, 22).Kind == "UInt32" && RequireField(powerHit, 22).IsEditable &&
             RequireField(powerHit, 22).Projections.Count == 5,
-            "MinfixedStringList(4) и BitList(5) прототипа заклинания декодируются, оставаясь read-only.");
+            "MinfixedStringList(4) и BitList(5) прототипа заклинания декодируются и редактируются через исходное поле.");
 
         string[] lightFieldNames =
         [
@@ -450,8 +432,8 @@ internal static class Program
             RequireField(modifier, 6).Kind == "Int32" &&
             RequireField(modifier, 8).Kind == "UInt32" &&
             RequireField(modifier, 8).Projections.Count == 5 &&
-            !RequireField(modifier, 8).IsEditable,
-            "Модификаторы заклинаний используют SignedLong и пять read-only shop-битов.");
+            RequireField(modifier, 8).IsEditable,
+            "Модификаторы заклинаний используют SignedLong и редактируемую исходную shop-маску.");
         log.Assert(
             tables.Where(table => table.Key is
                     "spells.templates" or "spells.armor_templates" or "spells.weapon_templates")
@@ -459,8 +441,8 @@ internal static class Program
                 .All(record =>
                     RequireField(record, 5).Kind == "UInt32" &&
                     RequireField(record, 5).Projections.Count == 5 &&
-                    !RequireField(record, 5).IsEditable),
-            "BitList(5) во всех трёх таблицах шаблонов раскрывается в пять read-only shop-битов.");
+                    RequireField(record, 5).IsEditable),
+            "BitList(5) во всех трёх таблицах шаблонов имеет редактируемую исходную маску.");
         DatabaseField[] allFields = tables.SelectMany(table => table.Records)
             .SelectMany(record => record.Fields)
             .ToArray();
@@ -501,8 +483,8 @@ internal static class Program
         log.Assert(
             table.Records.All(record =>
                 record.Fields.Where(field => editableFieldIds.Contains(field.Id)).All(field => field.IsEditable) &&
-                record.Fields.Where(field => protectedFieldIds.Contains(field.Id)).All(field => !field.IsEditable)),
-            $"{title}: подтверждённые примитивы редактируются, сложные массивы и неизвестные поля защищены.");
+                record.Fields.Where(field => protectedFieldIds.Contains(field.Id)).All(field => field.IsEditable)),
+            $"{title}: примитивы и сложные исходные поля доступны для редактирования.");
     }
 
     private static void AssertMaterialsSchema(
@@ -542,10 +524,8 @@ internal static class Program
         log.Assert(
             materials.SupportState == DatabaseSupportState.Editable &&
             materials.CanAppendRecords &&
-            materials.Records.All(record =>
-                record.Fields.Where(field => field.Id != 11).All(field => field.IsEditable) &&
-                !RequireField(record, 11).IsEditable),
-            "Материалы разрешают редактирование примитивов и добавление строк; сложное поглощение остаётся read-only.");
+            materials.Records.All(record => record.Fields.All(field => field.IsEditable)),
+            "Материалы разрешают редактирование всех физических полей и добавление строк.");
         log.Assert(
             materials.Records.All(record =>
                 record.Fields.Count == expectedKinds.Length &&
@@ -715,6 +695,131 @@ internal static class Program
             log).ConfigureAwait(false);
     }
 
+    private static async Task VerifyComplexFieldRoundTripAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        VerificationLog log)
+    {
+        DatabaseDocument document = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        DatabaseTable[] tables = document.Databases.SelectMany(group => group.Tables).ToArray();
+        string[] kinds =
+        [
+            "Float32List",
+            "UInt32List",
+            "ByteList",
+            "StringList",
+            "FixedStringList",
+            "Nested",
+            "StructuredList",
+            "PackedStructure",
+        ];
+        var probes = new List<ComplexEditProbe>();
+        foreach (string kind in kinds)
+        {
+            ComplexEditProbe? probe = tables
+                .SelectMany(table => table.Records.Select(record => (Table: table, Record: record)))
+                .SelectMany(item => item.Record.Fields.Select(field =>
+                    new ComplexEditProbe(item.Table.Key, item.Record.RecordIndex, field.Id, field.Kind, string.Empty)))
+                .FirstOrDefault(candidate =>
+                {
+                    if (!candidate.Kind.Equals(kind, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    DatabaseRecord record = RequireTable(tables, candidate.TableKey).Records[candidate.RecordIndex];
+                    DatabaseField field = RequireField(record, candidate.FieldId);
+                    return field.IsEditable && field.EditorText.Length > 0;
+                });
+            if (probe is null)
+            {
+                continue;
+            }
+
+            DatabaseField target = RequireField(
+                RequireTable(tables, probe.TableKey).Records[probe.RecordIndex],
+                probe.FieldId);
+            string editedText = CreateComplexEditText(target);
+            SetFieldValue(target, editedText, $"round-trip {kind}");
+            probes.Add(probe with { ExpectedText = target.EditorText });
+        }
+
+        log.Assert(
+            probes.Select(probe => probe.Kind).SequenceEqual(kinds, StringComparer.Ordinal),
+            "Найдены и изменены представители всех восьми сложных типов полей.");
+        log.Assert(
+            document.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Изменения сложных полей не создают структурных блокировок Save As.");
+
+        string targetPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-all-complex-types.res");
+        staging.AssertOutputPath(targetPath, allSourcePaths);
+        await document.SaveAsAsync(targetPath).ConfigureAwait(false);
+        DatabaseDocument reopened = await DatabaseDocument.OpenAsync(targetPath).ConfigureAwait(false);
+        DatabaseTable[] reopenedTables = reopened.Databases.SelectMany(group => group.Tables).ToArray();
+        log.Assert(
+            probes.All(probe =>
+                RequireField(
+                        RequireTable(reopenedTables, probe.TableKey).Records[probe.RecordIndex],
+                        probe.FieldId)
+                    .EditorText.Equals(probe.ExpectedText, StringComparison.Ordinal)),
+            "Все восемь сложных типов сохранились и повторно открылись с точными изменёнными значениями.");
+        _ = DatabaseBoundaryVerifier.Verify(ResArchiveDocument.Open(targetPath));
+        log.Assert(
+            reopened.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Копия после записи всех сложных типов повторно разобрана без блокирующих ошибок.");
+    }
+
+    private static string CreateComplexEditText(DatabaseField field)
+    {
+        string[] values = field.EditorText.Split(
+            ',',
+            StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return field.Kind switch
+        {
+            "Float32List" => string.Join(", ", values.Select((value, index) => index == 0
+                ? (float.Parse(value, System.Globalization.CultureInfo.InvariantCulture) + 0.125f)
+                    .ToString("R", System.Globalization.CultureInfo.InvariantCulture)
+                : value)),
+            "UInt32List" => string.Join(", ", values.Select((value, index) => index == 0
+                ? (uint.Parse(value, System.Globalization.CultureInfo.InvariantCulture) ^ 1U)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : value)),
+            "ByteList" => string.Join(", ", values.Select((value, index) => index == 0
+                ? ((byte)(byte.Parse(value, System.Globalization.CultureInfo.InvariantCulture) ^ 1))
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : value)),
+            "StringList" => field.EditorText + "; codex_probe",
+            "FixedStringList" => "zz",
+            "Nested" or "StructuredList" or "PackedStructure" => MutateRawHex(field.EditorText),
+            _ => throw new InvalidOperationException($"Нет complex-edit probe для {field.Kind}."),
+        };
+    }
+
+    private static string MutateRawHex(string text)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = Convert.FromHexString(text);
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidOperationException(
+                $"Raw-редактор вернул не hex: {text[..Math.Min(text.Length, 80)]}",
+                exception);
+        }
+        bytes[^1] ^= 1;
+        return Convert.ToHexString(bytes);
+    }
+
+    private sealed record ComplexEditProbe(
+        string TableKey,
+        int RecordIndex,
+        int FieldId,
+        string Kind,
+        string ExpectedText);
+
     private static async Task VerifyItemAppendSafetyAsync(
         string sourcePath,
         IReadOnlyCollection<string> allSourcePaths,
@@ -728,8 +833,7 @@ internal static class Program
         DatabaseDocument document = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
         DatabaseTable table = RequireTable(document.Databases.SelectMany(group => group.Tables), tableKey);
         int originalCount = table.RecordCount;
-        DatabaseRecord template = table.Records.First(record =>
-            record.Fields.Any(field => !field.IsEditable && field.Id != record.IdentityFieldId));
+        DatabaseRecord template = table.Records[0];
         DatabaseRawRecord rawTemplate = DatabaseBoundaryVerifier.CaptureRecord(
             sourceArchive,
             template.ResourceName,
@@ -820,9 +924,8 @@ internal static class Program
             originalCount,
             "ID нового материала автоматически равен его физическому индексу.");
         log.Assert(
-            template.Fields.Any(field => !field.IsEditable && field.Id != 11) ||
-            !RequireField(template, 11).IsEditable,
-            "Образец материала содержит сложный read-only payload для побайтовой проверки клона.");
+            RequireField(template, 11).Kind == "Float32List" && RequireField(template, 11).IsEditable,
+            "Образец материала содержит редактируемый список поглощения для побайтовой проверки клона.");
 
         string duplicateTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-material-duplicate.res");
         staging.AssertOutputPath(duplicateTarget, allSourcePaths);
@@ -938,8 +1041,8 @@ internal static class Program
             prototypes.RecordCount == originalCount + 1,
             $"Прототип монстра клонирован в конец units.prototypes из образца «{template.Name}».");
         log.Assert(
-            template.Fields.Any(field => !field.IsEditable && field.Id != template.IdentityFieldId),
-            "Образец монстра содержит сложные/read-only поля для побайтовой проверки клона.");
+            template.Fields.Any(field => field.Kind is "Nested" or "StringList" or "Float32List"),
+            "Образец монстра содержит сложные поля для побайтовой проверки клона.");
 
         DatabaseField identityField = RequireField(added, added.IdentityFieldId);
         string uniqueIdentity = $"codex_monster_{Guid.NewGuid():N}";

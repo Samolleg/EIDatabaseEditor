@@ -235,17 +235,18 @@ internal static class DatabaseSchemas
         byte identityFieldId = key is "spells.prototypes" or "spells.modifiers"
             ? (byte)1
             : nameFieldId;
-        bool canAppendRecords = key is "items.materials" or "items.weapons" or "items.armors" ||
-                                key.StartsWith("units.", StringComparison.Ordinal) ||
-                                key.StartsWith("spells.", StringComparison.Ordinal);
+        IReadOnlyDictionary<byte, FieldSchema> mergedFields = LegacySchemaCatalog.Merge(key, id, dictionary);
+        IReadOnlyDictionary<byte, FieldSchema> editableFields = mergedFields.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value with { Editable = true });
         return new SectionSchema(
             id,
             key,
             name,
             nameFieldId,
             identityFieldId,
-            canAppendRecords,
-            LegacySchemaCatalog.Merge(key, id, dictionary));
+            true,
+            editableFields);
     }
 
 }

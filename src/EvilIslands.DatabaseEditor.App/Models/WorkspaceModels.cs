@@ -255,10 +255,18 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         {
             foreach (var field in record.FieldDefinitions)
             {
-                if (field.Projections.Count == 0)
+                AddOrMerge(field, null);
+                if (field.Kind is "Hex" or "Nested" or "StructuredList" or "PackedStructure")
                 {
-                    AddOrMerge(field, null);
-                    continue;
+                    AddOrMerge(
+                        field,
+                        new DatabaseFieldProjection(
+                            DatabaseFieldProjectionKind.DecodedValue,
+                            0,
+                            $"{field.DisplayName} · расшифровка",
+                            "Читаемое представление исходных байтов.",
+                            "Decoded",
+                            field.DisplayOrder));
                 }
 
                 foreach (var projection in field.Projections)
@@ -313,7 +321,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
             FieldId = field.Id;
             Projection = projection;
             Key = BuildKey(field, projection);
-            Title = projection?.DisplayName ?? field.DisplayName;
+            Title = GetDisplayTitle(field, projection);
             Kind = GetDisplayKind(field.Kind, projection);
             DisplayOrder = projection?.DisplayOrder ?? field.DisplayOrder;
             IsEditable = isEditable;
@@ -340,7 +348,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         {
             var metadataMatches = Equals(Projection, projection) &&
                                   string.Equals(Key, BuildKey(field, projection), StringComparison.Ordinal) &&
-                                  string.Equals(Title, projection?.DisplayName ?? field.DisplayName, StringComparison.Ordinal) &&
+                                  string.Equals(Title, GetDisplayTitle(field, projection), StringComparison.Ordinal) &&
                                   string.Equals(Kind, GetDisplayKind(field.Kind, projection), StringComparison.Ordinal);
             IsEditable = IsEditable && projection is null && tableIsEditable && field.IsEditable && metadataMatches;
         }
@@ -359,15 +367,26 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         private static string BuildKey(DatabaseField field, DatabaseFieldProjection? projection) =>
             projection is null ? field.Key : $"{field.Key}[{projection.Index}]";
 
+        private static string GetDisplayTitle(DatabaseField field, DatabaseFieldProjection? projection) =>
+            projection is null && IsRawEditorKind(field.Kind)
+                ? $"{field.DisplayName} · raw"
+                : projection?.DisplayName ?? field.DisplayName;
+
         private static string GetDisplayKind(string sourceKind, DatabaseFieldProjection? projection) =>
-            projection?.ValueKind ?? (projection?.Kind switch
+            projection is null && IsRawEditorKind(sourceKind)
+                ? "RawHex"
+                : projection?.ValueKind ?? (projection?.Kind switch
             {
                 DatabaseFieldProjectionKind.Bit => "Boolean",
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "Float32List" => "Float32",
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "UInt32List" => "UInt32",
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "ByteList" => "Byte",
+                DatabaseFieldProjectionKind.DecodedValue => "Decoded",
                 _ => sourceKind,
             });
+
+        private static bool IsRawEditorKind(string kind) =>
+            kind is "Hex" or "Nested" or "StructuredList" or "PackedStructure";
     }
 }
 
@@ -392,7 +411,7 @@ internal sealed record SpreadsheetColumnViewModel(
         : $"{FieldId}:{Projection.Kind}:{Projection.Index}";
 
     public bool IsSortable => Kind is not (
-        "Hex" or "Nested" or "StructuredList" or "StringList" or "FixedStringList" or
+        "Hex" or "RawHex" or "Nested" or "StructuredList" or "StringList" or "FixedStringList" or
         "UInt32List" or "Float32List" or "ByteList");
 
     public bool IsPrimitive => Kind is "String" or "FixedString" or "Int32" or "UInt32" or "Float32" or "Byte" or "Boolean";
@@ -418,7 +437,7 @@ internal readonly record struct SpreadsheetColumnLayout(
             "Float32" => new(76, 58, 170),
             "String" or "FixedString" when IsShortTextColumn(column) => new(88, 64, 220),
             "String" or "FixedString" => new(128, 80, 320),
-            "Hex" => new(124, 84, 280),
+            "Hex" or "RawHex" => new(124, 84, 280),
             "StringList" or "FixedStringList" or "UInt32List" or "Float32List" or "ByteList" =>
                 new(140, 96, 320),
             "Nested" or "StructuredList" => new(140, 96, 320),
@@ -827,8 +846,8 @@ internal sealed class RecordFieldViewModel : ObservableObject
     {
         _field = field;
         _tableIsEditable = tableIsEditable;
-        _editorText = FormatValue(field.Value);
-        OriginalText = FormatValue(field.OriginalValue);
+        _editorText = field.EditorText;
+        OriginalText = field.OriginalEditorText;
     }
 
     public event EventHandler<FieldValueCommittedEventArgs>? ValueCommitted;
@@ -856,6 +875,8 @@ internal sealed class RecordFieldViewModel : ObservableObject
         object? value = _field.GetProjectedValue(projection);
         return value is null ? SpreadsheetProjectionValue.UnavailableText : FormatValue(value);
     }
+
+    public RecordFieldViewModel ProjectionSource => this;
 
     public string EditorText
     {
@@ -892,8 +913,9 @@ internal sealed class RecordFieldViewModel : ObservableObject
             }
 
             ErrorMessage = null;
-            SetProperty(ref _editorText, FormatValue(_field.Value));
+            SetProperty(ref _editorText, _field.EditorText);
             OnPropertyChanged(nameof(IsModified));
+            OnPropertyChanged(nameof(ProjectionSource));
             var afterState = _field.CaptureState();
             if (!beforeState.IsEquivalentTo(afterState))
             {
@@ -984,8 +1006,9 @@ internal sealed class RecordFieldViewModel : ObservableObject
         }
 
         ErrorMessage = null;
-        SetProperty(ref _editorText, FormatValue(_field.Value), nameof(EditorText));
+        SetProperty(ref _editorText, _field.EditorText, nameof(EditorText));
         OnPropertyChanged(nameof(IsModified));
+        OnPropertyChanged(nameof(ProjectionSource));
         return true;
     }
 
@@ -1004,8 +1027,9 @@ internal sealed class RecordFieldViewModel : ObservableObject
         }
 
         ErrorMessage = null;
-        SetProperty(ref _editorText, FormatValue(_field.Value), nameof(EditorText));
+        SetProperty(ref _editorText, _field.EditorText, nameof(EditorText));
         OnPropertyChanged(nameof(IsModified));
+        OnPropertyChanged(nameof(ProjectionSource));
         return true;
     }
 

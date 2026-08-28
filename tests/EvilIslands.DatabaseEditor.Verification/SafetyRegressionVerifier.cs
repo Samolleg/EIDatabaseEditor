@@ -24,6 +24,8 @@ internal static class SafetyRegressionVerifier
             staging,
             log).ConfigureAwait(false);
         VerifyCorrectedSchemaMetadata(sourcePath, log);
+        VerifyAllPhysicalEditorsAcceptCurrentText(sourcePath, log);
+        VerifyAllTablesCanAppendAndUndo(sourcePath, log);
         KnownDatabaseBaseline.TryGet(sourceSha256, out KnownDatabaseBaseline? baseline);
         VerifySemanticDiagnostics(sourcePath, baseline, log);
         VerifyInvalidInputsDoNotModifyDocument(sourcePath, log);
@@ -72,10 +74,10 @@ internal static class SafetyRegressionVerifier
         DatabaseField fadeout = powerHit.Fields.Single(field => field.Id == 27);
         log.Assert(
             trace.Kind == "UInt32" &&
-            builtIn.Kind == "FixedStringList" && !builtIn.IsEditable &&
-            special.Kind == "FixedStringList" && !special.IsEditable &&
-            shops.Kind == "UInt32" && shops.Projections.Count == 5 && !shops.IsEditable,
-            "Списки кодов и shop-биты spells.sdb декодируются безопасно и остаются read-only.");
+            builtIn.Kind == "FixedStringList" && builtIn.IsEditable &&
+            special.Kind == "FixedStringList" && special.IsEditable &&
+            shops.Kind == "UInt32" && shops.Projections.Count == 5 && shops.IsEditable,
+            "Списки кодов и shop-маска spells.sdb декодируются и имеют редактор исходного поля.");
         log.Assert(
             red.DisplayName == "Свет: красный" &&
             green.DisplayName == "Свет: зелёный" &&
@@ -87,6 +89,46 @@ internal static class SafetyRegressionVerifier
             string.Equals(powerHit.DisplayName, FindField(powerHit, "Name").Value.ToString(), StringComparison.Ordinal) &&
             !string.Equals(powerHit.DisplayName, powerHit.GetString("CodeName"), StringComparison.Ordinal),
             "Таблица заклинаний показывает Name отдельно от технического CodeName.");
+    }
+
+    private static void VerifyAllPhysicalEditorsAcceptCurrentText(string sourcePath, VerificationLog log)
+    {
+        DatabaseDocument document = DatabaseDocument.Open(sourcePath);
+        DatabaseField[] fields = document.Databases
+            .SelectMany(group => group.Tables)
+            .SelectMany(table => table.Records)
+            .SelectMany(record => record.Fields)
+            .ToArray();
+        var rejected = new List<string>();
+        foreach (DatabaseField field in fields)
+        {
+            string? error = null;
+            if (!field.IsEditable || !field.TrySetValue(field.EditorText, out error))
+            {
+                rejected.Add($"{field.Path}: {error ?? "редактор недоступен"}");
+            }
+        }
+
+        log.Assert(
+            rejected.Count == 0 && !document.IsModified,
+            $"Все {fields.Length:N0} физических полей принимают собственное отображаемое значение без изменения байтов" +
+            (rejected.Count == 0 ? "." : $"; первый отказ: {rejected[0]}"));
+    }
+
+    private static void VerifyAllTablesCanAppendAndUndo(string sourcePath, VerificationLog log)
+    {
+        DatabaseDocument document = DatabaseDocument.Open(sourcePath);
+        DatabaseTable[] tables = document.Databases.SelectMany(group => group.Tables).ToArray();
+        int[] counts = tables.Select(table => table.RecordCount).ToArray();
+        foreach (DatabaseTable table in tables)
+        {
+            DatabaseRecord added = document.AppendRecordClone(table.Records[0]);
+            document.RemoveAddedRecord(added);
+        }
+
+        log.Assert(
+            !document.IsModified && tables.Select(table => table.RecordCount).SequenceEqual(counts),
+            "Во всех 26 таблицах клон строки добавляется в конец и полностью отменяется без изменения документа.");
     }
 
     private static void VerifySemanticDiagnostics(

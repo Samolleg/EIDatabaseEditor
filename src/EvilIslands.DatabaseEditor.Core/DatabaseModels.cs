@@ -313,7 +313,29 @@ public sealed class DatabaseField
         }
     }
 
-    public bool IsEditable => _schema.Editable && DatabaseValueCodec.CanEdit(_schema.Kind, OriginalPayload);
+    public string EditorText
+    {
+        get
+        {
+            lock (_editSync)
+            {
+                return DatabaseValueCodec.GetEditorText(_schema, Payload);
+            }
+        }
+    }
+
+    public string OriginalEditorText
+    {
+        get
+        {
+            lock (_editSync)
+            {
+                return DatabaseValueCodec.GetEditorText(_schema, OriginalPayload);
+            }
+        }
+    }
+
+    public bool IsEditable => _schema.Editable && DatabaseValueCodec.CanEdit(_schema, OriginalPayload);
 
     public bool IsModified
     {
@@ -368,7 +390,7 @@ public sealed class DatabaseField
                 return false;
             }
 
-            if (!DatabaseValueCodec.TryEncode(_schema.Kind, value, OriginalPayload, out var encoded, out error))
+            if (!DatabaseValueCodec.TryEncode(_schema, value, OriginalPayload, out var encoded, out error))
             {
                 return false;
             }
@@ -420,6 +442,7 @@ public enum DatabaseFieldProjectionKind
     Bit,
     NestedField,
     PackedField,
+    DecodedValue,
 }
 
 public sealed record DatabaseFieldProjection(
@@ -481,13 +504,42 @@ internal static class DatabaseValueCodec
 {
     private static readonly Encoding Windows1251 = CreateWindows1251();
 
-    public static bool CanEdit(DatabaseValueKind kind, ReadOnlySpan<byte> payload) => kind switch
+    public static bool CanEdit(FieldSchema schema, ReadOnlySpan<byte> payload)
     {
-        DatabaseValueKind.String => true,
-        DatabaseValueKind.FixedString => payload.Length > 0,
-        DatabaseValueKind.Int32 or DatabaseValueKind.UInt32 or DatabaseValueKind.Float32 => payload.Length == 4,
-        DatabaseValueKind.Byte or DatabaseValueKind.Boolean => payload.Length == 1,
-        _ => false,
+        try
+        {
+            return schema.Kind switch
+            {
+                DatabaseValueKind.String or DatabaseValueKind.Hex => true,
+                DatabaseValueKind.FixedString => payload.Length > 0,
+                DatabaseValueKind.Int32 or DatabaseValueKind.UInt32 or DatabaseValueKind.Float32 => payload.Length == 4,
+                DatabaseValueKind.Byte or DatabaseValueKind.Boolean => payload.Length == 1,
+                DatabaseValueKind.Float32List => DecodeFloatValues(payload) is not null,
+                DatabaseValueKind.UInt32List => DecodeUInt32Values(payload) is not null,
+                DatabaseValueKind.ByteList => DecodeByteValues(payload) is not null,
+                DatabaseValueKind.StringList => DecodeStringListValues(payload) is not null,
+                DatabaseValueKind.FixedStringList => DecodeFixedStringListValues(payload, schema.FixedElementSize) is not null,
+                DatabaseValueKind.Nested => CanDecodeNested(schema, payload),
+                DatabaseValueKind.StructuredList => CanDecodeStructuredList(schema, payload),
+                DatabaseValueKind.PackedStructure => payload.Length == 36,
+                _ => false,
+            };
+        }
+        catch (Exception exception) when (exception is DatabaseFormatException or DecoderFallbackException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    public static string GetEditorText(FieldSchema schema, ReadOnlySpan<byte> payload) => schema.Kind switch
+    {
+        DatabaseValueKind.Hex or DatabaseValueKind.Nested or DatabaseValueKind.StructuredList or
+            DatabaseValueKind.PackedStructure => Convert.ToHexString(payload),
+        DatabaseValueKind.StringList => string.Join("; ", DecodeStringListValues(payload)),
+        DatabaseValueKind.FixedStringList => string.Join(
+            "; ",
+            DecodeFixedStringListValues(payload, schema.FixedElementSize)),
+        _ => FormatInvariant(DecodeValue(schema, payload)),
     };
 
     public static object DecodeValue(FieldSchema schema, ReadOnlySpan<byte> payload)
@@ -540,6 +592,7 @@ internal static class DatabaseValueCodec
                 DatabaseFieldProjectionKind.ListElement => DecodeListElement(schema.Kind, payload, projection.Index),
                 DatabaseFieldProjectionKind.NestedField => DecodeStructureField(schema, payload, projection.Index),
                 DatabaseFieldProjectionKind.PackedField => DecodePackedField(payload, projection),
+                DatabaseFieldProjectionKind.DecodedValue => DecodeValue(schema, payload),
                 _ => null,
             };
         }
@@ -601,7 +654,7 @@ internal static class DatabaseValueCodec
     }
 
     public static bool TryEncode(
-        DatabaseValueKind kind,
+        FieldSchema schema,
         string text,
         ReadOnlySpan<byte> original,
         out byte[] encoded,
@@ -609,9 +662,15 @@ internal static class DatabaseValueCodec
     {
         encoded = [];
         error = null;
+        if (string.Equals(text, GetEditorText(schema, original), StringComparison.Ordinal))
+        {
+            encoded = original.ToArray();
+            return true;
+        }
+
         try
         {
-            switch (kind)
+            switch (schema.Kind)
             {
                 case DatabaseValueKind.String:
                     {
@@ -706,8 +765,49 @@ internal static class DatabaseValueCodec
                         error = "Ожидается true/false, 1/0 или да/нет.";
                         return false;
                     }
+                case DatabaseValueKind.Float32List:
+                    return TryEncodeFloatList(text, original, out encoded, out error);
+                case DatabaseValueKind.UInt32List:
+                    return TryEncodeUInt32List(text, original, out encoded, out error);
+                case DatabaseValueKind.ByteList:
+                    return TryEncodeByteList(text, original, out encoded, out error);
+                case DatabaseValueKind.StringList:
+                    return TryEncodeStringList(text, original, fixedElementSize: null, out encoded, out error);
+                case DatabaseValueKind.FixedStringList:
+                    return TryEncodeStringList(text, original, schema.FixedElementSize, out encoded, out error);
+                case DatabaseValueKind.Hex:
+                    return TryEncodeHex(text, out encoded, out error);
+                case DatabaseValueKind.Nested:
+                    if (!TryEncodeHex(text, out encoded, out error))
+                    {
+                        return false;
+                    }
+
+                    _ = DecodeStructure(schema, encoded);
+                    return true;
+                case DatabaseValueKind.StructuredList:
+                    if (!TryEncodeHex(text, out encoded, out error))
+                    {
+                        return false;
+                    }
+
+                    _ = DecodeStructureList(schema, encoded);
+                    return true;
+                case DatabaseValueKind.PackedStructure:
+                    if (!TryEncodeHex(text, out encoded, out error))
+                    {
+                        return false;
+                    }
+
+                    if (encoded.Length != 36)
+                    {
+                        error = "Упакованная структура должна содержать ровно 36 байт (72 hex-символа).";
+                        return false;
+                    }
+
+                    return true;
                 default:
-                    error = "Этот тип поля пока доступен только для чтения.";
+                    error = "Этот тип поля не поддерживает запись.";
                     return false;
             }
         }
@@ -716,6 +816,245 @@ internal static class DatabaseValueCodec
             error = "Строка содержит символы, которые нельзя сохранить в Windows-1251.";
             return false;
         }
+        catch (DatabaseFormatException exception)
+        {
+            error = $"Нарушена внутренняя структура поля: {exception.Message}";
+            return false;
+        }
+    }
+
+    private static bool TryEncodeFloatList(
+        string text,
+        ReadOnlySpan<byte> original,
+        out byte[] encoded,
+        out string? error)
+    {
+        string[] tokens = SplitListText(text);
+        var values = new byte[tokens.Length][];
+        for (int index = 0; index < tokens.Length; index++)
+        {
+            if (!float.TryParse(tokens[index], NumberStyles.Float, CultureInfo.InvariantCulture, out float value) ||
+                !float.IsFinite(value))
+            {
+                encoded = [];
+                error = $"Элемент {index + 1}: ожидается конечное 32-битное число.";
+                return false;
+            }
+
+            values[index] = new byte[4];
+            BinaryPrimitives.WriteSingleLittleEndian(values[index], value);
+        }
+
+        encoded = EncodePrimitiveList(original, values, 4);
+        error = null;
+        return true;
+    }
+
+    private static bool TryEncodeUInt32List(
+        string text,
+        ReadOnlySpan<byte> original,
+        out byte[] encoded,
+        out string? error)
+    {
+        string[] tokens = SplitListText(text);
+        var values = new byte[tokens.Length][];
+        for (int index = 0; index < tokens.Length; index++)
+        {
+            if (!uint.TryParse(tokens[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint value))
+            {
+                encoded = [];
+                error = $"Элемент {index + 1}: ожидается целое число от 0 до 4294967295.";
+                return false;
+            }
+
+            values[index] = new byte[4];
+            BinaryPrimitives.WriteUInt32LittleEndian(values[index], value);
+        }
+
+        encoded = EncodePrimitiveList(original, values, 4);
+        error = null;
+        return true;
+    }
+
+    private static bool TryEncodeByteList(
+        string text,
+        ReadOnlySpan<byte> original,
+        out byte[] encoded,
+        out string? error)
+    {
+        string[] tokens = SplitListText(text);
+        var values = new byte[tokens.Length][];
+        for (int index = 0; index < tokens.Length; index++)
+        {
+            if (!byte.TryParse(tokens[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte value))
+            {
+                encoded = [];
+                error = $"Элемент {index + 1}: ожидается целое число от 0 до 255.";
+                return false;
+            }
+
+            values[index] = [value];
+        }
+
+        encoded = EncodePrimitiveList(original, values, 1);
+        error = null;
+        return true;
+    }
+
+    private static bool TryEncodeStringList(
+        string text,
+        ReadOnlySpan<byte> original,
+        int? fixedElementSize,
+        out byte[] encoded,
+        out string? error)
+    {
+        IReadOnlyList<ChunkSlice> originalChunks = ChunkCodec.ReadList(
+            original,
+            0,
+            original.Length,
+            "editable-string-list");
+        if (originalChunks.Any(chunk => chunk.Id != 1))
+        {
+            encoded = [];
+            error = "Список содержит неподдерживаемый тип вложенного элемента.";
+            return false;
+        }
+
+        string[] tokens = SplitStringListText(text);
+        using var output = new MemoryStream();
+        for (int index = 0; index < tokens.Length; index++)
+        {
+            byte[] bytes = Windows1251.GetBytes(tokens[index]);
+            ChunkSlice? template = originalChunks.Count == 0
+                ? null
+                : originalChunks[Math.Min(index, originalChunks.Count - 1)];
+            byte[] payload;
+            if (fixedElementSize is int fixedSize)
+            {
+                if (bytes.Length > fixedSize)
+                {
+                    encoded = [];
+                    error = $"Элемент {index + 1}: длина не должна превышать {fixedSize} байт.";
+                    return false;
+                }
+
+                payload = new byte[fixedSize];
+                bytes.CopyTo(payload, 0);
+            }
+            else
+            {
+                bool terminated = template is ChunkSlice source
+                    ? source.DataLength > 0 && original[source.DataOffset + source.DataLength - 1] == 0
+                    : true;
+                payload = terminated ? [.. bytes, 0] : bytes;
+            }
+
+            int headerSize = template?.HeaderSize ?? 2;
+            output.Write(ChunkCodec.Encode(1, payload, headerSize));
+        }
+
+        encoded = output.ToArray();
+        error = null;
+        return true;
+    }
+
+    private static byte[] EncodePrimitiveList(
+        ReadOnlySpan<byte> original,
+        IReadOnlyList<byte[]> values,
+        int elementSize)
+    {
+        IReadOnlyList<ChunkSlice>? chunks = TryReadPrimitiveChunks(original, elementSize);
+        using var output = new MemoryStream();
+        if (chunks is not null && chunks.Count > 0)
+        {
+            for (int index = 0; index < values.Count; index++)
+            {
+                int headerSize = chunks[Math.Min(index, chunks.Count - 1)].HeaderSize;
+                output.Write(ChunkCodec.Encode(1, values[index], headerSize));
+            }
+        }
+        else
+        {
+            foreach (byte[] value in values)
+            {
+                output.Write(value);
+            }
+        }
+
+        return output.ToArray();
+    }
+
+    private static IReadOnlyList<ChunkSlice>? TryReadPrimitiveChunks(
+        ReadOnlySpan<byte> payload,
+        int elementSize)
+    {
+        if (payload.Length == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            IReadOnlyList<ChunkSlice> chunks = ChunkCodec.ReadList(payload, 0, payload.Length, "editable-primitive-list");
+            return chunks.Count > 0 && chunks.All(chunk => chunk.Id == 1 && chunk.DataLength == elementSize)
+                ? chunks
+                : null;
+        }
+        catch (DatabaseFormatException)
+        {
+            return null;
+        }
+    }
+
+    private static string[] SplitListText(string text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? []
+            : text.Split([',', ';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private static string[] SplitStringListText(string text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? []
+            : text.Split([';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private static bool TryEncodeHex(string text, out byte[] encoded, out string? error)
+    {
+        string normalized = string.Concat(text.Where(character => !char.IsWhiteSpace(character)));
+        if (normalized.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[2..];
+        }
+
+        if ((normalized.Length & 1) != 0)
+        {
+            encoded = [];
+            error = "Hex-строка должна содержать чётное число символов.";
+            return false;
+        }
+
+        try
+        {
+            encoded = Convert.FromHexString(normalized);
+            error = null;
+            return true;
+        }
+        catch (FormatException)
+        {
+            encoded = [];
+            error = "Ожидаются только шестнадцатеричные символы 0-9 и A-F.";
+            return false;
+        }
+    }
+
+    private static bool CanDecodeNested(FieldSchema schema, ReadOnlySpan<byte> payload)
+    {
+        _ = DecodeStructure(schema, payload);
+        return true;
+    }
+
+    private static bool CanDecodeStructuredList(FieldSchema schema, ReadOnlySpan<byte> payload)
+    {
+        _ = DecodeStructureList(schema, payload);
+        return true;
     }
 
     private static Encoding CreateWindows1251()

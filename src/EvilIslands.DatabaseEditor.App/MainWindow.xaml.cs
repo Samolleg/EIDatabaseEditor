@@ -132,7 +132,7 @@ public partial class MainWindow : Window
         {
             var bindingPath = descriptor.Projection is null
                 ? $"Cells[{descriptor.FieldId}].EditorText"
-                : $"Cells[{descriptor.FieldId}]";
+                : $"Cells[{descriptor.FieldId}].ProjectionSource";
             var binding = new Binding(bindingPath)
             {
                 Mode = descriptor.Projection is null ? BindingMode.TwoWay : BindingMode.OneWay,

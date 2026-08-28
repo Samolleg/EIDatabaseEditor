@@ -201,9 +201,16 @@ internal static class Program
                 "Каждая из 26 таблиц должна получить полный набор уникальных физических и виртуальных Excel-столбцов.");
         }
 
-        if (tables.Where(table => table.IsReadOnly).SelectMany(table => table.Columns).Any(column => column.IsEditable))
+        if (tables.Any(table => !table.IsEditable || !table.CanAppendRecords) ||
+            tables.SelectMany(table => table.Columns)
+                .Where(column => column.Projection is null)
+                .Any(column => !column.IsEditable) ||
+            tables.SelectMany(table => table.Columns)
+                .Where(column => column.Projection is not null)
+                .Any(column => column.IsEditable))
         {
-            throw new InvalidOperationException("Read-only каталог не должен содержать редактируемые столбцы.");
+            throw new InvalidOperationException(
+                "Все 26 таблиц и их физические поля должны редактироваться; расшифрованные проекции остаются представлением исходного поля.");
         }
 
         if (records.Any(record => record.AreFieldsMaterialized))
@@ -241,8 +248,7 @@ internal static class Program
         }
 
         viewModel.SelectTableCommand.Execute(prototypes);
-        if (prototypes.Columns.Count != 62 ||
-            prototypes.Columns.Count <= prototypes.Records[0].FieldCount ||
+        if (prototypes.Columns.Count <= prototypes.Records[0].FieldCount ||
             records.Sum(record => record.MaterializedFieldCount) != 0)
         {
             throw new InvalidOperationException(
@@ -425,31 +431,33 @@ internal static class Program
         string[] editableMaterialHeaders =
         [
             "Имя", "Тип", "Код", "ID", "Цена", "Вес", "Мана", "Слоты", "Прочность", "Навык", "Урон",
-            "Маска травм",
+            "Поглощение", "Маска травм", "Магазины",
         ];
-        if (materials.Columns.Count != 24 ||
+        if (materials.Columns.Count != 26 ||
             !materials.IsEditable ||
             !materials.CanAppendRecords ||
-            !materials.Columns.Where(column => column.IsEditable)
+            !materials.Columns.Where(column => column.Projection is null && column.IsEditable)
                 .Select(column => column.Title)
                 .SequenceEqual(editableMaterialHeaders, StringComparer.Ordinal) ||
-            materials.Columns.Where(column => !column.IsEditable)
-                .Any(column => column.Projection is null))
+            materials.Columns.Where(column => column.Projection is not null)
+                .Any(column => column.IsEditable))
         {
             throw new InvalidOperationException(
-                "Материалы должны иметь 12 подтверждённых редактируемых примитивных столбцов; " +
-                "семь коэффициентов поглощения и пять shop-битов остаются проекциями только для чтения.");
+                "Материалы должны иметь 14 редактируемых физических столбцов; " +
+                "семь коэффициентов поглощения и пять shop-битов остаются синхронными проекциями исходных полей.");
         }
 
         var rawColumns = tables
             .SelectMany(table => table.Columns.Select(column => (Table: table, Column: column)))
             .Where(item => item.Column.Kind == "Hex")
             .ToArray();
-        if (tables.Sum(table => table.Columns.Count) != 578 || rawColumns.Length != 0)
+        int physicalColumnCount = tables.Sum(table => table.Columns.Count(column => column.Projection is null));
+        int rawEditorCount = tables.Sum(table => table.Columns.Count(column => column.Kind == "RawHex"));
+        if (physicalColumnCount != 380 || rawColumns.Length != 0 || rawEditorCount == 0)
         {
             throw new InvalidOperationException(
-                $"Полный каталог должен дать 578 понятных колонок без Hex: legacy-поля плюс подтверждённые native-массивы навыков; " +
-                $"получено колонок/Hex {tables.Sum(table => table.Columns.Count)}/{rawColumns.Length}.");
+                $"Полный каталог должен дать 380 редактируемых физических полей, расшифрованные проекции и raw-редакторы сложных структур; " +
+                $"получено физических/Hex/raw {physicalColumnCount}/{rawColumns.Length}/{rawEditorCount}.");
         }
 
         var weapons = tables.Single(table => table.Key == "items.weapons");
@@ -460,14 +468,14 @@ internal static class Program
         int[] protectedArmorFields = [14, 21, 22, 25, 26];
         if (!weapons.IsEditable || !weapons.CanAppendRecords ||
             !armors.IsEditable || !armors.CanAppendRecords ||
-            weapons.Columns.Where(column => editableWeaponFields.Contains(column.FieldId))
+            weapons.Columns.Where(column => column.Projection is null && editableWeaponFields.Contains(column.FieldId))
                 .Any(column => !column.IsEditable) ||
-            weapons.Columns.Where(column => protectedWeaponFields.Contains(column.FieldId))
-                .Any(column => column.IsEditable) ||
-            armors.Columns.Where(column => editableArmorFields.Contains(column.FieldId))
+            weapons.Columns.Where(column => column.Projection is null && protectedWeaponFields.Contains(column.FieldId))
                 .Any(column => !column.IsEditable) ||
-            armors.Columns.Where(column => protectedArmorFields.Contains(column.FieldId))
-                .Any(column => column.IsEditable) ||
+            armors.Columns.Where(column => column.Projection is null && editableArmorFields.Contains(column.FieldId))
+                .Any(column => !column.IsEditable) ||
+            armors.Columns.Where(column => column.Projection is null && protectedArmorFields.Contains(column.FieldId))
+                .Any(column => !column.IsEditable) ||
             !weapons.Columns.Any(column => column.Title == "Science" && column.Kind == "Byte") ||
             !weapons.Columns.Any(column => column.Title == "Awareness" && column.Kind == "Byte") ||
             armors.Columns.Count(column => column.Projection?.Kind ==
@@ -475,15 +483,16 @@ internal static class Program
             armors.Columns.Count(column => column.Title.EndsWith("cripple mask", StringComparison.Ordinal)) != 2)
         {
             throw new InvalidOperationException(
-                "Оружие и броня должны редактировать подтверждённые примитивы, разрешать клонирование строк, " +
-                "а сложные native-массивы оставлять раскрытыми только для чтения.");
+                "Оружие и броня должны редактировать все физические поля, разрешать клонирование строк " +
+                "и сохранять расшифрованные native-проекции рядом с исходным редактором.");
         }
 
         var acks = tables.Single(table => table.Key == "acks.answers");
         var nonEmptyAck = acks.Records
             .SelectMany(record => acks.Columns
-                .Where(column => column.Kind == "StructuredList")
-                .Select(column => record.GetCell(column.FieldId)?.EditorText))
+                .Where(column => column.Projection?.Kind ==
+                    EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue)
+                .Select(column => GetSpreadsheetText(record, column)))
             .FirstOrDefault(value => value?.Contains("File:", StringComparison.Ordinal) == true);
         if (string.IsNullOrWhiteSpace(nonEmptyAck) || nonEmptyAck.All(Uri.IsHexDigit))
         {
@@ -491,7 +500,7 @@ internal static class Program
         }
 
         var prints = tables.Single(table => table.Key == "prints.blood");
-        if (prints.Columns.Count != 7 ||
+        if (prints.Columns.Count(column => column.Projection is null) != prints.Records[0].FieldCount ||
             prints.Columns.Where(column => column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.NestedField)
                 .Any(column => GetSpreadsheetText(prints.Records[0], column) == SpreadsheetProjectionValue.UnavailableText))
         {
@@ -501,8 +510,8 @@ internal static class Program
         string[] materialHeaders =
         [
             "Имя", "Тип", "Код", "ID", "Цена", "Вес", "Мана", "Слоты", "Прочность", "Навык", "Урон",
-            "Колющий", "Рубящий", "Дробящий", "Термический", "Химический", "Электрический", "Общий",
-            "Маска травм", "Магазин 1", "Магазин 2", "Магазин 3", "Магазин 4", "Магазин 5",
+            "Поглощение", "Колющий", "Рубящий", "Дробящий", "Термический", "Химический", "Электрический", "Общий",
+            "Маска травм", "Магазины", "Магазин 1", "Магазин 2", "Магазин 3", "Магазин 4", "Магазин 5",
         ];
         if (!materials.Columns.Select(column => column.Title).SequenceEqual(materialHeaders, StringComparer.Ordinal))
         {
@@ -513,7 +522,8 @@ internal static class Program
         string[] thinValues =
         [
             "thin", "Leather", "le", "0", "4", "1.2", "11", "6", "32.94", "1", "0",
-            "1.14", "1.2", "1.23", "1.14", "1.2", "1.35", "1.2", "0", "1", "0", "0", "0", "0",
+            "1.14, 1.2, 1.23, 1.14, 1.2, 1.35, 1.2",
+            "1.14", "1.2", "1.23", "1.14", "1.2", "1.35", "1.2", "0", "1", "1", "0", "0", "0", "0",
         ];
         var thin = materials.Records[0];
         if (!materials.Columns.Select(column => GetSpreadsheetText(thin, column))
@@ -527,7 +537,8 @@ internal static class Program
         if (GetSpreadsheetText(lastMaterial, materials.Columns[0]) != "black panter hide" ||
             GetSpreadsheetText(lastMaterial, materials.Columns[2]) != "pt" ||
             GetSpreadsheetText(lastMaterial, materials.Columns[3]) != "49" ||
-            materials.Columns.Skip(19).Any(column => GetSpreadsheetText(lastMaterial, column) != "0"))
+            materials.Columns.Where(column => column.Title.StartsWith("Магазин ", StringComparison.Ordinal))
+                .Any(column => GetSpreadsheetText(lastMaterial, column) != "0"))
         {
             throw new InvalidOperationException(
                 "Последняя строка Материалов должна полностью декодироваться, включая пять shop-битов.");
@@ -538,15 +549,15 @@ internal static class Program
         if (recordsGrid.Columns.Count != materials.Columns.Count + 2 || recordsGrid.FrozenColumnCount != 3)
         {
             throw new InvalidOperationException(
-                "DataGrid Материалов обязан создать все 24 содержательных столбца без дубликатов.");
+                "DataGrid Материалов обязан создать все 26 содержательных столбцов без дубликатов.");
         }
 
         var materialGridColumns = recordsGrid.Columns
             .Where(column => column.Header is SpreadsheetColumnViewModel)
             .ToArray();
         double preferredMaterialWidth = materials.Columns.Sum(column => column.Layout.PreferredWidth);
-        if (preferredMaterialWidth >= 1900 ||
-            materialGridColumns.Sum(column => column.Width.Value) >= 1900 ||
+        if (preferredMaterialWidth >= 2200 ||
+            materialGridColumns.Sum(column => column.Width.Value) >= 2200 ||
             materialGridColumns.Any(column =>
             {
                 var descriptor = (SpreadsheetColumnViewModel)column.Header;
