@@ -72,18 +72,40 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         RequireDocument().RestoreAddedRecord(record.CoreRecord);
     }
 
+    public async Task<SaveCurrentResult> SaveCurrentAsync(
+        bool allowGameInstallationPath,
+        CancellationToken cancellationToken)
+    {
+        var document = RequireDocument();
+        var result = await document.SaveInPlaceAsync(
+            allowGameInstallationPath,
+            cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(result.BackupPath))
+        {
+            throw new InvalidOperationException("Сохранение не создало обязательную резервную копию.");
+        }
+
+        var workspace = await OpenAsync(result.TargetPath, CancellationToken.None).ConfigureAwait(false);
+        return new SaveCurrentResult(
+            MapSaveResult(result),
+            workspace,
+            result.BackupPath);
+    }
+
     public async Task<SaveCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken)
     {
         var document = RequireDocument();
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
         var result = await document.SaveAsAsync(Path.GetFullPath(targetPath), cancellationToken).ConfigureAwait(false);
-        return new SaveCopyResult(
-            result.TargetPath,
-            result.FileLength,
-            result.Sha256,
-            result.ReopenedSuccessfully,
-            result.Diagnostics.Count);
+        return MapSaveResult(result);
     }
+
+    private static SaveCopyResult MapSaveResult(SaveResult result) => new(
+        result.TargetPath,
+        result.FileLength,
+        result.Sha256,
+        result.ReopenedSuccessfully,
+        result.Diagnostics.Count);
 
     private static IReadOnlyList<DatabaseGroupViewModel> MapDatabases(
         IReadOnlyList<DatabaseGroup> groups,

@@ -30,7 +30,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private RecordRowViewModel? _selectedRecord;
     private string _searchText = string.Empty;
     private string _resourceSearchText = string.Empty;
-    private string _statusText = "Готово. Откройте копию database.res для анализа.";
+    private string _statusText = "Готово. Откройте database.res для редактирования.";
     private string? _notificationMessage;
     private bool _notificationIsError;
     private bool _isBusy;
@@ -68,10 +68,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ServiceNavigationItems = new ObservableCollection<NavigationItemViewModel>(NavigationItems.Skip(1));
 
         OpenCommand = new RelayCommand(() => OpenFileRequested?.Invoke(this, EventArgs.Empty), () => !IsBusy);
+        SaveCommand = new RelayCommand(
+            () => SaveRequested?.Invoke(this, EventArgs.Empty),
+            () => HasDocument && !IsBusy);
         SaveCopyCommand = new RelayCommand(() => SaveCopyRequested?.Invoke(this, EventArgs.Empty), () => HasDocument && !IsBusy);
-        ToggleEditModeCommand = new RelayCommand(
-            ToggleEditMode,
-            () => HasDocument && !IsBusy && (IsEditMode || (IsRecordsSection && IsCurrentTableEditable)));
         UndoCommand = new RelayCommand(Undo, () => !IsBusy && _undo.Count > 0);
         RedoCommand = new RelayCommand(Redo, () => !IsBusy && _redo.Count > 0);
         NavigateCommand = new RelayCommand<NavigationItemViewModel>(Navigate, item => item?.IsEnabled is true);
@@ -98,11 +98,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public event EventHandler? OpenFileRequested;
 
+    public event EventHandler? SaveRequested;
+
     public event EventHandler? SaveCopyRequested;
-
-    public event EventHandler? EditModeConfirmationRequested;
-
-    public event EventHandler<CancelEventArgs>? EditModeEndingRequested;
 
     public event EventHandler? SearchFocusRequested;
 
@@ -124,9 +122,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ICommand OpenCommand { get; }
 
-    public ICommand SaveCopyCommand { get; }
+    public ICommand SaveCommand { get; }
 
-    public ICommand ToggleEditModeCommand { get; }
+    public ICommand SaveCopyCommand { get; }
 
     public ICommand UndoCommand { get; }
 
@@ -192,7 +190,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(PageSubtitle));
             OnPropertyChanged(nameof(IsRecordsSection));
             OnPropertyChanged(nameof(BreadcrumbText));
-            OnPropertyChanged(nameof(EditModeButtonText));
             RaiseCommandStates();
         }
     }
@@ -209,7 +206,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string PageSubtitle => CurrentSection switch
     {
-        WorkspaceSection.Overview => "Безопасное рабочее пространство: исходный файл всегда остаётся неизменным.",
+        WorkspaceSection.Overview => "Редактирование включено; Ctrl+S сохраняет текущий файл с автоматической .bak-копией.",
         WorkspaceSection.Resources => "Содержимое RES-контейнера, смещения и размеры внутренних ресурсов.",
         WorkspaceSection.Records when SelectedTable is not null =>
             $"{SelectedTable.GroupTitle} · {SelectedTable.ResourceName} · строки — записи, столбцы — поля · {SelectedTable.StatusText.ToLowerInvariant()}.",
@@ -253,7 +250,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsCurrentTableReadOnly));
             OnPropertyChanged(nameof(IsCurrentTableEditable));
             OnPropertyChanged(nameof(IsCurrentTableAddable));
-            OnPropertyChanged(nameof(EditModeButtonText));
             OnPropertyChanged(nameof(VisibleSpreadsheetColumns));
             OnPropertyChanged(nameof(SpreadsheetColumnCountText));
             OnPropertyChanged(nameof(ColumnModeButtonText));
@@ -468,16 +464,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             ApplyCurrentTableEditMode();
-            OnPropertyChanged(nameof(EditModeButtonText));
             RaiseCommandStates();
         }
     }
-
-    public string EditModeButtonText => IsRecordsSection && IsCurrentTableReadOnly && !IsEditMode
-        ? "Только просмотр"
-        : IsEditMode
-            ? "Завершить редактирование"
-            : "Режим редактирования";
 
     public bool HasDocument => _workspace is not null;
 
@@ -619,21 +608,64 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    public void ConfirmEditMode()
+    public async Task SaveCurrentAsync(bool allowGameInstallationPath)
     {
-        if (!HasDocument || IsBusy)
+        if (_workspace is null || !HasChanges || IsBusy)
         {
             return;
         }
 
-        if (IsRecordsSection && !IsCurrentTableEditable)
-        {
-            ShowError("Выбранная таблица доступна только для просмотра. Редактирование появится после отдельной проверки её схемы.");
-            return;
-        }
+        var selectedTableKey = SelectedTable?.Key;
+        var selectedRecordIndex = SelectedRecord?.SourceRecordIndex;
+        CancelValidation();
+        CancelOperation();
+        _operationCancellation = new CancellationTokenSource();
+        var cancellationToken = _operationCancellation.Token;
+        IsBusy = true;
+        IsOperationCancelable = false;
+        BusyText = "Проверка, резервная копия и атомарное сохранение…";
+        NotificationMessage = null;
+        StatusText = "Сохранение database.res…";
 
-        IsEditMode = true;
-        StatusText = "Режим редактирования включён. Исходный файл по-прежнему заблокирован.";
+        try
+        {
+            var result = await _service.SaveCurrentAsync(allowGameInstallationPath, cancellationToken);
+            ApplyWorkspace(result.Workspace);
+            if (selectedTableKey is not null)
+            {
+                var table = Databases.SelectMany(database => database.Tables)
+                    .FirstOrDefault(candidate => candidate.Key == selectedTableKey);
+                if (table is not null)
+                {
+                    SelectTable(table);
+                    if (selectedRecordIndex is int recordIndex)
+                    {
+                        SelectedRecord = table.Records.FirstOrDefault(
+                            record => record.SourceRecordIndex == recordIndex);
+                    }
+                }
+            }
+
+            LastSavedPath = result.Save.TargetPath;
+            NotificationIsError = false;
+            NotificationMessage =
+                $"Сохранено и проверено: {Path.GetFileName(result.Save.TargetPath)}. " +
+                $"Резервная копия: {Path.GetFileName(result.BackupPath)}";
+            StatusText = $"Сохранено: {result.Save.TargetPath}";
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Файл не сохранён: {UnwrapMessage(exception)}");
+            StatusText = "Ошибка сохранения.";
+        }
+        finally
+        {
+            IsOperationCancelable = false;
+            IsBusy = false;
+            BusyText = string.Empty;
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+        }
     }
 
     public void Dispose()
@@ -658,7 +690,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ApplyTableEditMode(SelectedTable, false);
         UnsubscribeWorkspaceRecords(Databases);
         _workspace = workspace;
-        IsEditMode = false;
+        IsEditMode = true;
         _undo.Clear();
         _redo.Clear();
         _changesByPath.Clear();
@@ -691,28 +723,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RaiseCommandStates();
     }
 
-    private void ToggleEditMode()
-    {
-        if (IsEditMode)
-        {
-            var endingEventArgs = new CancelEventArgs();
-            EditModeEndingRequested?.Invoke(this, endingEventArgs);
-            if (endingEventArgs.Cancel)
-            {
-                StatusText = "Сначала исправьте или отмените значение в активной клетке.";
-                return;
-            }
-
-            IsEditMode = false;
-            StatusText = HasChanges
-                ? "Редактирование приостановлено. Сделанные изменения сохранены в рабочей памяти."
-                : "Режим редактирования выключен.";
-            return;
-        }
-
-        EditModeConfirmationRequested?.Invoke(this, EventArgs.Empty);
-    }
-
     private void ToggleColumnMode()
     {
         if (SelectedTable is null || SelectedTable.Columns.Count <= 12)
@@ -733,11 +743,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        if (item.Section != WorkspaceSection.Records && IsEditMode)
-        {
-            IsEditMode = false;
-        }
-
         CurrentSection = item.Section;
     }
 
@@ -754,20 +759,15 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             group.IsExpanded = true;
         }
 
-        if (IsEditMode && !table.IsEditable)
-        {
-            IsEditMode = false;
-        }
-
         ApplyTableEditMode(SelectedTable, false);
         SearchText = string.Empty;
         ShowAllColumns = true;
         SelectedRecord = null;
         SelectedTable = table;
+        CurrentSection = WorkspaceSection.Records;
         ApplyCurrentTableEditMode();
         RecordsView = CollectionViewSource.GetDefaultView(table.Records);
         RecordsView.Filter = FilterRecord;
-        CurrentSection = WorkspaceSection.Records;
         RefreshRecordFilter();
         StatusText = $"{table.ResourceName} · {table.Title} · {table.RecordCount:N0} записей · {table.StatusText.ToLowerInvariant()}";
     }
@@ -803,7 +803,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             RefreshValidationDeferred();
             StatusText = $"Добавлена строка по образцу «{template.DisplayName}». " +
                          $"Измените уникальный ключ в поле {record.GetCell(record.IdentityFieldId)?.DisplayName ?? "идентификатора"}; " +
-                         "до этого сохранение копии заблокировано.";
+                         "до этого сохранение заблокировано.";
             RaiseCommandStates();
         }
         catch (Exception exception)
@@ -1100,6 +1100,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             RefreshAllCounts();
             OnPropertyChanged(nameof(HasChanges));
+            (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
             RecordsView.Refresh();
             return;
@@ -1125,6 +1126,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         RefreshAllCounts();
         OnPropertyChanged(nameof(HasChanges));
+        (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
         RecordsView.Refresh();
     }
@@ -1291,8 +1293,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RaiseCommandStates()
     {
         (OpenCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
-        (ToggleEditModeCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (ToggleColumnModeCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (UndoCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (RedoCommand as RelayCommand)?.RaiseCanExecuteChanged();

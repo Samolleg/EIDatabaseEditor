@@ -11,6 +11,7 @@ using System.Windows.Threading;
 using EvilIslands.DatabaseEditor.App.Dialogs;
 using EvilIslands.DatabaseEditor.App.Infrastructure;
 using EvilIslands.DatabaseEditor.App.Models;
+using EvilIslands.DatabaseEditor.App.Services;
 using EvilIslands.DatabaseEditor.App.ViewModels;
 using EvilIslands.DatabaseEditor.Core;
 using Microsoft.Win32;
@@ -21,6 +22,7 @@ public partial class MainWindow : Window
 {
     private static readonly IValueConverter ProjectionConverter = new SpreadsheetProjectionConverter();
     private readonly MainWindowViewModel _viewModel;
+    private readonly EditorPreferencesStore _preferences = new();
     private readonly Dictionary<DataGridColumn, SpreadsheetColumnViewModel> _spreadsheetColumns = [];
     private MainWindowViewModel? _spreadsheetViewModel;
     private bool _allowClose;
@@ -33,8 +35,8 @@ public partial class MainWindow : Window
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
         _viewModel.OpenFileRequested += ViewModel_OpenFileRequested;
+        _viewModel.SaveRequested += ViewModel_SaveRequested;
         _viewModel.SaveCopyRequested += ViewModel_SaveCopyRequested;
-        _viewModel.EditModeConfirmationRequested += ViewModel_EditModeConfirmationRequested;
         _viewModel.SearchFocusRequested += ViewModel_SearchFocusRequested;
     }
 
@@ -43,7 +45,6 @@ public partial class MainWindow : Window
         if (_spreadsheetViewModel is not null)
         {
             _spreadsheetViewModel.PropertyChanged -= SpreadsheetViewModel_PropertyChanged;
-            _spreadsheetViewModel.EditModeEndingRequested -= ViewModel_EditModeEndingRequested;
             _spreadsheetViewModel.RecordFocusRequested -= ViewModel_RecordFocusRequested;
         }
 
@@ -51,7 +52,6 @@ public partial class MainWindow : Window
         if (_spreadsheetViewModel is not null)
         {
             _spreadsheetViewModel.PropertyChanged += SpreadsheetViewModel_PropertyChanged;
-            _spreadsheetViewModel.EditModeEndingRequested += ViewModel_EditModeEndingRequested;
             _spreadsheetViewModel.RecordFocusRequested += ViewModel_RecordFocusRequested;
         }
 
@@ -301,7 +301,7 @@ public partial class MainWindow : Window
             var discardDialog = new ConfirmDialog(
                 "Открыть другой файл?",
                 "Несохранённые изменения текущей рабочей модели будут потеряны.",
-                "Исходный database.res не изменён. При необходимости сначала используйте «Сохранить копию…».",
+                "Сначала нажмите «Сохранить» или создайте отдельную копию.",
                 "Открыть без сохранения",
                 "!")
             {
@@ -316,23 +316,67 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Title = "Открыть копию database.res",
+            Title = "Открыть database.res",
             Filter = "Evil Islands database.res|database.res;*.res|RES-контейнеры (*.res)|*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
             Multiselect = false,
             RestoreDirectory = true,
-            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            InitialDirectory = _preferences.GetLastDatabaseDirectory()
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
 
         if (dialog.ShowDialog(this) is true)
         {
             await _viewModel.OpenPathAsync(dialog.FileName);
+            if (_viewModel.HasDocument && string.Equals(
+                    Path.GetFullPath(_viewModel.SourcePath),
+                    Path.GetFullPath(dialog.FileName),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                _preferences.RememberDatabasePath(dialog.FileName);
+            }
         }
+    }
+
+    private async void ViewModel_SaveRequested(object? sender, EventArgs e)
+    {
+        if (!CommitPendingCell())
+        {
+            return;
+        }
+
+        var allowGameInstallationPath = false;
+        if (DatabaseSafetyPolicy.IsLikelyGameInstallationPath(_viewModel.SourcePath))
+        {
+            var dialog = new ConfirmDialog(
+                "Сохранить database.res в каталоге игры?",
+                "Открытый файл будет заменён проверенной версией.",
+                "Перед заменой рядом будет создана резервная .bak-копия. Это явная запись в установленный мод.",
+                "Сохранить с резервной копией",
+                "!")
+            {
+                Owner = this,
+            };
+
+            if (dialog.ShowDialog() is not true)
+            {
+                return;
+            }
+
+            allowGameInstallationPath = true;
+        }
+
+        await _viewModel.SaveCurrentAsync(allowGameInstallationPath);
     }
 
     private async void ViewModel_SaveCopyRequested(object? sender, EventArgs e)
     {
+        if (!CommitPendingCell())
+        {
+            return;
+        }
+
         var stagingDirectory = GetStagingDirectory();
         var sourceName = Path.GetFileNameWithoutExtension(_viewModel.SourceFileName);
         if (string.IsNullOrWhiteSpace(sourceName))
@@ -399,41 +443,24 @@ public partial class MainWindow : Window
         await _viewModel.SaveCopyPathAsync(targetPath);
     }
 
-    private void ViewModel_EditModeConfirmationRequested(object? sender, EventArgs e)
-    {
-        var dialog = new ConfirmDialog(
-            "Включить режим редактирования?",
-            "Поля, которые ядро считает безопасными и известными, станут доступны для ручного изменения.",
-            "Изменения останутся в памяти. Исходный database.res заблокирован; запись возможна только в новый несуществующий файл через «Сохранить копию…».",
-            "Включить редактирование",
-            "✎")
-        {
-            Owner = this,
-        };
-
-        if (dialog.ShowDialog() is true)
-        {
-            _viewModel.ConfirmEditMode();
-        }
-    }
-
-    private void ViewModel_EditModeEndingRequested(object? sender, CancelEventArgs e)
+    private bool CommitPendingCell()
     {
         if (!RecordsGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
             !RecordsGrid.CommitEdit(DataGridEditingUnit.Row, true))
         {
-            e.Cancel = true;
-            return;
+            return false;
         }
 
         if (RecordsGrid.CurrentCell.Item is RecordRowViewModel record &&
             _spreadsheetColumns.TryGetValue(RecordsGrid.CurrentCell.Column, out var descriptor) &&
             record.GetCell(descriptor.FieldId)?.HasError is true)
         {
-            e.Cancel = true;
             RecordsGrid.Focus();
             RecordsGrid.BeginEdit();
+            return false;
         }
+
+        return true;
     }
 
     private void ViewModel_SearchFocusRequested(object? sender, EventArgs e)
@@ -587,9 +614,9 @@ public partial class MainWindow : Window
     private void ShowUnsavedChangesClosePrompt()
     {
         var dialog = new ConfirmDialog(
-            "Закрыть без сохранения копии?",
+            "Закрыть без сохранения?",
             $"В рабочей памяти осталось изменений: {_viewModel.ChangeCount}.",
-            "Исходный database.res не затронут. Несохранённые изменения рабочей модели будут потеряны.",
+            "Несохранённые изменения будут потеряны. Для записи используйте «Сохранить».",
             "Закрыть без сохранения",
             "!")
         {
@@ -630,13 +657,12 @@ public partial class MainWindow : Window
         if (_spreadsheetViewModel is not null)
         {
             _spreadsheetViewModel.PropertyChanged -= SpreadsheetViewModel_PropertyChanged;
-            _spreadsheetViewModel.EditModeEndingRequested -= ViewModel_EditModeEndingRequested;
             _spreadsheetViewModel = null;
         }
 
         _viewModel.OpenFileRequested -= ViewModel_OpenFileRequested;
+        _viewModel.SaveRequested -= ViewModel_SaveRequested;
         _viewModel.SaveCopyRequested -= ViewModel_SaveCopyRequested;
-        _viewModel.EditModeConfirmationRequested -= ViewModel_EditModeConfirmationRequested;
         _viewModel.SearchFocusRequested -= ViewModel_SearchFocusRequested;
         _viewModel.Dispose();
     }

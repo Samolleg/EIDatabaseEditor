@@ -14,5 +14,9 @@ internal interface IDatabaseWorkspaceService
 
     void RestoreAddedRecord(RecordRowViewModel record);
 
+    Task<SaveCurrentResult> SaveCurrentAsync(
+        bool allowGameInstallationPath,
+        CancellationToken cancellationToken);
+
     Task<SaveCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken);
 }

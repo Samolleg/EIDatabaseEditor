@@ -1131,3 +1131,8 @@ internal sealed record SaveCopyResult(
     string Sha256,
     bool ReopenedSuccessfully,
     int DiagnosticCount);
+
+internal sealed record SaveCurrentResult(
+    SaveCopyResult Save,
+    WorkspaceSnapshot Workspace,
+    string BackupPath);

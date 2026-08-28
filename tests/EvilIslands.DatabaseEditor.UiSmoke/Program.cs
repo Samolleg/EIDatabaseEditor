@@ -35,6 +35,7 @@ internal static class Program
             VerifySpreadsheetGridDefinition(window);
             VerifyNavigationRequery(application);
             VerifyDatabaseTableNavigation();
+            VerifyPreferencesStore();
             if (args.Length > 0)
             {
                 VerifyRealWorkspace(window, args[0], args.Length > 1 ? args[1] : null);
@@ -118,6 +119,11 @@ internal static class Program
             new Binding(nameof(NavigationItemViewModel.IsEnabled)) { Source = resourcesItem });
 
         viewModel.OpenPathAsync("C:\\staging\\database.res").GetAwaiter().GetResult();
+        if (!viewModel.IsEditMode)
+        {
+            throw new InvalidOperationException("Редактирование должно включаться автоматически сразу после открытия базы.");
+        }
+
         radioButton.Dispatcher.Invoke(() => { });
         if (raised == 0 || !radioButton.IsEnabled || radioButton.Opacity < 0.85)
         {
@@ -147,34 +153,44 @@ internal static class Program
             throw new InvalidOperationException("Выбор дочерней таблицы должен открыть отдельную records-страницу и хлебные крошки.");
         }
 
-        viewModel.ConfirmEditMode();
         if (!viewModel.IsEditMode)
         {
-            throw new InvalidOperationException("Подтверждённый режим редактирования должен включаться в editable-таблице.");
-        }
-
-        EventHandler<CancelEventArgs> cancelEnding = (_, args) => args.Cancel = true;
-        viewModel.EditModeEndingRequested += cancelEnding;
-        viewModel.ToggleEditModeCommand.Execute(null);
-        viewModel.EditModeEndingRequested -= cancelEnding;
-        if (!viewModel.IsEditMode)
-        {
-            throw new InvalidOperationException(
-                "Отмена фиксации активной Excel-клетки должна сохранить режим редактирования.");
+            throw new InvalidOperationException("Выбор таблицы не должен выключать постоянный режим редактирования.");
         }
 
         var readOnlyTable = group.Tables.Single(candidate => candidate.IsReadOnly);
         viewModel.SelectTableCommand.Execute(readOnlyTable);
-        if (!viewModel.IsCurrentTableReadOnly || viewModel.IsEditMode || viewModel.ToggleEditModeCommand.CanExecute(null))
+        if (!viewModel.IsCurrentTableReadOnly || !viewModel.IsEditMode)
         {
-            throw new InvalidOperationException("Read-only таблица должна приостановить режим и отключить команду редактирования.");
+            throw new InvalidOperationException("Read-only таблица не должна выключать общий режим редактора.");
         }
 
         viewModel.NavigateCommand.Execute(viewModel.OverviewNavigationItem);
-        if (readOnlyTable.IsSelected || viewModel.ToggleEditModeCommand.CanExecute(null))
+        if (readOnlyTable.IsSelected || !viewModel.IsEditMode)
         {
-            throw new InvalidOperationException("Служебная навигация должна снять выбор таблицы и не включать редактирование.");
+            throw new InvalidOperationException("Служебная навигация должна снять выбор таблицы, не выключая редактор.");
         }
+    }
+
+    private static void VerifyPreferencesStore()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "EI-Database-Studio-UiSmoke", Guid.NewGuid().ToString("N"));
+        var databaseDirectory = Path.Combine(root, "last-opened");
+        Directory.CreateDirectory(databaseDirectory);
+        var settingsPath = Path.Combine(root, "settings.json");
+        var databasePath = Path.Combine(databaseDirectory, "database.res");
+        var store = new EditorPreferencesStore(settingsPath);
+        store.RememberDatabasePath(databasePath);
+        var reopenedStore = new EditorPreferencesStore(settingsPath);
+        if (!string.Equals(
+                reopenedStore.GetLastDatabaseDirectory(),
+                Path.GetFullPath(databaseDirectory),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Диалог открытия должен запоминать последнюю папку database.res.");
+        }
+
+        Directory.Delete(root, recursive: true);
     }
 
     private static void VerifyRealWorkspace(MainWindow window, string sourcePath, string? screenshotPath)
@@ -300,7 +316,6 @@ internal static class Program
         }
 
         viewModel.SelectedRecord = prototypes.Records[0];
-        viewModel.ConfirmEditMode();
         raceGridColumn = recordsGrid.Columns.Single(column =>
             column.Header is SpreadsheetColumnViewModel descriptor && descriptor.FieldId == 1);
         RecordRowViewModel referenceRecord = prototypes.Records.First(record =>
@@ -317,7 +332,10 @@ internal static class Program
         recordsGrid.Focus();
         if (!recordsGrid.BeginEdit())
         {
-            throw new InvalidOperationException("Ссылочная Excel-клетка не перешла в режим редактирования.");
+            throw new InvalidOperationException(
+                $"Ссылочная Excel-клетка не перешла в режим редактирования: " +
+                $"mode={viewModel.IsEditMode}, busy={viewModel.IsBusy}, table={viewModel.IsCurrentTableEditable}, " +
+                $"record={referenceRecord.IsEditMode}, cell={referenceCell.CanEdit}, columnReadOnly={raceGridColumn.IsReadOnly}.");
         }
 
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
@@ -380,13 +398,15 @@ internal static class Program
         var editor = FindVisualChild<TextBox>(cellContent)
             ?? throw new InvalidOperationException("DataGrid не создал TextBox для редактируемой клетки.");
         editor.Text = originalText + " grid-smoke";
-        viewModel.ToggleEditModeCommand.Execute(null);
-        if (viewModel.IsEditMode || viewModel.ChangeCount != 1 || !prototypes.Records[0].IsModified ||
+        recordsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        recordsGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        if (!viewModel.IsEditMode || viewModel.ChangeCount != 1 || !prototypes.Records[0].IsModified ||
             editableCell.EditorText != originalText + " grid-smoke" ||
-            !viewModel.UndoCommand.CanExecute(null))
+            !viewModel.UndoCommand.CanExecute(null) ||
+            !viewModel.SaveCommand.CanExecute(null))
         {
             throw new InvalidOperationException(
-                "Выход из режима должен сначала зафиксировать активную Excel-клетку, журнал и Undo.");
+                "Фиксация клетки должна сохранить постоянный режим, журнал, Undo и включить обычное сохранение.");
         }
 
         viewModel.UndoCommand.Execute(null);
@@ -615,7 +635,6 @@ internal static class Program
 
         int originalMaterialCount = materials.RecordCount;
         viewModel.SelectedRecord = thin;
-        viewModel.ConfirmEditMode();
         if (!viewModel.AppendRecordCommand.CanExecute(null))
         {
             throw new InvalidOperationException(
@@ -686,7 +705,6 @@ internal static class Program
             .SelectMany(database => database.Tables)
             .Single(candidate => candidate.Key == "units.prototypes");
         closeViewModel.SelectTableCommand.Execute(table);
-        closeViewModel.ConfirmEditMode();
         RecordFieldViewModel changedCell = table.Records[0].GetCell(0)
             ?? throw new InvalidOperationException("Close-regression не нашёл редактируемую клетку имени.");
         changedCell.EditorText += " close-regression";
@@ -869,6 +887,11 @@ internal static class Program
         public void RemoveAddedRecord(RecordRowViewModel record) => throw new NotSupportedException();
 
         public void RestoreAddedRecord(RecordRowViewModel record) => throw new NotSupportedException();
+
+        public Task<SaveCurrentResult> SaveCurrentAsync(
+            bool allowGameInstallationPath,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<SaveCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

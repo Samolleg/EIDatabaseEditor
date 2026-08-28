@@ -241,6 +241,122 @@ public sealed class DatabaseDocument
         return Task.Run(() => SaveAs(targetPath), CancellationToken.None);
     }
 
+    public SaveResult SaveInPlace(bool allowGameInstallationPath = false)
+    {
+        ValidationDiagnostic? blockingDiagnostic = Validate()
+            .FirstOrDefault(diagnostic => diagnostic.IsBlocking);
+        if (blockingDiagnostic is not null)
+        {
+            throw new InvalidOperationException(
+                $"Сохранение заблокировано проверкой {blockingDiagnostic.Code}: {blockingDiagnostic.Message}");
+        }
+
+        var sourcePath = Path.GetFullPath(SourcePath);
+        var directory = Path.GetDirectoryName(sourcePath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            throw new DirectoryNotFoundException("Папка открытого database.res больше не существует.");
+        }
+
+        if (DatabaseSafetyPolicy.ContainsReparsePoint(sourcePath))
+        {
+            throw new InvalidOperationException(
+                "Путь открытого файла проходит через символическую ссылку или junction. Сохраните отдельную копию в обычную папку.");
+        }
+
+        if (!allowGameInstallationPath && DatabaseSafetyPolicy.IsLikelyGameInstallationPath(sourcePath))
+        {
+            throw new InvalidOperationException(
+                "Прямая запись в каталог игры требует отдельного подтверждения пользователя.");
+        }
+
+        using var sourceGuard = new FileStream(
+            sourcePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            128 * 1024,
+            FileOptions.SequentialScan);
+        EnsureSourceUnchanged(sourceGuard);
+
+        Dictionary<int, byte[]> replacements;
+        lock (_editSync)
+        {
+            replacements = BuildModifiedResources();
+        }
+
+        if (replacements.Count == 0)
+        {
+            return new SaveResult(
+                sourcePath,
+                FileLength,
+                Sha256,
+                true,
+                Diagnostics,
+                null);
+        }
+
+        var rebuilt = ResArchiveWriter.Rebuild(_archive, replacements);
+        var verifiedDocument = VerifyRebuiltArchive(sourcePath, rebuilt, replacements);
+        var rebuiltSha256 = Convert.ToHexString(SHA256.HashData(rebuilt));
+        var tempPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(sourcePath)}.partial-{Guid.NewGuid():N}");
+        var backupPath = CreateAvailableBackupPath(sourcePath);
+
+        try
+        {
+            using (var stream = new FileStream(
+                       tempPath,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       128 * 1024,
+                       FileOptions.WriteThrough))
+            {
+                stream.Write(rebuilt);
+                stream.Flush(true);
+            }
+
+            EnsureFileMatches(tempPath, rebuilt);
+            EnsureSourceUnchanged(sourceGuard);
+            if (DatabaseSafetyPolicy.ContainsReparsePoint(sourcePath) ||
+                (!allowGameInstallationPath && DatabaseSafetyPolicy.IsLikelyGameInstallationPath(sourcePath)))
+            {
+                throw new IOException("Путь открытого файла изменился и больше не является безопасным.");
+            }
+
+            File.Replace(tempPath, sourcePath, backupPath, ignoreMetadataErrors: true);
+            EnsureBackupMatches(backupPath);
+            EnsureFileMatches(sourcePath, rebuilt);
+        }
+        catch
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
+            throw;
+        }
+
+        return new SaveResult(
+            sourcePath,
+            rebuilt.LongLength,
+            rebuiltSha256,
+            true,
+            verifiedDocument.Diagnostics,
+            backupPath);
+    }
+
+    public Task<SaveResult> SaveInPlaceAsync(
+        bool allowGameInstallationPath = false,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() => SaveInPlace(allowGameInstallationPath), CancellationToken.None);
+    }
+
     public DatabaseRecord AppendRecordClone(DatabaseRecord template)
     {
         ArgumentNullException.ThrowIfNull(template);
@@ -514,6 +630,45 @@ public sealed class DatabaseDocument
         }
     }
 
+    private void EnsureBackupMatches(string path)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            128 * 1024,
+            FileOptions.SequentialScan);
+        var backupHash = Convert.ToHexString(SHA256.HashData(stream));
+        if (!string.Equals(backupHash, Sha256, StringComparison.Ordinal))
+        {
+            throw new IOException("Резервная копия исходного database.res не прошла проверку SHA-256.");
+        }
+    }
+
+    private static string CreateAvailableBackupPath(string sourcePath)
+    {
+        var basePath = sourcePath + ".bak";
+        if (!File.Exists(basePath) && !Directory.Exists(basePath))
+        {
+            return basePath;
+        }
+
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        for (var suffix = 0; suffix < 1000; suffix++)
+        {
+            var candidate = suffix == 0
+                ? $"{basePath}.{timestamp}"
+                : $"{basePath}.{timestamp}-{suffix:D3}";
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return $"{basePath}.{Guid.NewGuid():N}";
+    }
+
     private static void EnsureFileMatches(string path, ReadOnlySpan<byte> expected)
     {
         using var stream = new FileStream(
@@ -557,4 +712,5 @@ public sealed record SaveResult(
     long FileLength,
     string Sha256,
     bool ReopenedSuccessfully,
-    IReadOnlyList<ValidationDiagnostic> Diagnostics);
+    IReadOnlyList<ValidationDiagnostic> Diagnostics,
+    string? BackupPath = null);

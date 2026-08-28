@@ -18,6 +18,11 @@ internal static class SafetyRegressionVerifier
             allSourcePaths,
             staging,
             log).ConfigureAwait(false);
+        await VerifyInPlaceSaveUsesVerifiedBackupAsync(
+            sourcePath,
+            allSourcePaths,
+            staging,
+            log).ConfigureAwait(false);
         await VerifySyntheticGamePathIsRejectedAsync(
             sourcePath,
             allSourcePaths,
@@ -44,6 +49,70 @@ internal static class SafetyRegressionVerifier
             allSourcePaths,
             staging,
             log).ConfigureAwait(false);
+    }
+
+    private static async Task VerifyInPlaceSaveUsesVerifiedBackupAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        VerificationLog log)
+    {
+        string workingPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-in-place.res");
+        staging.AssertOutputPath(workingPath, allSourcePaths);
+        await DatabaseDocument.Open(sourcePath).SaveAsAsync(workingPath).ConfigureAwait(false);
+        FileSnapshot before = await FileSnapshot.CaptureAsync(workingPath).ConfigureAwait(false);
+
+        DatabaseDocument document = DatabaseDocument.Open(workingPath);
+        DatabaseField price = FindField(FindPowerHit(document), "Price");
+        string originalText = price.EditorText;
+        string editedText = (float.Parse(originalText, CultureInfo.InvariantCulture) + 1.0f)
+            .ToString("R", CultureInfo.InvariantCulture);
+        log.Assert(
+            price.TrySetValue(editedText, out string? editError) && document.IsModified,
+            $"Staging-копия подготовлена для прямого сохранения: {editError ?? "изменение принято"}.");
+
+        SaveResult result = await document.SaveInPlaceAsync().ConfigureAwait(false);
+        log.Assert(
+            string.Equals(result.TargetPath, workingPath, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(result.BackupPath) &&
+            File.Exists(result.BackupPath),
+            "Прямое сохранение заменило только staging-файл и создало .bak-копию.");
+        FileSnapshot backup = await FileSnapshot.CaptureAsync(result.BackupPath!).ConfigureAwait(false);
+        log.Assert(before.ContentEquals(backup), "Резервная .bak-копия побайтово совпадает с состоянием до сохранения.");
+
+        DatabaseDocument reopened = DatabaseDocument.Open(workingPath);
+        log.Assert(
+            string.Equals(FindField(FindPowerHit(reopened), "Price").EditorText, editedText, StringComparison.Ordinal),
+            "Прямо сохранённое значение повторно открывается из staging database.res.");
+        log.Assert(
+            !Directory.EnumerateFiles(staging.RootPath, ".*.partial-*", SearchOption.TopDirectoryOnly).Any(),
+            "После прямого сохранения не осталось незавершённых partial-файлов.");
+
+        string changedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-in-place-changed.res");
+        staging.AssertOutputPath(changedPath, allSourcePaths);
+        await DatabaseDocument.Open(sourcePath).SaveAsAsync(changedPath).ConfigureAwait(false);
+        DatabaseDocument changedDocument = DatabaseDocument.Open(changedPath);
+        DatabaseField changedPrice = FindField(FindPowerHit(changedDocument), "Price");
+        string changedEditedText = (float.Parse(changedPrice.EditorText, CultureInfo.InvariantCulture) + 1.0f)
+            .ToString("R", CultureInfo.InvariantCulture);
+        changedPrice.TrySetValue(changedEditedText, out _);
+        await using (var stream = new FileStream(changedPath, FileMode.Append, FileAccess.Write, FileShare.Read))
+        {
+            stream.WriteByte(0);
+            await stream.FlushAsync().ConfigureAwait(false);
+        }
+
+        FileSnapshot externallyChanged = await FileSnapshot.CaptureAsync(changedPath).ConfigureAwait(false);
+        IOException rejection = await ExpectThrowsAsync<IOException>(
+            () => changedDocument.SaveInPlaceAsync(),
+            "Прямое сохранение должно отклонить staging-файл, изменившийся после открытия.").ConfigureAwait(false);
+        log.Assert(
+            rejection.Message.Contains("изменился", StringComparison.OrdinalIgnoreCase),
+            "Прямое сохранение сообщает точную причину отказа при внешнем изменении staging-файла.");
+        FileSnapshot afterRejectedSave = await FileSnapshot.CaptureAsync(changedPath).ConfigureAwait(false);
+        log.Assert(
+            externallyChanged.ContentEquals(afterRejectedSave) && !File.Exists(changedPath + ".bak"),
+            "Отклонённое прямое сохранение не изменило файл и не создало ложную резервную копию.");
     }
 
     private static void VerifyCorrectedSchemaMetadata(string sourcePath, VerificationLog log)
@@ -336,6 +405,24 @@ internal static class SafetyRegressionVerifier
             exception.Message.Contains("Starter", StringComparison.OrdinalIgnoreCase),
             "SaveAs вернул понятную причину запрета игрового пути.");
         AssertNoOutputArtifacts(targetPath, log, "синтетического игрового пути");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        File.Copy(sourcePath, targetPath);
+        DatabaseDocument inPlaceDocument = await DatabaseDocument.OpenAsync(targetPath).ConfigureAwait(false);
+        DatabaseField price = FindField(FindPowerHit(inPlaceDocument), "Price");
+        string editedPrice = (float.Parse(price.EditorText, CultureInfo.InvariantCulture) + 1.0f)
+            .ToString("R", CultureInfo.InvariantCulture);
+        price.TrySetValue(editedPrice, out _);
+        FileSnapshot gamePathBefore = await FileSnapshot.CaptureAsync(targetPath).ConfigureAwait(false);
+        InvalidOperationException inPlaceException = await ExpectThrowsAsync<InvalidOperationException>(
+            () => inPlaceDocument.SaveInPlaceAsync(),
+            "Прямое сохранение в синтетический игровой путь должно требовать явного разрешения.").ConfigureAwait(false);
+        FileSnapshot gamePathAfter = await FileSnapshot.CaptureAsync(targetPath).ConfigureAwait(false);
+        log.Assert(
+            inPlaceException.Message.Contains("подтвержден", StringComparison.OrdinalIgnoreCase) &&
+            gamePathBefore.ContentEquals(gamePathAfter) &&
+            !File.Exists(targetPath + ".bak"),
+            "Прямая запись в Starter\\MODS без подтверждения отклонена без изменения файла и .bak.");
     }
 
     private static void VerifyInvalidInputsDoNotModifyDocument(
