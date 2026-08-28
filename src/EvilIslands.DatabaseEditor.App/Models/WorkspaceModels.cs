@@ -152,7 +152,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         byte sectionId,
         DatabaseSupportState supportState,
         bool canAppendRecords,
-        IReadOnlyList<RecordRowViewModel> records)
+        IReadOnlyList<RecordRowViewModel> records,
+        IReadOnlyDictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>? referenceChoices = null)
     {
         GroupKey = groupKey;
         GroupTitle = groupTitle;
@@ -164,7 +165,10 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         CanAppendRecords = canAppendRecords;
         Records = new ObservableCollection<RecordRowViewModel>(records);
         Records.CollectionChanged += Records_CollectionChanged;
-        Columns = BuildColumns(records, supportState == DatabaseSupportState.Editable);
+        Columns = BuildColumns(
+            records,
+            supportState == DatabaseSupportState.Editable,
+            referenceChoices ?? new Dictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>>());
         ReindexRecords();
     }
 
@@ -243,7 +247,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
     private static IReadOnlyList<SpreadsheetColumnViewModel> BuildColumns(
         IReadOnlyList<RecordRowViewModel> records,
-        bool tableIsEditable)
+        bool tableIsEditable,
+        IReadOnlyDictionary<int, RangeObservableCollection<ReferenceChoiceViewModel>> referenceChoices)
     {
         if (records.Count == 0)
         {
@@ -290,7 +295,10 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                     new SpreadsheetColumnAccumulator(
                         field,
                         projection,
-                        tableIsEditable && projection is null && field.IsEditable));
+                        tableIsEditable && projection is null && field.IsEditable,
+                        projection is null && referenceChoices.TryGetValue(field.Id, out var choices)
+                            ? choices
+                            : []));
                 return;
             }
 
@@ -308,7 +316,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         public SpreadsheetColumnAccumulator(
             DatabaseField field,
             DatabaseFieldProjection? projection,
-            bool isEditable)
+            bool isEditable,
+            RangeObservableCollection<ReferenceChoiceViewModel>? referenceChoices)
         {
             FieldId = field.Id;
             Projection = projection;
@@ -317,6 +326,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
             Kind = GetDisplayKind(field.Kind, projection);
             DisplayOrder = projection?.DisplayOrder ?? field.DisplayOrder;
             IsEditable = isEditable;
+            ReferenceChoices = referenceChoices;
         }
 
         public int FieldId { get; }
@@ -333,6 +343,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
         private bool IsEditable { get; set; }
 
+        private RangeObservableCollection<ReferenceChoiceViewModel>? ReferenceChoices { get; }
+
         public void Merge(
             DatabaseField field,
             DatabaseFieldProjection? projection,
@@ -346,7 +358,16 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         }
 
         public SpreadsheetColumnViewModel ToViewModel(bool isNameField) =>
-            new(FieldId, Key, Title, Kind, IsEditable, isNameField, Projection, DisplayOrder);
+            new(
+                FieldId,
+                Key,
+                Title,
+                Kind,
+                IsEditable,
+                isNameField,
+                Projection,
+                DisplayOrder,
+                ReferenceChoices);
 
         private static string BuildKey(DatabaseField field, DatabaseFieldProjection? projection) =>
             projection is null ? field.Key : $"{field.Key}[{projection.Index}]";
@@ -363,6 +384,11 @@ internal sealed class DatabaseTableViewModel : ObservableObject
     }
 }
 
+internal sealed record ReferenceChoiceViewModel(
+    string Value,
+    string DisplayText,
+    bool IsKnown);
+
 internal sealed record SpreadsheetColumnViewModel(
     int FieldId,
     string Key,
@@ -371,9 +397,10 @@ internal sealed record SpreadsheetColumnViewModel(
     bool IsEditable,
     bool IsNameField,
     DatabaseFieldProjection? Projection,
-    int DisplayOrder)
+    int DisplayOrder,
+    RangeObservableCollection<ReferenceChoiceViewModel>? ReferenceChoices = null)
 {
-    public string Subtitle => $"{Key} · {Kind}";
+    public string Subtitle => HasReferenceChoices ? $"{Key} · {Kind} · список" : $"{Key} · {Kind}";
 
     public string HeaderToolTip => $"{Title}\n{Subtitle}";
 
@@ -388,6 +415,8 @@ internal sealed record SpreadsheetColumnViewModel(
         "UInt32List" or "Float32List" or "ByteList");
 
     public bool IsPrimitive => Kind is "String" or "FixedString" or "Int32" or "UInt32" or "Float32" or "Byte" or "Boolean";
+
+    public bool HasReferenceChoices => ReferenceChoices is { Count: > 0 };
 }
 
 internal readonly record struct SpreadsheetColumnLayout(
@@ -517,6 +546,8 @@ internal static class SpreadsheetProjectionValue
 
 internal sealed class RecordRowViewModel : ObservableObject
 {
+    private static readonly IReadOnlyDictionary<int, IReadOnlyList<ValidationMessageViewModel>> EmptyDiagnosticsByField =
+        new Dictionary<int, IReadOnlyList<ValidationMessageViewModel>>();
     private readonly DatabaseRecord _record;
     private readonly bool _tableIsEditable;
     private IReadOnlyList<RecordFieldViewModel>? _fields;
@@ -525,6 +556,10 @@ internal sealed class RecordRowViewModel : ObservableObject
     private int _displayIndex;
     private bool _isModified;
     private bool _isEditMode;
+    private IReadOnlyDictionary<int, IReadOnlyList<ValidationMessageViewModel>> _diagnosticsByFieldId =
+        EmptyDiagnosticsByField;
+    private int _diagnosticCount;
+    private bool _hasBlockingDiagnostics;
 
     public RecordRowViewModel(
         DatabaseRecord record,
@@ -560,6 +595,8 @@ internal sealed class RecordRowViewModel : ObservableObject
     public RecordCellCollectionViewModel Cells { get; }
 
     public int Index => _displayIndex;
+
+    public int SourceRecordIndex => _record.RecordIndex;
 
     public int NameFieldId => _record.NameFieldId;
 
@@ -631,6 +668,26 @@ internal sealed class RecordRowViewModel : ObservableObject
         private set => SetProperty(ref _isModified, value);
     }
 
+    public int DiagnosticCount
+    {
+        get => _diagnosticCount;
+        private set
+        {
+            if (SetProperty(ref _diagnosticCount, value))
+            {
+                OnPropertyChanged(nameof(HasDiagnostics));
+            }
+        }
+    }
+
+    public bool HasDiagnostics => DiagnosticCount > 0;
+
+    public bool HasBlockingDiagnostics
+    {
+        get => _hasBlockingDiagnostics;
+        private set => SetProperty(ref _hasBlockingDiagnostics, value);
+    }
+
     public void RefreshState()
     {
         DisplayName = NormalizeDisplayName(_record.DisplayName);
@@ -649,6 +706,31 @@ internal sealed class RecordRowViewModel : ObservableObject
         {
             _displayIndex = value;
             OnPropertyChanged(nameof(Index));
+        }
+    }
+
+    internal void ApplyDiagnostics(IReadOnlyList<ValidationMessageViewModel> diagnostics)
+    {
+        DiagnosticCount = diagnostics.Count;
+        HasBlockingDiagnostics = diagnostics.Any(item =>
+            item.IsBlocking || item.Severity.Equals("Error", StringComparison.OrdinalIgnoreCase));
+        _diagnosticsByFieldId = diagnostics.Count == 0
+            ? EmptyDiagnosticsByField
+            : diagnostics
+                .Where(item => item.FieldId is not null)
+                .GroupBy(item => item.FieldId!.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyList<ValidationMessageViewModel>)group.ToArray());
+
+        if (_fieldCache is null)
+        {
+            return;
+        }
+
+        foreach ((int fieldId, RecordFieldViewModel field) in _fieldCache)
+        {
+            field.SetDiagnostics(_diagnosticsByFieldId.TryGetValue(fieldId, out var messages) ? messages : []);
         }
     }
 
@@ -686,6 +768,7 @@ internal sealed class RecordRowViewModel : ObservableObject
         {
             IsEditMode = IsEditMode,
         };
+        result.SetDiagnostics(_diagnosticsByFieldId.TryGetValue(field.Id, out var messages) ? messages : []);
         result.ValueCommitted += OnFieldValueCommitted;
         _fieldCache.Add(field.Id, result);
         OnPropertyChanged(nameof(MaterializedFieldCount));
@@ -757,6 +840,9 @@ internal sealed class RecordFieldViewModel : ObservableObject
     private string _editorText;
     private bool _isEditMode;
     private string? _errorMessage;
+    private int _diagnosticCount;
+    private bool _hasBlockingDiagnostic;
+    private string? _diagnosticText;
 
     public RecordFieldViewModel(DatabaseField field, bool tableIsEditable = true)
     {
@@ -867,6 +953,45 @@ internal sealed class RecordFieldViewModel : ObservableObject
 
     public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
 
+    public int DiagnosticCount
+    {
+        get => _diagnosticCount;
+        private set
+        {
+            if (SetProperty(ref _diagnosticCount, value))
+            {
+                OnPropertyChanged(nameof(HasDiagnostic));
+            }
+        }
+    }
+
+    public bool HasDiagnostic => DiagnosticCount > 0;
+
+    public bool HasBlockingDiagnostic
+    {
+        get => _hasBlockingDiagnostic;
+        private set => SetProperty(ref _hasBlockingDiagnostic, value);
+    }
+
+    public string? DiagnosticText
+    {
+        get => _diagnosticText;
+        private set => SetProperty(ref _diagnosticText, value);
+    }
+
+    internal void SetDiagnostics(IReadOnlyList<ValidationMessageViewModel> diagnostics)
+    {
+        DiagnosticCount = diagnostics.Count;
+        HasBlockingDiagnostic = diagnostics.Any(item =>
+            item.IsBlocking || item.Severity.Equals("Error", StringComparison.OrdinalIgnoreCase));
+        DiagnosticText = diagnostics.Count == 0
+            ? null
+            : string.Join(
+                Environment.NewLine,
+                diagnostics.Take(6).Select(item => $"{item.SeverityText}: {item.Message}")) +
+              (diagnostics.Count > 6 ? $"{Environment.NewLine}Ещё сообщений: {diagnostics.Count - 6}." : string.Empty);
+    }
+
     public bool ResetToOriginal()
     {
         try
@@ -970,9 +1095,16 @@ internal sealed record ValidationMessageViewModel(
     string Detail,
     string Path,
     long? Offset,
-    bool IsBlocking)
+    bool IsBlocking,
+    string? ResourceName,
+    string? TableKey,
+    int? RecordIndex,
+    int? FieldId,
+    string? FieldKey)
 {
     public string BlockingText => IsBlocking ? "Блокирует" : "Не блокирует";
+
+    public bool CanNavigate => !string.IsNullOrWhiteSpace(TableKey) && RecordIndex is >= 0;
 }
 
 internal sealed class WorkspaceSnapshot

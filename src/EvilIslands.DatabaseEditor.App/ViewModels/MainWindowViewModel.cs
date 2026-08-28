@@ -91,6 +91,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RevertChangeCommand = new RelayCommand<ChangeEntryViewModel>(
             RevertChange,
             change => change is { IsRecordAddition: false } && !IsBusy);
+        NavigateToDiagnosticCommand = new RelayCommand<ValidationMessageViewModel>(
+            NavigateToDiagnostic,
+            diagnostic => diagnostic?.CanNavigate is true && HasDocument && !IsBusy);
     }
 
     public event EventHandler? OpenFileRequested;
@@ -150,6 +153,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand DismissNotificationCommand { get; }
 
     public ICommand RevertChangeCommand { get; }
+
+    public ICommand NavigateToDiagnosticCommand { get; }
 
     public ICollectionView RecordsView
     {
@@ -666,6 +671,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ReplaceCollection(Databases, workspace.Databases);
         ReplaceCollection(Diagnostics, workspace.Diagnostics);
         SubscribeWorkspaceRecords(Databases);
+        ApplyDiagnosticsToRecords(Diagnostics);
 
         ResourcesView = CollectionViewSource.GetDefaultView(Resources);
         ResourcesView.Filter = FilterResource;
@@ -788,7 +794,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             RecordsView.Refresh();
             FilteredRecordCount = RecordsView.Cast<object>().Count();
             SelectedRecord = record;
-            RecordFocusRequested?.Invoke(this, new RecordFocusRequestedEventArgs(record, record.IdentityFieldId));
+            RecordFocusRequested?.Invoke(
+                this,
+                new RecordFocusRequestedEventArgs(record, record.IdentityFieldId, beginEdit: true));
             RefreshAllCounts();
             OnPropertyChanged(nameof(CurrentTableRecordCount));
             OnPropertyChanged(nameof(HasChanges));
@@ -863,6 +871,35 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshValidationDeferred();
         StatusText = $"Изменено: {record.DisplayName} · {field.DisplayName}";
         RaiseCommandStates();
+    }
+
+    private void NavigateToDiagnostic(ValidationMessageViewModel? diagnostic)
+    {
+        if (diagnostic?.CanNavigate is not true || diagnostic.RecordIndex is not int recordIndex)
+        {
+            return;
+        }
+
+        DatabaseTableViewModel? table = Databases
+            .SelectMany(database => database.Tables)
+            .FirstOrDefault(candidate => candidate.Key.Equals(diagnostic.TableKey, StringComparison.Ordinal));
+        RecordRowViewModel? record = table?.Records
+            .FirstOrDefault(candidate => candidate.SourceRecordIndex == recordIndex);
+        if (table is null || record is null)
+        {
+            ShowError("Не удалось найти строку, указанную сообщением проверки. Повторите проверку через F5.");
+            return;
+        }
+
+        SelectTable(table);
+        SelectedRecord = record;
+        int fieldId = diagnostic.FieldId ?? record.NameFieldId;
+        RecordFocusRequested?.Invoke(
+            this,
+            new RecordFocusRequestedEventArgs(record, fieldId, beginEdit: false));
+        StatusText = diagnostic.FieldId is null
+            ? $"Открыта строка проверки: {table.Title} · #{record.Index:N0} {record.DisplayName}."
+            : $"Открыта ячейка проверки: {table.Title} · #{record.Index:N0} · поле {diagnostic.FieldId}.";
     }
 
     private void Undo()
@@ -999,6 +1036,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         RefreshAllCounts();
         OnPropertyChanged(nameof(HasChanges));
+        RefreshReferenceChoicesForTargetTable(table.Key);
     }
 
     private void AddRecordInsertionChange(RecordRowViewModel record)
@@ -1053,6 +1091,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RefreshChangedField(RecordRowViewModel record, RecordFieldViewModel field)
     {
         record.RefreshState();
+        RefreshReferenceChoicesForTargetTable(record.TableKey, field.Id, record.NameFieldId);
         if (record.IsAdded)
         {
             string key = GetRecordInsertionChangeKey(record);
@@ -1091,6 +1130,85 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
         RecordsView.Refresh();
     }
+
+    private void RefreshReferenceChoicesForTargetTable(
+        string targetTableKey,
+        int? changedFieldId = null,
+        int? changedNameFieldId = null)
+    {
+        foreach (DatabaseScalarReference reference in DatabaseReferenceCatalog.ScalarReferences.Where(rule =>
+                     rule.TargetTableKey.Equals(targetTableKey, StringComparison.Ordinal) &&
+                     (changedFieldId is null ||
+                      changedFieldId == rule.TargetFieldId ||
+                      changedFieldId == changedNameFieldId)))
+        {
+            DatabaseTableViewModel? source = Databases.SelectMany(database => database.Tables)
+                .FirstOrDefault(table => table.Key.Equals(reference.SourceTableKey, StringComparison.Ordinal));
+            DatabaseTableViewModel? target = Databases.SelectMany(database => database.Tables)
+                .FirstOrDefault(table => table.Key.Equals(reference.TargetTableKey, StringComparison.Ordinal));
+            RangeObservableCollection<ReferenceChoiceViewModel>? choices = source?.Columns
+                .FirstOrDefault(column => column.FieldId == reference.SourceFieldId && column.Projection is null)
+                ?.ReferenceChoices;
+            if (source is null || target is null || choices is null)
+            {
+                continue;
+            }
+
+            var byValue = new Dictionary<string, ReferenceChoiceViewModel>(StringComparer.OrdinalIgnoreCase);
+            if (reference.AllowEmpty)
+            {
+                byValue[string.Empty] = new ReferenceChoiceViewModel(string.Empty, "— не задано —", true);
+            }
+
+            if (!string.IsNullOrWhiteSpace(reference.Sentinel))
+            {
+                byValue[reference.Sentinel] = new ReferenceChoiceViewModel(
+                    reference.Sentinel,
+                    $"{reference.Sentinel} — служебное значение",
+                    true);
+            }
+
+            foreach (RecordRowViewModel targetRecord in target.Records)
+            {
+                string value = GetRecordFieldText(targetRecord, reference.TargetFieldId);
+                if (value.Length == 0 || byValue.ContainsKey(value))
+                {
+                    continue;
+                }
+
+                string displayName = targetRecord.DisplayName.Trim();
+                byValue[value] = new ReferenceChoiceViewModel(
+                    value,
+                    displayName.Length == 0 || displayName.Equals(value, StringComparison.OrdinalIgnoreCase)
+                        ? value
+                        : $"{value} — {displayName}",
+                    true);
+            }
+
+            foreach (RecordRowViewModel sourceRecord in source.Records)
+            {
+                string value = GetRecordFieldText(sourceRecord, reference.SourceFieldId);
+                if (value.Length == 0 || byValue.ContainsKey(value))
+                {
+                    continue;
+                }
+
+                byValue[value] = new ReferenceChoiceViewModel(
+                    value,
+                    $"{value} — отсутствует в «{target.Title}»",
+                    false);
+            }
+
+            ReferenceChoiceViewModel[] updated = byValue.Values
+                .OrderBy(choice => choice.Value.Length == 0 ? 0 : choice.IsKnown ? 1 : 2)
+                .ThenBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
+                .ToArray();
+            choices.ReplaceWith(updated);
+        }
+    }
+
+    private static string GetRecordFieldText(RecordRowViewModel record, int fieldId) =>
+        record.FieldDefinitions.FirstOrDefault(field => field.Id == fieldId)?.Value.ToString()?.Trim() ?? string.Empty;
 
     private async void RefreshValidationDeferred() =>
         await RefreshValidationAsync(deferred: true);
@@ -1131,6 +1249,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 () =>
                 {
                     ReplaceCollection(Diagnostics, diagnostics);
+                    ApplyDiagnosticsToRecords(Diagnostics);
                     RefreshAllCounts();
                     StatusText = Diagnostics.Count == 0
                         ? "Проверка завершена: проблем не обнаружено."
@@ -1204,6 +1323,27 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(WarningCount));
     }
 
+    private void ApplyDiagnosticsToRecords(IEnumerable<ValidationMessageViewModel> diagnostics)
+    {
+        var byRecord = diagnostics
+            .Where(item => item.CanNavigate && item.RecordIndex is not null)
+            .GroupBy(item => (item.TableKey!, item.RecordIndex!.Value))
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<ValidationMessageViewModel>)group.ToArray());
+
+        foreach (DatabaseTableViewModel table in Databases.SelectMany(database => database.Tables))
+        {
+            foreach (RecordRowViewModel record in table.Records)
+            {
+                record.ApplyDiagnostics(
+                    byRecord.TryGetValue((table.Key, record.SourceRecordIndex), out var messages)
+                        ? messages
+                        : []);
+            }
+        }
+    }
+
     private void NotifyWorkspaceProperties()
     {
         OnPropertyChanged(nameof(HasDocument));
@@ -1243,6 +1383,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (RefreshValidationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (CancelOperationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (FocusSearchCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (NavigateToDiagnosticCommand as RelayCommand<ValidationMessageViewModel>)?.RaiseCanExecuteChanged();
     }
 
     private void CancelOperation()
@@ -1331,9 +1472,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
 internal sealed class RecordFocusRequestedEventArgs(
     RecordRowViewModel record,
-    int fieldId) : EventArgs
+    int fieldId,
+    bool beginEdit) : EventArgs
 {
     public RecordRowViewModel Record { get; } = record;
 
     public int FieldId { get; } = fieldId;
+
+    public bool BeginEdit { get; } = beginEdit;
 }

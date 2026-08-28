@@ -453,6 +453,25 @@ internal static class Program
         log.Assert(
             allFields.All(field => field.Kind != "Hex"),
             $"Все {allFields.Length:N0} известных полей имеют подтверждённый тип; raw Hex не осталось.");
+        string[] requiredInteractiveReferences =
+        [
+            "units.prototypes:1->units.races:0",
+            "spells.templates:1->spells.prototypes:1",
+            "spells.armor_templates:1->spells.prototypes:1",
+            "spells.weapon_templates:1->spells.prototypes:1",
+        ];
+        string[] actualInteractiveReferences = DatabaseReferenceCatalog.ScalarReferences
+            .Where(rule => requiredInteractiveReferences.Contains(
+                $"{rule.SourceTableKey}:{rule.SourceFieldId}->{rule.TargetTableKey}:{rule.TargetFieldId}",
+                StringComparer.Ordinal))
+            .Select(rule => $"{rule.SourceTableKey}:{rule.SourceFieldId}->{rule.TargetTableKey}:{rule.TargetFieldId}")
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        log.Assert(
+            actualInteractiveReferences.SequenceEqual(
+                requiredInteractiveReferences.OrderBy(value => value, StringComparer.Ordinal),
+                StringComparer.Ordinal),
+            "Общий каталог ссылок содержит Base Race и три поля Prototype шаблонов магии без дублирования UI-правил.");
     }
 
     private static void AssertMaterialsSchema(

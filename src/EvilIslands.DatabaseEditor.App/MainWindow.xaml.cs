@@ -67,6 +67,7 @@ public partial class MainWindow : Window
                     return;
                 }
 
+                RecordsGrid.SelectedItem = e.Record;
                 RecordsGrid.ScrollIntoView(e.Record);
                 DataGridColumn? identityColumn = _spreadsheetColumns
                     .FirstOrDefault(pair => pair.Value.FieldId == e.FieldId)
@@ -79,7 +80,10 @@ public partial class MainWindow : Window
                 RecordsGrid.ScrollIntoView(e.Record, identityColumn);
                 RecordsGrid.CurrentCell = new DataGridCellInfo(e.Record, identityColumn);
                 RecordsGrid.Focus();
-                RecordsGrid.BeginEdit();
+                if (e.BeginEdit)
+                {
+                    RecordsGrid.BeginEdit();
+                }
             },
             DispatcherPriority.Loaded);
     }
@@ -123,6 +127,8 @@ public partial class MainWindow : Window
         var headerStyle = (Style)FindResource("SpreadsheetColumnHeaderStyle");
         var elementStyle = (Style)FindResource("SpreadsheetCellText");
         var editingStyle = (Style)FindResource("SpreadsheetCellEditor");
+        var referenceElementStyle = (Style)FindResource("SpreadsheetReferenceDisplay");
+        var referenceEditingStyle = (Style)FindResource("SpreadsheetReferenceEditor");
         foreach (var descriptor in _spreadsheetViewModel.VisibleSpreadsheetColumns)
         {
             var bindingPath = descriptor.Projection is null
@@ -131,7 +137,9 @@ public partial class MainWindow : Window
             var binding = new Binding(bindingPath)
             {
                 Mode = descriptor.Projection is null ? BindingMode.TwoWay : BindingMode.OneWay,
-                UpdateSourceTrigger = UpdateSourceTrigger.LostFocus,
+                UpdateSourceTrigger = descriptor.HasReferenceChoices
+                    ? UpdateSourceTrigger.PropertyChanged
+                    : UpdateSourceTrigger.LostFocus,
             };
             if (descriptor.Projection is not null)
             {
@@ -139,20 +147,37 @@ public partial class MainWindow : Window
                 binding.ConverterParameter = descriptor.Projection;
             }
 
-            var column = new DataGridTextColumn
+            DataGridColumn column;
+            if (descriptor.HasReferenceChoices)
             {
-                Header = descriptor,
-                HeaderTemplate = headerTemplate,
-                HeaderStyle = headerStyle,
-                Binding = binding,
-                ElementStyle = elementStyle,
-                EditingElementStyle = editingStyle,
-                CellStyle = CreateSpreadsheetCellStyle(descriptor),
-                Width = new DataGridLength(descriptor.Layout.PreferredWidth),
-                MinWidth = descriptor.Layout.MinimumWidth,
-                MaxWidth = descriptor.Layout.MaximumWidth,
-                CanUserSort = descriptor.IsSortable,
-            };
+                column = new DataGridComboBoxColumn
+                {
+                    ItemsSource = descriptor.ReferenceChoices,
+                    SelectedValuePath = nameof(ReferenceChoiceViewModel.Value),
+                    DisplayMemberPath = nameof(ReferenceChoiceViewModel.DisplayText),
+                    SelectedValueBinding = binding,
+                    ElementStyle = referenceElementStyle,
+                    EditingElementStyle = referenceEditingStyle,
+                };
+            }
+            else
+            {
+                column = new DataGridTextColumn
+                {
+                    Binding = binding,
+                    ElementStyle = elementStyle,
+                    EditingElementStyle = editingStyle,
+                };
+            }
+
+            column.Header = descriptor;
+            column.HeaderTemplate = headerTemplate;
+            column.HeaderStyle = headerStyle;
+            column.CellStyle = CreateSpreadsheetCellStyle(descriptor);
+            column.Width = new DataGridLength(descriptor.Layout.PreferredWidth);
+            column.MinWidth = descriptor.Layout.MinimumWidth;
+            column.MaxWidth = descriptor.Layout.MaximumWidth;
+            column.CanUserSort = descriptor.IsSortable;
             RecordsGrid.Columns.Add(column);
             _spreadsheetColumns.Add(column, descriptor);
         }
@@ -182,6 +207,27 @@ public partial class MainWindow : Window
         modifiedTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("AccentBrush")));
         modifiedTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(0, 0, 0, 2)));
         style.Triggers.Add(modifiedTrigger);
+
+        var diagnosticTrigger = new DataTrigger
+        {
+            Binding = new Binding($"Cells[{descriptor.FieldId}].HasDiagnostic"),
+            Value = true,
+        };
+        diagnosticTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("WarningBrush")));
+        diagnosticTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        diagnosticTrigger.Setters.Add(new Setter(
+            ToolTipService.ToolTipProperty,
+            new Binding($"Cells[{descriptor.FieldId}].DiagnosticText")));
+        style.Triggers.Add(diagnosticTrigger);
+
+        var blockingDiagnosticTrigger = new DataTrigger
+        {
+            Binding = new Binding($"Cells[{descriptor.FieldId}].HasBlockingDiagnostic"),
+            Value = true,
+        };
+        blockingDiagnosticTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("DangerBrush")));
+        blockingDiagnosticTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        style.Triggers.Add(blockingDiagnosticTrigger);
 
         var errorTrigger = new DataTrigger
         {
@@ -251,6 +297,20 @@ public partial class MainWindow : Window
 
         e.Column.SortDirection = direction;
         recordsView.CustomSort = new SpreadsheetRecordComparer(descriptor, direction);
+    }
+
+    private void ValidationGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not DataGrid { SelectedItem: ValidationMessageViewModel diagnostic })
+        {
+            return;
+        }
+
+        if (_viewModel.NavigateToDiagnosticCommand.CanExecute(diagnostic))
+        {
+            _viewModel.NavigateToDiagnosticCommand.Execute(diagnostic);
+            e.Handled = true;
+        }
     }
 
     private async void ViewModel_OpenFileRequested(object? sender, EventArgs e)

@@ -114,6 +114,44 @@
             <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
             <Setter Property="ToolTipService.ShowDuration" Value="12000" />
         </Style>
+
+        <Style x:Key="SpreadsheetReferenceItem" TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="#242424" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Padding" Value="8,5" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsKnown}" Value="False">
+                    <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                    <Setter Property="IsEnabled" Value="False" />
+                </DataTrigger>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter Property="Background" Value="#164C40" />
+                    <Setter Property="Foreground" Value="White" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SpreadsheetReferenceDisplay" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="IsHitTestVisible" Value="False" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource SpreadsheetReferenceItem}" />
+            <Setter Property="ToolTip" Value="{Binding SelectionBoxItem, RelativeSource={RelativeSource Self}}" />
+        </Style>
+
+        <Style x:Key="SpreadsheetReferenceEditor" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="#181818" />
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="5,2" />
+            <Setter Property="IsTextSearchEnabled" Value="True" />
+            <Setter Property="StaysOpenOnEdit" Value="True" />
+            <Setter Property="ItemContainerStyle" Value="{StaticResource SpreadsheetReferenceItem}" />
+        </Style>
     </Window.Resources>
 
     <Border Background="{StaticResource WindowBrush}"
@@ -720,8 +758,24 @@
                                             <DataGridTemplateColumn Header="" Width="34" IsReadOnly="True" CanUserSort="False">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
-                                                        <TextBlock Text="●" FontSize="8" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"
-                                                                   Visibility="{Binding IsModified, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                        <Grid>
+                                                            <TextBlock Text="!" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center"
+                                                                       Visibility="{Binding HasDiagnostics, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasBlockingDiagnostics}" Value="True">
+                                                                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <TextBlock Text="●" FontSize="7" Foreground="{StaticResource AccentBrush}"
+                                                                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,3,2"
+                                                                       Visibility="{Binding IsModified, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                        </Grid>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
@@ -826,7 +880,11 @@
                                 </StackPanel>
                                 <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                                     <Grid>
-                                        <DataGrid ItemsSource="{Binding Diagnostics}" BorderThickness="0" IsReadOnly="True">
+                                        <DataGrid x:Name="ValidationGrid"
+                                                  ItemsSource="{Binding Diagnostics}"
+                                                  BorderThickness="0"
+                                                  IsReadOnly="True"
+                                                  MouseDoubleClick="ValidationGrid_MouseDoubleClick">
                                             <DataGrid.Columns>
                                                 <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
                                                     <DataGridTemplateColumn.CellTemplate>
@@ -864,6 +922,18 @@
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <TextBlock Text="{Binding Message}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTemplateColumn Header="" Width="92" CanUserSort="False">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Button Style="{StaticResource RoundedButton}"
+                                                                    Content="Открыть"
+                                                                    Padding="8,4"
+                                                                    MinHeight="28"
+                                                                    Command="{Binding DataContext.NavigateToDiagnosticCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                                    CommandParameter="{Binding}" />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>

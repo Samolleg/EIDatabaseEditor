@@ -10,18 +10,6 @@ internal static class SemanticDatabaseValidator
         new("spells.modifiers", 1, true, true),
     ];
 
-    private static readonly ScalarReferenceRule[] ScalarReferenceRules =
-    [
-        new("items.weapons", 3, "items.materials", 1, true, "none"),
-        new("items.armors", 3, "items.materials", 1, true, "none"),
-        new("items.quick_items", 3, "items.materials", 1, true, "none"),
-        new("items.quest_items", 3, "items.materials", 1, true, "none"),
-        new("items.loot_items", 3, "items.materials", 1, true, "none"),
-        new("perks.perks", 10, "perks.perks", 1, true, "none"),
-        new("perks.perks", 11, "perks.skills", 1, true, "none"),
-        new("units.prototypes", 1, "units.races", 0, false),
-    ];
-
     private static readonly NumericRangeRule[] NumericRangeRules =
     [
         new("items.weapons", 2, 0, 16, "тип оружия"),
@@ -334,7 +322,7 @@ internal static class SemanticDatabaseValidator
         ICollection<ValidationDiagnostic> diagnostics,
         CancellationToken cancellationToken)
     {
-        foreach (ScalarReferenceRule rule in ScalarReferenceRules)
+        foreach (DatabaseScalarReference rule in DatabaseReferenceCatalog.ScalarReferences)
         {
             if (!tables.TryGetValue(rule.SourceTableKey, out DatabaseTable? source) ||
                 !tables.TryGetValue(rule.TargetTableKey, out DatabaseTable? target))
@@ -510,14 +498,6 @@ internal static class SemanticDatabaseValidator
                 continue;
             }
 
-            ValidateScalarReferenceValues(
-                templates,
-                1,
-                spells,
-                spellCodes,
-                allowEmpty: true,
-                diagnostics,
-                cancellationToken);
             ValidateStringListReferences(
                 templates,
                 2,
@@ -1727,14 +1707,6 @@ internal static class SemanticDatabaseValidator
         int FieldId,
         bool Required,
         bool Unique);
-
-    private readonly record struct ScalarReferenceRule(
-        string SourceTableKey,
-        int SourceFieldId,
-        string TargetTableKey,
-        int TargetFieldId,
-        bool AllowEmpty,
-        string? Sentinel = null);
 
     private readonly record struct NumericRangeRule(
         string TableKey,

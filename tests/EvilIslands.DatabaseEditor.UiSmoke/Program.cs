@@ -210,6 +210,48 @@ internal static class Program
         }
 
         var prototypes = tables.Single(table => table.Key == "units.prototypes");
+        var races = tables.Single(table => table.Key == "units.races");
+        SpreadsheetColumnViewModel raceReferenceColumn = prototypes.Columns.Single(column => column.FieldId == 1);
+        HashSet<string> raceNames = races.Records
+            .Select(record => record.FieldDefinitions.First(field => field.Id == 0).Value.ToString() ?? string.Empty)
+            .Where(value => value.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> knownRaceChoices = (raceReferenceColumn.ReferenceChoices ?? [])
+            .Where(choice => choice.IsKnown)
+            .Select(choice => choice.Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string[] missingRaceValues = prototypes.Records
+            .Select(record => record.FieldDefinitions.First(field => field.Id == 1).Value.ToString() ?? string.Empty)
+            .Where(value => value.Length > 0 && !raceNames.Contains(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (!raceReferenceColumn.HasReferenceChoices ||
+            !raceNames.IsSubsetOf(knownRaceChoices) ||
+            missingRaceValues.Any(value =>
+                raceReferenceColumn.ReferenceChoices?.Any(choice =>
+                    !choice.IsKnown && choice.Value.Equals(value, StringComparison.OrdinalIgnoreCase)) is not true))
+        {
+            throw new InvalidOperationException(
+                "Base Race должна использовать общий список рас и сохранять видимыми отсутствующие legacy-ссылки.");
+        }
+
+        foreach (string templateKey in new[]
+                 {
+                     "spells.templates",
+                     "spells.armor_templates",
+                     "spells.weapon_templates",
+                 })
+        {
+            SpreadsheetColumnViewModel prototypeReference = tables.Single(table => table.Key == templateKey)
+                .Columns.Single(column => column.FieldId == 1);
+            if (!prototypeReference.HasReferenceChoices ||
+                prototypeReference.ReferenceChoices?.FirstOrDefault()?.Value != string.Empty)
+            {
+                throw new InvalidOperationException(
+                    $"{templateKey}/field-1 должен предлагать необязательную ссылку на CodeName заклинания.");
+            }
+        }
+
         viewModel.SelectTableCommand.Execute(prototypes);
         if (prototypes.Columns.Count != 62 ||
             prototypes.Columns.Count <= prototypes.Records[0].FieldCount ||
@@ -229,6 +271,14 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "DataGrid обязан создать отдельный столбец для каждого поля и заморозить начало строки.");
+        }
+
+        DataGridColumn raceGridColumn = recordsGrid.Columns.Single(column =>
+            column.Header is SpreadsheetColumnViewModel descriptor && descriptor.FieldId == 1);
+        if (raceGridColumn is not DataGridComboBoxColumn)
+        {
+            throw new InvalidOperationException(
+                "Проверенное ссылочное поле Base Race должно отрисовываться выпадающим списком.");
         }
 
         viewModel.ToggleColumnModeCommand.Execute(null);
@@ -257,6 +307,79 @@ internal static class Program
 
         viewModel.SelectedRecord = prototypes.Records[0];
         viewModel.ConfirmEditMode();
+        raceGridColumn = recordsGrid.Columns.Single(column =>
+            column.Header is SpreadsheetColumnViewModel descriptor && descriptor.FieldId == 1);
+        RecordRowViewModel referenceRecord = prototypes.Records.First(record =>
+            raceReferenceColumn.ReferenceChoices!.Any(choice =>
+                choice.IsKnown &&
+                choice.Value.Length > 0 &&
+                !choice.Value.Equals(record.GetCell(1)?.EditorText, StringComparison.OrdinalIgnoreCase)));
+        RecordFieldViewModel referenceCell = referenceRecord.GetCell(1)
+            ?? throw new InvalidOperationException("Не создана ссылочная клетка Base Race.");
+        string originalReference = referenceCell.EditorText;
+        ReferenceChoiceViewModel replacementReference = raceReferenceColumn.ReferenceChoices!
+            .First(choice => choice.IsKnown && choice.Value.Length > 0 &&
+                !choice.Value.Equals(originalReference, StringComparison.OrdinalIgnoreCase));
+        recordsGrid.SelectedItem = referenceRecord;
+        recordsGrid.CurrentCell = new DataGridCellInfo(referenceRecord, raceGridColumn);
+        recordsGrid.ScrollIntoView(referenceRecord, raceGridColumn);
+        recordsGrid.UpdateLayout();
+        recordsGrid.Focus();
+        if (!recordsGrid.BeginEdit())
+        {
+            throw new InvalidOperationException("Ссылочная Excel-клетка не перешла в режим редактирования.");
+        }
+
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        ComboBox referenceEditor = FindVisualChild<ComboBox>(raceGridColumn.GetCellContent(referenceRecord))
+            ?? throw new InvalidOperationException("DataGrid не создал ComboBox для ссылочной клетки.");
+        referenceEditor.SelectedValue = replacementReference.Value;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        recordsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        recordsGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        if (referenceCell.EditorText != replacementReference.Value ||
+            !referenceCell.IsModified ||
+            viewModel.ChangeCount != 1 ||
+            !viewModel.UndoCommand.CanExecute(null))
+        {
+            throw new InvalidOperationException(
+                "Выбор Base Race из списка должен изменить точное значение, журнал и Undo.");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        if (referenceCell.EditorText != originalReference || referenceCell.IsModified || viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException("Undo должен полностью вернуть ссылочную клетку Base Race.");
+        }
+
+        viewModel.SelectTableCommand.Execute(races);
+        RecordRowViewModel renamedRace = races.Records[0];
+        RecordFieldViewModel renamedRaceCell = renamedRace.GetCell(0)
+            ?? throw new InvalidOperationException("Не создано ключевое поле расы.");
+        string originalRaceName = renamedRaceCell.EditorText;
+        string temporaryRaceName = originalRaceName + " grid-reference-smoke";
+        renamedRaceCell.EditorText = temporaryRaceName;
+        if (!raceReferenceColumn.ReferenceChoices!.Any(choice =>
+                choice.IsKnown && choice.Value.Equals(temporaryRaceName, StringComparison.Ordinal)) ||
+            raceReferenceColumn.ReferenceChoices!.Any(choice =>
+                choice.IsKnown && choice.Value.Equals(originalRaceName, StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "Переименование целевой расы должно немедленно обновить общий список ссылок.");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        if (!raceReferenceColumn.ReferenceChoices!.Any(choice =>
+                choice.IsKnown && choice.Value.Equals(originalRaceName, StringComparison.Ordinal)) ||
+            raceReferenceColumn.ReferenceChoices!.Any(choice =>
+                choice.IsKnown && choice.Value.Equals(temporaryRaceName, StringComparison.Ordinal)))
+        {
+            throw new InvalidOperationException(
+                "Undo переименования расы должен восстановить исходный список ссылок.");
+        }
+
+        viewModel.SelectTableCommand.Execute(prototypes);
+
         var numericColumn = prototypes.Columns.First(column =>
             column.IsEditable && column.Kind is "Byte" or "Int32" or "UInt32" or "Float32");
         var numericCell = prototypes.Records[0].GetCell(numericColumn.FieldId)
@@ -308,6 +431,38 @@ internal static class Program
         if (viewModel.ChangeCount != 0 || editableCell.EditorText != originalText || prototypes.Records[0].IsModified)
         {
             throw new InvalidOperationException("Undo должен полностью вернуть Excel-клетку к исходному значению.");
+        }
+
+        ValidationMessageViewModel navigableDiagnostic = viewModel.Diagnostics.FirstOrDefault(item =>
+            item.CanNavigate && item.FieldId is not null)
+            ?? throw new InvalidOperationException("Реальная база должна содержать сообщение с точной ячейкой.");
+        RecordFocusRequestedEventArgs? navigationRequest = null;
+        EventHandler<RecordFocusRequestedEventArgs> captureNavigation = (_, args) => navigationRequest = args;
+        viewModel.RecordFocusRequested += captureNavigation;
+        if (!viewModel.NavigateToDiagnosticCommand.CanExecute(navigableDiagnostic))
+        {
+            throw new InvalidOperationException("Точное сообщение проверки должно разрешать команду перехода.");
+        }
+
+        viewModel.NavigateToDiagnosticCommand.Execute(navigableDiagnostic);
+        viewModel.RecordFocusRequested -= captureNavigation;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Loaded);
+        RecordRowViewModel navigatedRecord = viewModel.SelectedRecord
+            ?? throw new InvalidOperationException("Переход проверки не выбрал строку.");
+        RecordFieldViewModel navigatedCell = navigatedRecord.GetCell(navigableDiagnostic.FieldId!.Value)
+            ?? throw new InvalidOperationException("Переход проверки не нашёл клетку.");
+        if (viewModel.CurrentSection != WorkspaceSection.Records ||
+            viewModel.SelectedTable?.Key != navigableDiagnostic.TableKey ||
+            navigatedRecord.SourceRecordIndex != navigableDiagnostic.RecordIndex ||
+            navigationRequest is null ||
+            navigationRequest.BeginEdit ||
+            navigationRequest.FieldId != navigableDiagnostic.FieldId ||
+            !navigatedRecord.HasDiagnostics ||
+            !navigatedCell.HasDiagnostic ||
+            !ReferenceEquals(recordsGrid.CurrentCell.Item, navigatedRecord))
+        {
+            throw new InvalidOperationException(
+                "Сообщение проверки должно открыть точную таблицу, строку и подсвеченную клетку без входа в редактирование.");
         }
 
         var materials = tables.Single(table => table.Key == "items.materials");

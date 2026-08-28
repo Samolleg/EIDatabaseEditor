@@ -6,9 +6,21 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDirectory '..'))
+$propsPath = Join-Path $projectRoot 'Directory.Build.props'
+[xml]$props = Get-Content -LiteralPath $propsPath -Raw
+$versionPrefix = [string]$props.Project.PropertyGroup.VersionPrefix
+$versionSuffix = [string]$props.Project.PropertyGroup.VersionSuffix
+if ([string]::IsNullOrWhiteSpace($versionPrefix)) {
+    throw "В $propsPath не задан VersionPrefix."
+}
+$version = if ([string]::IsNullOrWhiteSpace($versionSuffix)) {
+    $versionPrefix
+} else {
+    "$versionPrefix-$versionSuffix"
+}
 $handoffRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'handoff'))
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $handoffRoot 'EvilIslands.DatabaseEditor-0.2.0-preview.1'
+    $OutputDirectory = Join-Path $handoffRoot "EvilIslands.DatabaseEditor-$version"
 }
 
 $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -47,6 +59,17 @@ $gitHead = (& git -C $projectRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $gitHead -notmatch '^[0-9a-f]{40}$') {
     throw 'Не удалось определить точный Git commit исходников.'
 }
+$gitStatus = @(& git -C $projectRoot status --porcelain)
+if ($LASTEXITCODE -ne 0 -or $gitStatus.Count -ne 0) {
+    throw 'Handoff создаётся только из чистого tracked Git-состояния.'
+}
+
+$expectedFileVersion = [string]$props.Project.PropertyGroup.FileVersion
+$exeInfo = (Get-Item -LiteralPath (Join-Path $buildOutput 'EvilIslands.DatabaseEditor.exe')).VersionInfo
+if ($exeInfo.FileVersion -ne $expectedFileVersion -or
+    $exeInfo.ProductVersion -ne "$version+$gitHead") {
+    throw "Release-бинарник не соответствует версии $version и Git commit $gitHead. Выполните точную Release-сборку после commit."
+}
 
 New-Item -ItemType Directory -Path $outputPath | Out-Null
 try {
@@ -65,7 +88,7 @@ try {
 
     $manifest = [ordered]@{
         product = 'EI Database Studio'
-        version = '0.2.0-preview.1'
+        version = $version
         sourceCommit = $gitHead
         createdAt = (Get-Date).ToString('o')
         framework = 'Microsoft.WindowsDesktop.App 9.0'
