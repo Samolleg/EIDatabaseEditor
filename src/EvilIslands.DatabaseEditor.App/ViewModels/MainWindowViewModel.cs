@@ -69,6 +69,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ServiceNavigationItems = new ObservableCollection<NavigationItemViewModel>(NavigationItems.Skip(1));
 
         OpenCommand = new RelayCommand(() => OpenFileRequested?.Invoke(this, EventArgs.Empty), () => !IsBusy);
+        AttachTextsCommand = new RelayCommand(
+            () => AttachTextsRequested?.Invoke(this, EventArgs.Empty),
+            () => HasDocument && !HasChanges && !IsBusy);
         SaveCommand = new RelayCommand(
             () => SaveRequested?.Invoke(this, EventArgs.Empty),
             () => HasDocument && !IsBusy);
@@ -80,6 +83,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         AppendRecordCommand = new RelayCommand(
             AppendSelectedRecord,
             () => IsEditMode && IsRecordsSection && IsCurrentTableAddable && HasSelectedRecord && !IsBusy);
+        AddMissingTextsCommand = new RelayCommand(
+            AddMissingTexts,
+            () => IsEditMode && IsRecordsSection && HasSelectedRecord && HasTextsDocument && !IsBusy);
         RefreshValidationCommand = new RelayCommand(RefreshValidation, () => HasDocument && !IsBusy);
         ClearSearchCommand = new RelayCommand(() => SearchText = string.Empty, () => !string.IsNullOrEmpty(SearchText));
         ClearResourceSearchCommand = new RelayCommand(() => ResourceSearchText = string.Empty, () => !string.IsNullOrEmpty(ResourceSearchText));
@@ -91,13 +97,15 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         DismissNotificationCommand = new RelayCommand(() => NotificationMessage = null, () => HasNotification);
         RevertChangeCommand = new RelayCommand<ChangeEntryViewModel>(
             RevertChange,
-            change => change is { IsRecordAddition: false } && !IsBusy);
+            change => change is { IsRecordAddition: false, IsTextAddition: false } && !IsBusy);
         NavigateToDiagnosticCommand = new RelayCommand<ValidationMessageViewModel>(
             NavigateToDiagnostic,
             diagnostic => diagnostic?.CanNavigate is true && HasDocument && !IsBusy);
     }
 
     public event EventHandler? OpenFileRequested;
+
+    public event EventHandler? AttachTextsRequested;
 
     public event EventHandler? SaveRequested;
 
@@ -123,6 +131,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ICommand OpenCommand { get; }
 
+    public ICommand AttachTextsCommand { get; }
+
     public ICommand SaveCommand { get; }
 
     public ICommand SaveCopyCommand { get; }
@@ -136,6 +146,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand SelectTableCommand { get; }
 
     public ICommand AppendRecordCommand { get; }
+
+    public ICommand AddMissingTextsCommand { get; }
 
     public ICommand RefreshValidationCommand { get; }
 
@@ -283,12 +295,19 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _selectedRecord, value))
             {
                 OnPropertyChanged(nameof(HasSelectedRecord));
+                OnPropertyChanged(nameof(SelectedRecordHasTexts));
+                OnPropertyChanged(nameof(SelectedRecordTextCount));
                 (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
+                (AddMissingTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
         }
     }
 
     public bool HasSelectedRecord => SelectedRecord is not null;
+
+    public bool SelectedRecordHasTexts => SelectedRecord?.HasRelatedTexts is true;
+
+    public int SelectedRecordTextCount => SelectedRecord?.RelatedTextCount ?? 0;
 
     public bool IsCurrentTableAddable => SelectedTable?.CanAppendRecords is true;
 
@@ -449,6 +468,20 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string ShortSha256 => _workspace is null ? "—" : $"{_workspace.Sha256[..Math.Min(12, _workspace.Sha256.Length)]}…";
 
+    public bool HasTextsDocument => !string.IsNullOrWhiteSpace(_workspace?.TextsPath);
+
+    public string TextsFileName => _workspace?.TextsPath is null
+        ? "texts.res не подключён"
+        : Path.GetFileName(_workspace.TextsPath);
+
+    public string TextsPath => _workspace?.TextsPath ?? "Рядом с database.res файл texts.res не найден.";
+
+    public int TextResourceCount => _workspace?.TextResourceCount ?? 0;
+
+    public string TextsStatusText => HasTextsDocument
+        ? $"Подключён {TextsFileName} · {TextResourceCount:N0} текстов"
+        : "texts.res не подключён";
+
     public int ResourceCount => Resources.Count;
 
     public int DatabaseCount => Databases.Count;
@@ -516,6 +549,35 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public async Task AttachTextsPathAsync(string path)
+    {
+        if (_workspace is null || HasChanges || IsBusy)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        BusyText = "Подключение и индексация texts.res…";
+        NotificationMessage = null;
+        try
+        {
+            WorkspaceSnapshot workspace = await _service.AttachTextsAsync(path, CancellationToken.None);
+            ApplyWorkspace(workspace);
+            NotificationIsError = false;
+            NotificationMessage = $"Подключён {Path.GetFileName(workspace.TextsPath)} · {workspace.TextResourceCount:N0} текстов.";
+            StatusText = $"Связанный texts.res открыт: {workspace.TextsPath}";
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Не удалось подключить texts.res: {UnwrapMessage(exception)}");
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyText = string.Empty;
+        }
+    }
+
     public async Task SaveCopyPathAsync(string targetPath)
     {
         if (_workspace is null)
@@ -549,10 +611,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         try
         {
             var result = await _service.SaveCopyAsync(fullTarget, cancellationToken);
-            LastSavedPath = result.TargetPath;
+            LastSavedPath = result.Database.TargetPath;
             NotificationIsError = false;
-            NotificationMessage = $"Копия создана и проверена: {Path.GetFileName(result.TargetPath)} · SHA-256 {result.Sha256[..Math.Min(12, result.Sha256.Length)]}…";
-            StatusText = $"Копия сохранена: {result.TargetPath}";
+            NotificationMessage = result.Texts is null
+                ? $"Копия создана и проверена: {Path.GetFileName(result.Database.TargetPath)}."
+                : $"Связанная пара создана и проверена: {Path.GetFileName(result.Database.TargetPath)} + {Path.GetFileName(result.Texts.TargetPath)}.";
+            StatusText = $"Копия сохранена: {result.Database.TargetPath}";
         }
         catch (OperationCanceledException)
         {
@@ -613,9 +677,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
             LastSavedPath = result.Save.TargetPath;
             NotificationIsError = false;
-            NotificationMessage =
-                $"Сохранено и проверено: {Path.GetFileName(result.Save.TargetPath)}. " +
-                $"Резервная копия: {Path.GetFileName(result.BackupPath)}";
+            var backups = new[] { result.BackupPath, result.TextsBackupPath }
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Select(path => Path.GetFileName(path))
+                .ToArray();
+            NotificationMessage = result.TextsSave is null
+                ? $"Сохранено и проверено: {Path.GetFileName(result.Save.TargetPath)}. Резервная копия: {string.Join(", ", backups)}"
+                : $"Сохранена и проверена связанная пара database.res + texts.res. Резервные копии: {string.Join(", ", backups)}";
             StatusText = $"Сохранено: {result.Save.TargetPath}";
         }
         catch (Exception exception)
@@ -648,12 +716,14 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         CancelValidation();
         ApplyTableEditMode(SelectedTable, false);
         UnsubscribeWorkspaceRecords(Databases);
+        UnsubscribeWorkspaceTexts(_workspace?.TextResources ?? []);
     }
 
     private void ApplyWorkspace(WorkspaceSnapshot workspace)
     {
         ApplyTableEditMode(SelectedTable, false);
         UnsubscribeWorkspaceRecords(Databases);
+        UnsubscribeWorkspaceTexts(_workspace?.TextResources ?? []);
         _workspace = workspace;
         IsEditMode = true;
         _undo.Clear();
@@ -668,6 +738,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ReplaceCollection(Databases, workspace.Databases);
         ReplaceCollection(Diagnostics, workspace.Diagnostics);
         SubscribeWorkspaceRecords(Databases);
+        SubscribeWorkspaceTexts(workspace.TextResources);
         ApplyDiagnosticsToRecords(Diagnostics);
 
         ResourcesView = CollectionViewSource.GetDefaultView(Resources);
@@ -802,6 +873,36 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void AddMissingTexts()
+    {
+        if (SelectedRecord is not { } record || !HasTextsDocument || IsBusy)
+        {
+            return;
+        }
+
+        try
+        {
+            IReadOnlyList<LocalizationEntryViewModel> added = _service.AddMissingTexts(record);
+            foreach (LocalizationEntryViewModel entry in added)
+            {
+                entry.ValueCommitted += OnLocalizationValueCommitted;
+                AddTextInsertionChange(entry);
+            }
+
+            _undo.Push(new TextPresenceBatchEditFrame(added, BeforePresent: false, AfterPresent: true));
+            _redo.Clear();
+            OnPropertyChanged(nameof(SelectedRecordHasTexts));
+            OnPropertyChanged(nameof(SelectedRecordTextCount));
+            OnPropertyChanged(nameof(HasChanges));
+            StatusText = $"Добавлено записей texts.res: {added.Count:N0}. Заполните русские названия и описания.";
+            RaiseCommandStates();
+        }
+        catch (Exception exception)
+        {
+            ShowError(UnwrapMessage(exception));
+        }
+    }
+
     private bool FilterRecord(object item)
     {
         if (item is not RecordRowViewModel record || string.IsNullOrWhiteSpace(SearchText))
@@ -860,6 +961,22 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshChangedField(record, field);
         RefreshValidationDeferred();
         StatusText = $"Изменено: {record.DisplayName} · {field.DisplayName}";
+        RaiseCommandStates();
+    }
+
+    private void OnLocalizationValueCommitted(object? sender, LocalizationValueCommittedEventArgs eventArgs)
+    {
+        if (sender is not LocalizationEntryViewModel entry)
+        {
+            return;
+        }
+
+        _undo.Push(new TextEditFrame(entry, eventArgs.BeforeState, eventArgs.AfterState));
+        _redo.Clear();
+        RefreshLocalizationChanges(entry);
+        SelectedRecord?.RefreshState();
+        RecordsView.Refresh();
+        StatusText = $"Изменён {entry.ResourceName} · {eventArgs.FieldName}";
         RaiseCommandStates();
     }
 
@@ -1110,10 +1227,66 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                     return false;
                 }
 
+            case TextEditFrame textFrame:
+                TextResourceState textState = undo ? textFrame.BeforeState : textFrame.AfterState;
+                textFrame.Entry.RestoreState(textState);
+                RefreshLocalizationChanges(textFrame.Entry);
+                SelectedRecord?.RefreshState();
+                RecordsView.Refresh();
+                status = undo
+                    ? $"Отменено: {textFrame.Entry.ResourceName}"
+                    : $"Повторено: {textFrame.Entry.ResourceName}";
+                return true;
+
+            case TextPresenceBatchEditFrame textPresenceFrame:
+                bool textsShouldBePresent = undo
+                    ? textPresenceFrame.BeforePresent
+                    : textPresenceFrame.AfterPresent;
+                try
+                {
+                    foreach (LocalizationEntryViewModel entry in textPresenceFrame.Entries)
+                    {
+                        SetAddedTextPresence(entry, textsShouldBePresent);
+                    }
+
+                    OnPropertyChanged(nameof(SelectedRecordHasTexts));
+                    OnPropertyChanged(nameof(SelectedRecordTextCount));
+                    status = textsShouldBePresent
+                        ? $"Возвращены новые тексты: {textPresenceFrame.Entries.Count:N0}"
+                        : $"Отменено добавление текстов: {textPresenceFrame.Entries.Count:N0}";
+                    return true;
+                }
+                catch (Exception exception)
+                {
+                    error = UnwrapMessage(exception);
+                    return false;
+                }
+
             default:
                 error = "Неизвестный тип операции Undo/Redo.";
                 return false;
         }
+    }
+
+    private void SetAddedTextPresence(LocalizationEntryViewModel entry, bool shouldBePresent)
+    {
+        if (shouldBePresent)
+        {
+            _service.RestoreAddedText(entry);
+            entry.ValueCommitted -= OnLocalizationValueCommitted;
+            entry.ValueCommitted += OnLocalizationValueCommitted;
+            AddTextInsertionChange(entry);
+        }
+        else
+        {
+            _service.RemoveAddedText(entry);
+            entry.ValueCommitted -= OnLocalizationValueCommitted;
+            RemoveTextChanges(entry);
+        }
+
+        SelectedRecord?.RefreshState();
+        RecordsView.Refresh();
+        OnPropertyChanged(nameof(HasChanges));
     }
 
     private void SetAddedRecordPresence(
@@ -1189,10 +1362,103 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private static string GetRecordInsertionChangeKey(RecordRowViewModel record) =>
         $"{record.Path}\u001f$new-record";
 
+    private void AddTextInsertionChange(LocalizationEntryViewModel entry)
+    {
+        string key = GetTextChangeKey(entry, "$new-resource");
+        if (_changesByPath.ContainsKey(key))
+        {
+            return;
+        }
+
+        var change = ChangeEntryViewModel.ForAddedText(entry);
+        _changesByPath.Add(key, change);
+        Changes.Add(change);
+        OnPropertyChanged(nameof(HasChanges));
+    }
+
+    private void RefreshLocalizationChanges(LocalizationEntryViewModel entry)
+    {
+        if (entry.IsNew)
+        {
+            AddTextInsertionChange(entry);
+            return;
+        }
+
+        RefreshTextFieldChange(
+            entry,
+            "Название RU",
+            entry.Title,
+            entry.OriginalTitle,
+            GetTextChangeKey(entry, "title"));
+        RefreshTextFieldChange(
+            entry,
+            "Описание RU",
+            entry.Description,
+            entry.OriginalDescription,
+            GetTextChangeKey(entry, "description"));
+        OnPropertyChanged(nameof(HasChanges));
+    }
+
+    private void RefreshTextFieldChange(
+        LocalizationEntryViewModel entry,
+        string fieldName,
+        string currentValue,
+        string originalValue,
+        string key)
+    {
+        if (!string.Equals(currentValue, originalValue, StringComparison.Ordinal))
+        {
+            if (_changesByPath.TryGetValue(key, out ChangeEntryViewModel? existing))
+            {
+                existing.NewValue = currentValue;
+            }
+            else
+            {
+                var change = new ChangeEntryViewModel(entry, fieldName);
+                _changesByPath.Add(key, change);
+                Changes.Add(change);
+            }
+        }
+        else if (_changesByPath.Remove(key, out ChangeEntryViewModel? removed))
+        {
+            Changes.Remove(removed);
+        }
+    }
+
+    private void RemoveTextChanges(LocalizationEntryViewModel entry)
+    {
+        string prefix = $"texts.res/{entry.ResourceName}/";
+        foreach (string key in _changesByPath.Keys
+                     .Where(key => key.StartsWith(prefix, StringComparison.Ordinal))
+                     .ToArray())
+        {
+            if (_changesByPath.Remove(key, out ChangeEntryViewModel? change))
+            {
+                Changes.Remove(change);
+            }
+        }
+    }
+
+    private static string GetTextChangeKey(LocalizationEntryViewModel entry, string field) =>
+        $"texts.res/{entry.ResourceName}/{field}";
+
     private void RevertChange(ChangeEntryViewModel? change)
     {
         if (change is null)
         {
+            return;
+        }
+
+        if (change.Localization is { } localization)
+        {
+            TextResourceState beforeTextState = localization.CaptureState();
+            localization.ResetToOriginal();
+            TextResourceState afterTextState = localization.CaptureState();
+            _undo.Push(new TextEditFrame(localization, beforeTextState, afterTextState));
+            _redo.Clear();
+            RefreshLocalizationChanges(localization);
+            StatusText = $"Текст возвращён к исходному значению: {localization.ResourceName}";
+            RaiseCommandStates();
             return;
         }
 
@@ -1205,9 +1471,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         var afterState = field.CaptureState();
-        _undo.Push(new FieldEditFrame(change.Record, field, beforeState, afterState));
+        _undo.Push(new FieldEditFrame(change.Record!, field, beforeState, afterState));
         _redo.Clear();
-        RefreshChangedField(change.Record, field);
+        RefreshChangedField(change.Record!, field);
         RefreshValidationDeferred();
         StatusText = $"Поле возвращено к исходному значению: {change.FieldName}";
         RaiseCommandStates();
@@ -1409,6 +1675,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(FileLength));
         OnPropertyChanged(nameof(Sha256));
         OnPropertyChanged(nameof(ShortSha256));
+        OnPropertyChanged(nameof(HasTextsDocument));
+        OnPropertyChanged(nameof(TextsFileName));
+        OnPropertyChanged(nameof(TextsPath));
+        OnPropertyChanged(nameof(TextResourceCount));
+        OnPropertyChanged(nameof(TextsStatusText));
         OnPropertyChanged(nameof(HasChanges));
     }
 
@@ -1428,6 +1699,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RaiseCommandStates()
     {
         (OpenCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (AttachTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (ToggleColumnModeCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -1436,6 +1708,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (NavigateCommand as RelayCommand<NavigationItemViewModel>)?.RaiseCanExecuteChanged();
         (SelectTableCommand as RelayCommand<DatabaseTableViewModel>)?.RaiseCanExecuteChanged();
         (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (AddMissingTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (RefreshValidationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (CancelOperationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (FocusSearchCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -1482,6 +1755,22 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void SubscribeWorkspaceTexts(IEnumerable<LocalizationEntryViewModel> texts)
+    {
+        foreach (LocalizationEntryViewModel text in texts.Distinct())
+        {
+            text.ValueCommitted += OnLocalizationValueCommitted;
+        }
+    }
+
+    private void UnsubscribeWorkspaceTexts(IEnumerable<LocalizationEntryViewModel> texts)
+    {
+        foreach (LocalizationEntryViewModel text in texts.Distinct())
+        {
+            text.ValueCommitted -= OnLocalizationValueCommitted;
+        }
+    }
+
     private void ApplyCurrentTableEditMode() =>
         ApplyTableEditMode(SelectedTable, IsEditMode && !IsBusy && IsRecordsSection && IsCurrentTableEditable);
 
@@ -1525,6 +1814,16 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private sealed record RecordPresenceEditFrame(
         DatabaseTableViewModel Table,
         RecordRowViewModel Record,
+        bool BeforePresent,
+        bool AfterPresent) : WorkspaceEditFrame;
+
+    private sealed record TextEditFrame(
+        LocalizationEntryViewModel Entry,
+        TextResourceState BeforeState,
+        TextResourceState AfterState) : WorkspaceEditFrame;
+
+    private sealed record TextPresenceBatchEditFrame(
+        IReadOnlyList<LocalizationEntryViewModel> Entries,
         bool BeforePresent,
         bool AfterPresent) : WorkspaceEditFrame;
 }

@@ -558,6 +558,7 @@ internal sealed class RecordRowViewModel : ObservableObject
         EmptyDiagnosticsByField;
     private int _diagnosticCount;
     private bool _hasBlockingDiagnostics;
+    private IReadOnlyList<LocalizationEntryViewModel> _relatedTexts = [];
 
     public RecordRowViewModel(
         DatabaseRecord record,
@@ -603,6 +604,22 @@ internal sealed class RecordRowViewModel : ObservableObject
     public string IdentityValue => _record.IdentityValue;
 
     public bool IsAdded => _record.IsNew;
+
+    public IReadOnlyList<LocalizationEntryViewModel> RelatedTexts
+    {
+        get => _relatedTexts;
+        private set
+        {
+            _relatedTexts = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasRelatedTexts));
+            OnPropertyChanged(nameof(RelatedTextCount));
+        }
+    }
+
+    public bool HasRelatedTexts => RelatedTexts.Count > 0;
+
+    public int RelatedTextCount => RelatedTexts.Count;
 
     public string Path { get; }
 
@@ -697,6 +714,13 @@ internal sealed class RecordRowViewModel : ObservableObject
     internal IReadOnlyList<DatabaseField> FieldDefinitions => _record.Fields;
 
     internal DatabaseRecord CoreRecord => _record;
+
+    internal void SetRelatedTexts(IReadOnlyList<LocalizationEntryViewModel> texts)
+    {
+        RelatedTexts = texts;
+        SearchText = BuildSearchText();
+        OnPropertyChanged(nameof(SearchText));
+    }
 
     internal void SetDisplayIndex(int value)
     {
@@ -798,11 +822,142 @@ internal sealed class RecordRowViewModel : ObservableObject
             }
         }
 
+        foreach (LocalizationEntryViewModel text in RelatedTexts)
+        {
+            builder.Append('\u001f').Append(text.ResourceName)
+                .Append('\u001f').Append(text.Title)
+                .Append('\u001f').Append(text.Description);
+        }
+
         return builder.ToString();
     }
 
     private static string NormalizeDisplayName(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "Без имени" : value;
+}
+
+internal sealed class LocalizationEntryViewModel : ObservableObject
+{
+    private readonly TextResource _resource;
+    private string? _errorMessage;
+
+    public LocalizationEntryViewModel(TextResource resource)
+    {
+        _resource = resource;
+    }
+
+    public event EventHandler<LocalizationValueCommittedEventArgs>? ValueCommitted;
+
+    public string ResourceName => _resource.Name;
+
+    public string Prefix => _resource.Prefix;
+
+    public string Title
+    {
+        get => _resource.Title;
+        set
+        {
+            TextResourceState before = _resource.CaptureState();
+            if (!_resource.TrySetTitle(value, out string? error))
+            {
+                ErrorMessage = error;
+                OnPropertyChanged();
+                return;
+            }
+
+            ErrorMessage = null;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsModified));
+            TextResourceState after = _resource.CaptureState();
+            if (!before.IsEquivalentTo(after))
+            {
+                ValueCommitted?.Invoke(
+                    this,
+                    new LocalizationValueCommittedEventArgs(this, "Название RU", before, after));
+            }
+        }
+    }
+
+    public string Description
+    {
+        get => _resource.Description;
+        set
+        {
+            TextResourceState before = _resource.CaptureState();
+            if (!_resource.TrySetDescription(value, out string? error))
+            {
+                ErrorMessage = error;
+                OnPropertyChanged();
+                return;
+            }
+
+            ErrorMessage = null;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsModified));
+            TextResourceState after = _resource.CaptureState();
+            if (!before.IsEquivalentTo(after))
+            {
+                ValueCommitted?.Invoke(
+                    this,
+                    new LocalizationValueCommittedEventArgs(this, "Описание RU", before, after));
+            }
+        }
+    }
+
+    public string OriginalTitle => _resource.OriginalTitle;
+
+    public string OriginalDescription => _resource.OriginalDescription;
+
+    public bool IsNew => _resource.IsNew;
+
+    public bool IsModified => _resource.IsModified;
+
+    public bool HasError => !string.IsNullOrWhiteSpace(ErrorMessage);
+
+    public string? ErrorMessage
+    {
+        get => _errorMessage;
+        private set => SetProperty(ref _errorMessage, value);
+    }
+
+    internal TextResource CoreResource => _resource;
+
+    internal TextResourceState CaptureState() => _resource.CaptureState();
+
+    internal void ResetToOriginal()
+    {
+        _resource.ResetToOriginal();
+        RefreshState();
+    }
+
+    internal void RefreshState()
+    {
+        ErrorMessage = null;
+        OnPropertyChanged(nameof(Title));
+        OnPropertyChanged(nameof(Description));
+        OnPropertyChanged(nameof(IsModified));
+    }
+
+    internal void RestoreState(TextResourceState state)
+    {
+        _resource.RestoreState(state);
+        RefreshState();
+    }
+}
+
+internal sealed class LocalizationValueCommittedEventArgs(
+    LocalizationEntryViewModel entry,
+    string fieldName,
+    TextResourceState beforeState,
+    TextResourceState afterState) : EventArgs
+{
+    public LocalizationEntryViewModel Entry { get; } = entry;
+
+    public string FieldName { get; } = fieldName;
+
+    public TextResourceState BeforeState { get; } = beforeState;
+
+    public TextResourceState AfterState { get; } = afterState;
 }
 
 internal sealed class RecordCellCollectionViewModel(RecordRowViewModel owner)
@@ -1062,23 +1217,59 @@ internal sealed class ChangeEntryViewModel : ObservableObject
         _newValue = record.DisplayName;
     }
 
+    public ChangeEntryViewModel(LocalizationEntryViewModel localization, string fieldName)
+    {
+        Localization = localization;
+        LocalizationFieldName = fieldName;
+        _newValue = fieldName == "Название RU" ? localization.Title : localization.Description;
+    }
+
+    private ChangeEntryViewModel(LocalizationEntryViewModel localization)
+    {
+        Localization = localization;
+        IsTextAddition = true;
+        _newValue = localization.ResourceName;
+    }
+
     public static ChangeEntryViewModel ForAddedRecord(RecordRowViewModel record) => new(record);
 
-    public RecordRowViewModel Record { get; }
+    public static ChangeEntryViewModel ForAddedText(LocalizationEntryViewModel localization) => new(localization);
+
+    public RecordRowViewModel? Record { get; }
 
     public RecordFieldViewModel? Field { get; }
 
+    public LocalizationEntryViewModel? Localization { get; }
+
+    public string? LocalizationFieldName { get; }
+
     public bool IsRecordAddition { get; }
 
-    public string RecordName => Record.DisplayName;
+    public bool IsTextAddition { get; }
 
-    public string FieldName => IsRecordAddition ? "Новая строка" : Field!.DisplayName;
+    public bool IsLocalization => Localization is not null;
 
-    public string Path => IsRecordAddition ? Record.Path : Field!.Path;
+    public string RecordName => Record?.DisplayName ?? Localization?.ResourceName ?? "—";
 
-    public string OriginalValue => IsRecordAddition ? "—" : Field!.OriginalText;
+    public string FieldName => IsRecordAddition
+        ? "Новая строка"
+        : IsTextAddition
+            ? "Новый текст"
+            : LocalizationFieldName ?? Field!.DisplayName;
 
-    public string ActionText => IsRecordAddition ? "Ctrl+Z" : "Вернуть";
+    public string Path => Record is not null
+        ? IsRecordAddition ? Record.Path : Field!.Path
+        : $"texts.res/{Localization!.ResourceName}/{LocalizationFieldName ?? "$new-resource"}";
+
+    public string OriginalValue => IsRecordAddition || IsTextAddition
+        ? "—"
+        : Localization is null
+            ? Field!.OriginalText
+            : LocalizationFieldName == "Название RU"
+                ? Localization.OriginalTitle
+                : Localization.OriginalDescription;
+
+    public string ActionText => IsRecordAddition || IsTextAddition ? "Ctrl+Z" : "Вернуть";
 
     public string NewValue
     {
@@ -1123,6 +1314,16 @@ internal sealed class WorkspaceSnapshot
     public IReadOnlyList<DatabaseGroupViewModel> Databases { get; init; } = [];
 
     public required IReadOnlyList<ValidationMessageViewModel> Diagnostics { get; init; }
+
+    public string? TextsPath { get; init; }
+
+    public long TextsFileLength { get; init; }
+
+    public string? TextsSha256 { get; init; }
+
+    public int TextResourceCount { get; init; }
+
+    public IReadOnlyList<LocalizationEntryViewModel> TextResources { get; init; } = [];
 }
 
 internal sealed record SaveCopyResult(
@@ -1135,4 +1336,10 @@ internal sealed record SaveCopyResult(
 internal sealed record SaveCurrentResult(
     SaveCopyResult Save,
     WorkspaceSnapshot Workspace,
-    string BackupPath);
+    string? BackupPath,
+    SaveCopyResult? TextsSave = null,
+    string? TextsBackupPath = null);
+
+internal sealed record SavePairCopyResult(
+    SaveCopyResult Database,
+    SaveCopyResult? Texts);

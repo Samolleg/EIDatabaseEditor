@@ -7,8 +7,24 @@ namespace EvilIslands.DatabaseEditor.App.Services;
 internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 {
     private DatabaseDocument? _document;
+    private TextsDocument? _textsDocument;
+    private IReadOnlyList<DatabaseGroupViewModel> _mappedDatabases = [];
+    private readonly Dictionary<TextResource, LocalizationEntryViewModel> _textViewModels = [];
+    private readonly Dictionary<LocalizationEntryViewModel, List<RecordRowViewModel>> _textOwners = [];
 
-    public async Task<WorkspaceSnapshot> OpenAsync(string path, CancellationToken cancellationToken)
+    public Task<WorkspaceSnapshot> OpenAsync(string path, CancellationToken cancellationToken) =>
+        OpenInternalAsync(path, explicitTextsPath: null, cancellationToken);
+
+    public Task<WorkspaceSnapshot> AttachTextsAsync(string path, CancellationToken cancellationToken)
+    {
+        DatabaseDocument document = RequireDocument();
+        return OpenInternalAsync(document.SourcePath, Path.GetFullPath(path), cancellationToken);
+    }
+
+    private async Task<WorkspaceSnapshot> OpenInternalAsync(
+        string path,
+        string? explicitTextsPath,
+        CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var fullPath = Path.GetFullPath(path);
@@ -20,6 +36,54 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         var document = await DatabaseDocument.OpenAsync(fullPath, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         var databases = MapDatabases(document.Databases, cancellationToken);
+        TextsDocument? textsDocument = null;
+        string? textsPath = explicitTextsPath ?? FindCompanionTextsPath(fullPath);
+        if (textsPath is not null)
+        {
+            if (!File.Exists(textsPath))
+            {
+                throw new FileNotFoundException("Файл texts.res не найден.", textsPath);
+            }
+
+            textsDocument = await TextsDocument.OpenAsync(textsPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        var previousTextViewModels = _textViewModels.ToArray();
+        var previousTextOwners = _textOwners.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.ToList());
+        IReadOnlyList<LocalizationEntryViewModel> textResources;
+        try
+        {
+            _textViewModels.Clear();
+            _textOwners.Clear();
+            textResources = textsDocument is null
+                ? []
+                : textsDocument.Resources
+                    .Select(resource => GetOrCreateTextViewModel(resource))
+                    .ToArray();
+            if (textsDocument is not null)
+            {
+                AttachRelatedTexts(databases, textResources, cancellationToken);
+            }
+        }
+        catch
+        {
+            _textViewModels.Clear();
+            foreach ((TextResource resource, LocalizationEntryViewModel viewModel) in previousTextViewModels)
+            {
+                _textViewModels.Add(resource, viewModel);
+            }
+
+            _textOwners.Clear();
+            foreach ((LocalizationEntryViewModel entry, List<RecordRowViewModel> owners) in previousTextOwners)
+            {
+                _textOwners.Add(entry, owners);
+            }
+
+            throw;
+        }
+
         var resources = MapResources(document.Resources, document.Databases, cancellationToken);
 
         cancellationToken.ThrowIfCancellationRequested();
@@ -32,9 +96,16 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             Resources = resources,
             Databases = databases,
             Diagnostics = diagnostics,
+            TextsPath = textsDocument?.SourcePath,
+            TextsFileLength = textsDocument?.FileLength ?? 0,
+            TextsSha256 = textsDocument?.Sha256,
+            TextResourceCount = textResources.Count,
+            TextResources = textResources,
         };
         cancellationToken.ThrowIfCancellationRequested();
         _document = document;
+        _textsDocument = textsDocument;
+        _mappedDatabases = databases;
         return snapshot;
     }
 
@@ -72,32 +143,354 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         RequireDocument().RestoreAddedRecord(record.CoreRecord);
     }
 
+    public IReadOnlyList<LocalizationEntryViewModel> AddMissingTexts(RecordRowViewModel record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        TextsDocument texts = RequireTextsDocument();
+        string[] expectedKeys = BuildExpectedTextKeys(record).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (expectedKeys.Length == 0)
+        {
+            throw new InvalidOperationException("Для этой таблицы пока не подтверждено правило создания текстового ключа.");
+        }
+
+        var added = new List<LocalizationEntryViewModel>();
+        foreach (string key in expectedKeys)
+        {
+            if (texts.TryGetResource(key, out TextResource? existing) && existing is not null)
+            {
+                continue;
+            }
+
+            TextResource resource = texts.AddResource(key);
+            LocalizationEntryViewModel viewModel = GetOrCreateTextViewModel(resource);
+            added.Add(viewModel);
+            AddTextOwner(viewModel, record);
+        }
+
+        if (added.Count == 0)
+        {
+            throw new InvalidOperationException("Все ожидаемые записи texts.res для выбранной строки уже существуют.");
+        }
+
+        record.SetRelatedTexts(record.RelatedTexts
+            .Concat(added)
+            .Distinct()
+            .OrderBy(item => item.ResourceName, StringComparer.OrdinalIgnoreCase)
+            .ToArray());
+        return added;
+    }
+
+    public void RemoveAddedText(LocalizationEntryViewModel entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        RequireTextsDocument().RemoveAddedResource(entry.CoreResource);
+        if (_textOwners.TryGetValue(entry, out List<RecordRowViewModel>? owners))
+        {
+            foreach (RecordRowViewModel owner in owners)
+            {
+                owner.SetRelatedTexts(owner.RelatedTexts.Where(item => !ReferenceEquals(item, entry)).ToArray());
+            }
+        }
+    }
+
+    public void RestoreAddedText(LocalizationEntryViewModel entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        RequireTextsDocument().RestoreAddedResource(entry.CoreResource);
+        if (_textOwners.TryGetValue(entry, out List<RecordRowViewModel>? owners))
+        {
+            foreach (RecordRowViewModel owner in owners)
+            {
+                owner.SetRelatedTexts(owner.RelatedTexts
+                    .Append(entry)
+                    .Distinct()
+                    .OrderBy(item => item.ResourceName, StringComparer.OrdinalIgnoreCase)
+                    .ToArray());
+            }
+        }
+    }
+
     public async Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
         CancellationToken cancellationToken)
     {
         var document = RequireDocument();
-        var result = await document.SaveInPlaceAsync(
-            allowGameInstallationPath,
-            cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(result.BackupPath))
+        TextsDocument? texts = _textsDocument;
+        SaveResult? textsResult = null;
+        SaveResult? databaseResult = null;
+        try
         {
-            throw new InvalidOperationException("Сохранение не создало обязательную резервную копию.");
+            if (texts?.IsModified is true)
+            {
+                textsResult = await texts.SaveInPlaceAsync(
+                    allowGameInstallationPath,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            if (document.IsModified)
+            {
+                databaseResult = await document.SaveInPlaceAsync(
+                    allowGameInstallationPath,
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            if (textsResult?.BackupPath is { Length: > 0 } textsBackup)
+            {
+                RestoreBackup(textsResult.TargetPath, textsBackup, texts!.Sha256);
+            }
+
+            throw;
         }
 
-        var workspace = await OpenAsync(result.TargetPath, CancellationToken.None).ConfigureAwait(false);
+        databaseResult ??= new SaveResult(
+            document.SourcePath,
+            document.FileLength,
+            document.Sha256,
+            true,
+            document.Diagnostics,
+            null);
+        var workspace = await OpenAsync(databaseResult.TargetPath, CancellationToken.None).ConfigureAwait(false);
         return new SaveCurrentResult(
-            MapSaveResult(result),
+            MapSaveResult(databaseResult),
             workspace,
-            result.BackupPath);
+            databaseResult.BackupPath,
+            textsResult is null ? null : MapSaveResult(textsResult),
+            textsResult?.BackupPath);
     }
 
-    public async Task<SaveCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken)
+    public async Task<SavePairCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken)
     {
         var document = RequireDocument();
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
-        var result = await document.SaveAsAsync(Path.GetFullPath(targetPath), cancellationToken).ConfigureAwait(false);
-        return MapSaveResult(result);
+        string databaseTarget = Path.GetFullPath(targetPath);
+        SaveResult databaseResult = await document.SaveAsAsync(databaseTarget, cancellationToken).ConfigureAwait(false);
+        SaveResult? textsResult = null;
+        try
+        {
+            if (_textsDocument is not null)
+            {
+                string textsTarget = DeriveTextsCopyPath(databaseTarget);
+                textsResult = await _textsDocument.SaveAsAsync(textsTarget, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            if (File.Exists(databaseTarget))
+            {
+                File.Delete(databaseTarget);
+            }
+
+            throw;
+        }
+
+        return new SavePairCopyResult(
+            MapSaveResult(databaseResult),
+            textsResult is null ? null : MapSaveResult(textsResult));
+    }
+
+    private LocalizationEntryViewModel GetOrCreateTextViewModel(TextResource resource)
+    {
+        if (_textViewModels.TryGetValue(resource, out LocalizationEntryViewModel? existing))
+        {
+            return existing;
+        }
+
+        var result = new LocalizationEntryViewModel(resource);
+        _textViewModels.Add(resource, result);
+        return result;
+    }
+
+    private void AttachRelatedTexts(
+        IReadOnlyList<DatabaseGroupViewModel> databases,
+        IReadOnlyList<LocalizationEntryViewModel> texts,
+        CancellationToken cancellationToken)
+    {
+        var byName = texts.ToDictionary(item => item.ResourceName, StringComparer.OrdinalIgnoreCase);
+        foreach (DatabaseTableViewModel table in databases.SelectMany(group => group.Tables))
+        {
+            foreach (RecordRowViewModel record in table.Records)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string[] exactKeys = BuildExactTextKeys(record).ToArray();
+                string[] prefixes = BuildTextPrefixes(record).ToArray();
+                var related = new List<LocalizationEntryViewModel>();
+                foreach (string key in exactKeys)
+                {
+                    if (byName.TryGetValue(key, out LocalizationEntryViewModel? item))
+                    {
+                        related.Add(item);
+                    }
+                }
+
+                if (prefixes.Length > 0)
+                {
+                    related.AddRange(texts.Where(item => prefixes.Any(prefix =>
+                        item.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))));
+                }
+
+                LocalizationEntryViewModel[] distinct = related
+                    .Distinct()
+                    .OrderBy(item => item.ResourceName, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                record.SetRelatedTexts(distinct);
+                foreach (LocalizationEntryViewModel item in distinct)
+                {
+                    AddTextOwner(item, record);
+                }
+            }
+        }
+    }
+
+    private void AddTextOwner(LocalizationEntryViewModel entry, RecordRowViewModel owner)
+    {
+        if (!_textOwners.TryGetValue(entry, out List<RecordRowViewModel>? owners))
+        {
+            owners = [];
+            _textOwners.Add(entry, owners);
+        }
+
+        if (!owners.Contains(owner))
+        {
+            owners.Add(owner);
+        }
+    }
+
+    private IEnumerable<string> BuildExpectedTextKeys(RecordRowViewModel record)
+    {
+        string[] exact = BuildExactTextKeys(record).ToArray();
+        if (exact.Length > 0 && record.TableKey is not (
+                "items.weapons" or "items.armors" or "items.quick_items"))
+        {
+            return exact;
+        }
+
+        string shape = NormalizeKeyPart(GetFieldText(record, 0));
+        string prefix = record.TableKey switch
+        {
+            "items.weapons" => "WEAPON",
+            "items.armors" => "ARMOR",
+            "items.quick_items" => "QITEM",
+            _ => string.Empty,
+        };
+        if (string.IsNullOrWhiteSpace(prefix) || string.IsNullOrWhiteSpace(shape))
+        {
+            return [];
+        }
+
+        string materialType = GetFieldText(record, 3);
+        DatabaseTableViewModel? materials = _mappedDatabases
+            .SelectMany(group => group.Tables)
+            .FirstOrDefault(table => table.Key == "items.materials");
+        string[] materialNames = materials?.Records
+            .Where(material => string.Equals(
+                GetFieldText(material, 1),
+                materialType,
+                StringComparison.OrdinalIgnoreCase))
+            .Select(material => NormalizeKeyPart(GetFieldText(material, 0)))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+        if (record.TableKey == "items.quick_items" &&
+            (materialNames.Length == 0 || materialType.Equals("none", StringComparison.OrdinalIgnoreCase)))
+        {
+            return [$"{prefix} {shape}"];
+        }
+
+        return materialNames.Select(material => $"{prefix} {shape} {material}");
+    }
+
+    private static IEnumerable<string> BuildExactTextKeys(RecordRowViewModel record)
+    {
+        string name = NormalizeKeyPart(GetFieldText(record, 0));
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return [];
+        }
+
+        return record.TableKey switch
+        {
+            "items.materials" => [$"MATERIAL {name}", $"MATSHORT {name}"],
+            "items.quick_items" => [$"QITEM {name}"],
+            "items.quest_items" => [$"QUESTITEM {name}"],
+            "items.loot_items" => [$"LITEM {name}", $"INSTR {name}"],
+            "spells.prototypes" => [$"SPELL {NormalizeKeyPart(GetFieldText(record, 1))}"],
+            "spells.modifiers" => [$"MODIFIER {NormalizeKeyPart(GetFieldText(record, 1))}"],
+            "units.prototypes" or "units.npcs" => [$"UNIT {name}"],
+            "perks.skills" or "perks.perks" => [$"PERK {name}"],
+            "quests.quests" => [$"QUEST {name}"],
+            "quests.briefings" => [$"BRIEFING {name}"],
+            _ => [],
+        };
+    }
+
+    private static IEnumerable<string> BuildTextPrefixes(RecordRowViewModel record)
+    {
+        string name = NormalizeKeyPart(GetFieldText(record, 0));
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return [];
+        }
+
+        return record.TableKey switch
+        {
+            "items.weapons" => [$"WEAPON {name} "],
+            "items.armors" => [$"ARMOR {name} "],
+            "items.quick_items" => [$"QITEM {name} "],
+            _ => [],
+        };
+    }
+
+    private static string GetFieldText(RecordRowViewModel record, int fieldId) =>
+        record.CoreRecord.Fields.FirstOrDefault(field => field.Id == fieldId)?.EditorText ?? string.Empty;
+
+    private static string NormalizeKeyPart(string value) => value.Trim().Replace(' ', '_');
+
+    private static string? FindCompanionTextsPath(string databasePath)
+    {
+        string directory = Path.GetDirectoryName(databasePath)!;
+        string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(databasePath);
+        string suffix = fileNameWithoutExtension.StartsWith("database", StringComparison.OrdinalIgnoreCase)
+            ? fileNameWithoutExtension["database".Length..]
+            : string.Empty;
+        string[] candidates =
+        [
+            Path.Combine(directory, "texts" + suffix + ".res"),
+            Path.Combine(directory, "texts.res"),
+        ];
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static string DeriveTextsCopyPath(string databaseTarget)
+    {
+        string directory = Path.GetDirectoryName(databaseTarget)!;
+        string fileName = Path.GetFileName(databaseTarget);
+        string textsName = fileName.StartsWith("database", StringComparison.OrdinalIgnoreCase)
+            ? "texts" + fileName["database".Length..]
+            : "texts." + fileName;
+        string result = Path.Combine(directory, textsName);
+        if (File.Exists(result))
+        {
+            throw new IOException($"Связанная копия texts.res уже существует: {result}");
+        }
+
+        return result;
+    }
+
+    private static void RestoreBackup(string sourcePath, string backupPath, string expectedSha256)
+    {
+        string tempPath = Path.Combine(
+            Path.GetDirectoryName(sourcePath)!,
+            $".{Path.GetFileName(sourcePath)}.rollback-{Guid.NewGuid():N}");
+        File.Copy(backupPath, tempPath, overwrite: false);
+        File.Replace(tempPath, sourcePath, null, ignoreMetadataErrors: true);
+        using var stream = File.OpenRead(sourcePath);
+        string restoredHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+        if (!string.Equals(restoredHash, expectedSha256, StringComparison.Ordinal))
+        {
+            throw new IOException("Не удалось подтвердить восстановление texts.res после сбоя парного сохранения.");
+        }
     }
 
     private static SaveCopyResult MapSaveResult(SaveResult result) => new(
@@ -315,4 +708,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 
     private DatabaseDocument RequireDocument() =>
         _document ?? throw new InvalidOperationException("Сначала откройте database.res.");
+
+    private TextsDocument RequireTextsDocument() =>
+        _textsDocument ?? throw new InvalidOperationException("Рядом с database.res не найден связанный texts.res.");
 }

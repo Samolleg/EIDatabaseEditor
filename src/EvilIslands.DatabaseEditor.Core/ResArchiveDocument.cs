@@ -134,7 +134,8 @@ public sealed class ResArchiveDocument
             if (index > 0)
             {
                 var previous = ordered[index - 1];
-                if ((long)previous.Offset + previous.Size > entry.Offset)
+                if (previous.Size > 0 && entry.Size > 0 &&
+                    (long)previous.Offset + previous.Size > entry.Offset)
                 {
                     diagnostics.Add(new(
                         DiagnosticSeverity.Error,
@@ -254,7 +255,7 @@ public sealed class ResArchiveDocument
             }
 
             var name = Encoding.ASCII.GetString(data, (int)nameStart, nameLength).TrimEnd('\0');
-            if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            if (string.IsNullOrWhiteSpace(name) || name.Any(char.IsControl))
             {
                 throw new DatabaseFormatException("RES resource name is invalid.", sourcePath, (long)nameStart);
             }

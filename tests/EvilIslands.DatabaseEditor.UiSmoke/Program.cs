@@ -259,6 +259,41 @@ internal static class Program
             throw new InvalidOperationException("Поля записей не должны материализоваться при открытии рабочей области.");
         }
 
+        string companionTexts = Path.Combine(Path.GetDirectoryName(sourcePath)!, "texts.res");
+        if (File.Exists(companionTexts))
+        {
+            if (!viewModel.HasTextsDocument || viewModel.TextResourceCount < 100)
+            {
+                throw new InvalidOperationException("Соседний texts.res должен автоматически подключаться и индексироваться.");
+            }
+
+            DatabaseTableViewModel materialsTable = tables.Single(table => table.Key == "items.materials");
+            viewModel.SelectTableCommand.Execute(materialsTable);
+            RecordRowViewModel material = materialsTable.Records.First();
+            viewModel.SelectedRecord = material;
+            if (!material.RelatedTexts.Any(text => text.Prefix.Equals("MATERIAL", StringComparison.OrdinalIgnoreCase)) ||
+                !material.RelatedTexts.Any(text => text.Prefix.Equals("MATSHORT", StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new InvalidOperationException("Материал должен связываться с MATERIAL и MATSHORT в texts.res.");
+            }
+
+            LocalizationEntryViewModel textProbe = material.RelatedTexts.First(text => !text.IsNew);
+            string originalTitle = textProbe.Title;
+            textProbe.Title = originalTitle + " тест";
+            if (!viewModel.HasChanges || !textProbe.IsModified || !viewModel.UndoCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException("Изменение русского названия должно попадать в общий журнал и Undo.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (textProbe.Title != originalTitle || textProbe.IsModified || viewModel.HasChanges)
+            {
+                throw new InvalidOperationException("Общий Undo должен полностью вернуть изменение texts.res.");
+            }
+
+            VerifyPairedSave(sourcePath, companionTexts);
+        }
+
         var prototypes = tables.Single(table => table.Key == "units.prototypes");
         var races = tables.Single(table => table.Key == "units.races");
         SpreadsheetColumnViewModel raceReferenceColumn = prototypes.Columns.Single(column => column.FieldId == 1);
@@ -934,6 +969,69 @@ internal static class Program
         VerifyUnsavedChangesClose(sourcePath);
     }
 
+    private static void VerifyPairedSave(string databaseSource, string textsSource)
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "EI-Database-Studio-UiSmoke",
+            "pair-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string databasePath = Path.Combine(root, "database.res");
+        string textsPath = Path.Combine(root, "texts.res");
+        File.Copy(databaseSource, databasePath);
+        File.Copy(textsSource, textsPath);
+        try
+        {
+            var service = new CoreDatabaseWorkspaceService();
+            WorkspaceSnapshot workspace = service.OpenAsync(databasePath, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            DatabaseTableViewModel materials = workspace.Databases
+                .SelectMany(group => group.Tables)
+                .Single(table => table.Key == "items.materials");
+            RecordRowViewModel material = materials.Records.First();
+            material.IsEditMode = true;
+            RecordFieldViewModel price = material.GetCell(4)
+                ?? throw new InvalidOperationException("У материала нет поля цены.");
+            string originalPrice = price.EditorText;
+            price.EditorText = originalPrice == "4" ? "5" : "4";
+            LocalizationEntryViewModel text = material.RelatedTexts
+                .First(entry => entry.Prefix.Equals("MATERIAL", StringComparison.OrdinalIgnoreCase));
+            string editedTitle = text.Title + " тест";
+            text.Title = editedTitle;
+
+            SaveCurrentResult saved = service.SaveCurrentAsync(false, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            if (!File.Exists(saved.BackupPath) || !File.Exists(saved.TextsBackupPath) ||
+                saved.Workspace.TextsPath is null)
+            {
+                throw new InvalidOperationException("Парное сохранение должно создать проверенные бэкапы обоих RES.");
+            }
+
+            RecordRowViewModel reopenedMaterial = saved.Workspace.Databases
+                .SelectMany(group => group.Tables)
+                .Single(table => table.Key == "items.materials")
+                .Records.First();
+            if (reopenedMaterial.GetCell(4)?.EditorText == originalPrice ||
+                !reopenedMaterial.RelatedTexts.Any(entry => entry.Title == editedTitle))
+            {
+                throw new InvalidOperationException("Парное сохранение не восстановило изменения database.res и texts.res.");
+            }
+
+            string copyPath = Path.Combine(root, "database.edited.res");
+            SavePairCopyResult copy = service.SaveCopyAsync(copyPath, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            if (!File.Exists(copy.Database.TargetPath) || copy.Texts is null || !File.Exists(copy.Texts.TargetPath) ||
+                Path.GetFileName(copy.Texts.TargetPath) != "texts.edited.res")
+            {
+                throw new InvalidOperationException("«Сохранить копию» должно создавать связанную пару database/texts.");
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static void VerifyUnsavedChangesClose(string sourcePath)
     {
         var closeWindow = new MainWindow();
@@ -1075,6 +1173,9 @@ internal static class Program
         public Task<WorkspaceSnapshot> OpenAsync(string path, CancellationToken cancellationToken) =>
             Task.FromResult(CreateWorkspace(path));
 
+        public Task<WorkspaceSnapshot> AttachTextsAsync(string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         private static WorkspaceSnapshot CreateWorkspace(string path)
         {
             var table = new DatabaseTableViewModel(
@@ -1130,12 +1231,19 @@ internal static class Program
 
         public void RestoreAddedRecord(RecordRowViewModel record) => throw new NotSupportedException();
 
+        public IReadOnlyList<LocalizationEntryViewModel> AddMissingTexts(RecordRowViewModel record) =>
+            throw new NotSupportedException();
+
+        public void RemoveAddedText(LocalizationEntryViewModel entry) => throw new NotSupportedException();
+
+        public void RestoreAddedText(LocalizationEntryViewModel entry) => throw new NotSupportedException();
+
         public Task<SaveCurrentResult> SaveCurrentAsync(
             bool allowGameInstallationPath,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
-        public Task<SaveCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken) =>
+        public Task<SavePairCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 }

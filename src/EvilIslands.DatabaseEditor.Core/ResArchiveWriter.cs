@@ -2,6 +2,8 @@ using System.Buffers.Binary;
 
 namespace EvilIslands.DatabaseEditor.Core;
 
+internal sealed record AddedResResource(string Name, byte[] Data);
+
 internal static class ResArchiveWriter
 {
     public static byte[] Rebuild(
@@ -63,4 +65,150 @@ internal static class ResArchiveWriter
 
         return result;
     }
+
+    public static byte[] Rebuild(
+        ResArchiveDocument archive,
+        IReadOnlyDictionary<int, byte[]> replacements,
+        IReadOnlyList<AddedResResource> additions)
+    {
+        ArgumentNullException.ThrowIfNull(archive);
+        ArgumentNullException.ThrowIfNull(replacements);
+        ArgumentNullException.ThrowIfNull(additions);
+        if (additions.Count == 0 && replacements.Count == 0)
+        {
+            return archive.OriginalBytes.ToArray();
+        }
+
+        var names = new HashSet<string>(
+            archive.Entries.Select(entry => entry.Name),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (AddedResResource addition in additions)
+        {
+            if (string.IsNullOrWhiteSpace(addition.Name) || !names.Add(addition.Name))
+            {
+                throw new DatabaseFormatException(
+                    $"RES resource name '{addition.Name}' is empty or duplicated.",
+                    addition.Name);
+            }
+
+            if (!addition.Name.All(character => character <= 0x7F && !char.IsControl(character)))
+            {
+                throw new DatabaseFormatException(
+                    $"RES resource name '{addition.Name}' is not a valid ASCII name.",
+                    addition.Name);
+            }
+        }
+
+        var resources = new List<BuildResource>(archive.Entries.Count + additions.Count);
+        foreach (ResEntry entry in archive.Entries.OrderBy(entry => entry.Offset))
+        {
+            byte[] data = replacements.TryGetValue(entry.Index, out byte[]? replacement)
+                ? replacement
+                : archive.GetResourceBytes(entry).ToArray();
+            resources.Add(new BuildResource(entry.Name, data));
+        }
+
+        resources.AddRange(additions.Select(addition => new BuildResource(addition.Name, addition.Data)));
+        return BuildCompleteArchive(resources);
+    }
+
+    private static byte[] BuildCompleteArchive(IReadOnlyList<BuildResource> resources)
+    {
+        if (resources.Count == 0)
+        {
+            throw new DatabaseFormatException("RES archive cannot be empty.");
+        }
+
+        int count = resources.Count;
+        var table = new BuildResource?[count];
+        var groups = resources
+            .GroupBy(resource => ComputeHash(resource.Name, count))
+            .OrderBy(group => group.Key)
+            .ToArray();
+        foreach (IGrouping<int, BuildResource> group in groups)
+        {
+            table[group.Key] = group.First();
+        }
+
+        using IEnumerator<int> freeSlots = Enumerable.Range(0, count)
+            .Where(index => table[index] is null)
+            .GetEnumerator();
+        var chains = new Dictionary<int, List<int>>();
+        foreach (IGrouping<int, BuildResource> group in groups)
+        {
+            var slots = new List<int> { group.Key };
+            foreach (BuildResource resource in group.Skip(1))
+            {
+                if (!freeSlots.MoveNext())
+                {
+                    throw new DatabaseFormatException("RES hash table has no free collision slot.");
+                }
+
+                table[freeSlots.Current] = resource;
+                slots.Add(freeSlots.Current);
+            }
+
+            chains.Add(group.Key, slots);
+        }
+
+        var nextIndices = Enumerable.Repeat(uint.MaxValue, count).ToArray();
+        foreach (IReadOnlyList<int> slots in chains.Values)
+        {
+            for (var index = 0; index + 1 < slots.Count; index++)
+            {
+                nextIndices[slots[index]] = checked((uint)slots[index + 1]);
+            }
+        }
+
+        var offsets = new Dictionary<BuildResource, int>(ReferenceEqualityComparer.Instance);
+        using var data = new MemoryStream();
+        data.SetLength(ResArchiveDocument.HeaderSize);
+        data.Position = ResArchiveDocument.HeaderSize;
+        foreach (BuildResource resource in resources)
+        {
+            offsets.Add(resource, checked((int)data.Position));
+            data.Write(resource.Data);
+        }
+
+        int directoryOffset = checked((int)data.Position);
+        var namePool = new MemoryStream();
+        for (var index = 0; index < table.Length; index++)
+        {
+            BuildResource resource = table[index]
+                ?? throw new DatabaseFormatException("RES hash table contains an empty slot.");
+            byte[] nameBytes = System.Text.Encoding.ASCII.GetBytes(resource.Name);
+            int nameOffset = checked((int)namePool.Position);
+            namePool.Write(nameBytes);
+
+            Span<byte> entry = new byte[ResArchiveDocument.EntrySize];
+            BinaryPrimitives.WriteUInt32LittleEndian(entry, nextIndices[index]);
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[4..], checked((uint)resource.Data.Length));
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[8..], checked((uint)offsets[resource]));
+            BinaryPrimitives.WriteUInt16LittleEndian(entry[16..], checked((ushort)nameBytes.Length));
+            BinaryPrimitives.WriteUInt32LittleEndian(entry[18..], checked((uint)nameOffset));
+            data.Write(entry);
+        }
+
+        namePool.Position = 0;
+        namePool.CopyTo(data);
+        byte[] result = data.ToArray();
+        BinaryPrimitives.WriteUInt32LittleEndian(result, ResArchiveDocument.Signature);
+        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(4), checked((uint)count));
+        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(8), checked((uint)directoryOffset));
+        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(12), checked((uint)namePool.Length));
+        return result;
+    }
+
+    private static int ComputeHash(string name, int count)
+    {
+        int sum = 0;
+        foreach (char character in name)
+        {
+            sum += character is >= 'A' and <= 'Z' ? character + 32 : character;
+        }
+
+        return sum % count;
+    }
+
+    private sealed record BuildResource(string Name, byte[] Data);
 }

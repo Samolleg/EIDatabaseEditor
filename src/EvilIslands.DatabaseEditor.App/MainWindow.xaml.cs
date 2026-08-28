@@ -44,6 +44,7 @@ public partial class MainWindow : Window
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
         _viewModel.OpenFileRequested += ViewModel_OpenFileRequested;
+        _viewModel.AttachTextsRequested += ViewModel_AttachTextsRequested;
         _viewModel.SaveRequested += ViewModel_SaveRequested;
         _viewModel.SaveCopyRequested += ViewModel_SaveCopyRequested;
         _viewModel.SearchFocusRequested += ViewModel_SearchFocusRequested;
@@ -96,6 +97,27 @@ public partial class MainWindow : Window
                 }
             },
             DispatcherPriority.Loaded);
+    }
+
+    private async void ViewModel_AttachTextsRequested(object? sender, EventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Подключить texts.res",
+            Filter = "Evil Islands texts.res|texts.res;*.res|RES-контейнеры (*.res)|*.res|Все файлы (*.*)|*.*",
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Multiselect = false,
+            RestoreDirectory = true,
+            InitialDirectory = _viewModel.HasDocument
+                ? _viewModel.SourceDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+
+        if (dialog.ShowDialog(this) is true)
+        {
+            await _viewModel.AttachTextsPathAsync(dialog.FileName);
+        }
     }
 
     private void SpreadsheetViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -736,7 +758,9 @@ public partial class MainWindow : Window
     private bool CommitPendingCell()
     {
         if (!RecordsGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
-            !RecordsGrid.CommitEdit(DataGridEditingUnit.Row, true))
+            !RecordsGrid.CommitEdit(DataGridEditingUnit.Row, true) ||
+            !LocalizationGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
+            !LocalizationGrid.CommitEdit(DataGridEditingUnit.Row, true))
         {
             return false;
         }

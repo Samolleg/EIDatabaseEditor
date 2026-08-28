@@ -141,6 +141,8 @@ internal static class Program
             DatabaseBoundaryVerifier.Verify(noOpArchive);
             log.Pass("No-op копия повторно разобрана до границ всех DB-полей.");
 
+            await VerifyCompanionTextsAsync(sourcePath, staging, log).ConfigureAwait(false);
+
             await VerifyRowAppendSafetyAsync(
                 sourcePath,
                 allSourcePaths,
@@ -247,6 +249,69 @@ internal static class Program
                 sourceBefore.ContentEquals(sourceAfter),
                 "SHA-256 источника не изменился после всех операций.");
         }
+    }
+
+    private static async Task VerifyCompanionTextsAsync(
+        string databasePath,
+        SafeStagingArea staging,
+        VerificationLog log)
+    {
+        string? directory = Path.GetDirectoryName(databasePath);
+        string? textsPath = directory is null ? null : Path.Combine(directory, "texts.res");
+        if (textsPath is null || !File.Exists(textsPath))
+        {
+            log.Skip("Рядом с database.res нет texts.res; связанный текстовый контур пропущен.");
+            return;
+        }
+
+        FileSnapshot sourceBefore = await FileSnapshot.CaptureAsync(textsPath).ConfigureAwait(false);
+        TextsDocument document = await log.MeasureAsync(
+            "Открытие связанного texts.res",
+            () => TextsDocument.OpenAsync(textsPath)).ConfigureAwait(false);
+        log.Assert(document.Resources.Count > 100, "texts.res содержит индексируемые текстовые ресурсы.");
+
+        string noOpPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-texts-noop.res");
+        staging.AssertOutputPath(noOpPath, [textsPath]);
+        await document.SaveAsAsync(noOpPath).ConfigureAwait(false);
+        log.Assert(
+            await FileByteComparer.AreEqualAsync(textsPath, noOpPath).ConfigureAwait(false),
+            "No-op texts.res побайтово идентичен источнику.");
+
+        TextsDocument edited = await TextsDocument.OpenAsync(textsPath).ConfigureAwait(false);
+        TextResource probe = edited.Resources.First(resource => !string.IsNullOrWhiteSpace(resource.Title));
+        string editedTitle = probe.Title + " тест";
+        log.Assert(probe.TrySetTitle(editedTitle, out _), "Название texts.res принимает CP1251-изменение.");
+        log.Assert(
+            !probe.TrySetDescription(probe.Description + " 😀", out string? encodingError) &&
+            !string.IsNullOrWhiteSpace(encodingError),
+            "Неподдерживаемый Windows-1251 символ отклоняется до записи.");
+        string editedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-texts-edited.res");
+        staging.AssertOutputPath(editedPath, [textsPath]);
+        await edited.SaveAsAsync(editedPath).ConfigureAwait(false);
+        TextsDocument reopenedEdited = await TextsDocument.OpenAsync(editedPath).ConfigureAwait(false);
+        log.Assert(
+            reopenedEdited.TryGetResource(probe.Name, out TextResource? reopenedProbe) &&
+            reopenedProbe?.Title == editedTitle,
+            "Изменённое русское название сохранено и повторно прочитано.");
+
+        TextsDocument extended = await TextsDocument.OpenAsync(textsPath).ConfigureAwait(false);
+        string addedName = $"STRING EI_DATABASE_STUDIO_TEST_{Guid.NewGuid():N}";
+        extended.AddResource(addedName, "Проверка", "Новая запись texts.res");
+        string extendedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-texts-added.res");
+        staging.AssertOutputPath(extendedPath, [textsPath]);
+        await extended.SaveAsAsync(extendedPath).ConfigureAwait(false);
+        TextsDocument reopenedExtended = await TextsDocument.OpenAsync(extendedPath).ConfigureAwait(false);
+        log.Assert(
+            reopenedExtended.Resources.Count == document.Resources.Count + 1 &&
+            reopenedExtended.TryGetResource(addedName, out TextResource? added) &&
+            added?.Title == "Проверка" &&
+            added.Description == "Новая запись texts.res",
+            "Новый ресурс добавлен через пересобранную hash-таблицу RES и повторно прочитан.");
+
+        FileSnapshot sourceAfter = await FileSnapshot.CaptureAsync(textsPath).ConfigureAwait(false);
+        log.Assert(
+            sourceBefore.ContentEquals(sourceAfter),
+            "SHA-256 исходного texts.res не изменился после текстовых проверок.");
     }
 
     private static void AssertCoreValidation(
