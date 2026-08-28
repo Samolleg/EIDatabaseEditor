@@ -40,6 +40,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _showAllColumns = true;
     private int _filteredRecordCount;
     private string? _lastSavedPath;
+    private bool _isApplyingSpreadsheetPaste;
     private bool _disposed;
 
     public MainWindowViewModel()
@@ -859,7 +860,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void OnFieldValueCommitted(object? sender, RecordFieldValueCommittedEventArgs eventArgs)
     {
-        if (sender is not RecordRowViewModel record)
+        if (_isApplyingSpreadsheetPaste || sender is not RecordRowViewModel record)
         {
             return;
         }
@@ -872,6 +873,111 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         StatusText = $"Изменено: {record.DisplayName} · {field.DisplayName}";
         RaiseCommandStates();
     }
+
+    internal bool TryPasteSpreadsheetCells(
+        IReadOnlyList<SpreadsheetPasteCell> cells,
+        out int changedCellCount,
+        out string? error)
+    {
+        changedCellCount = 0;
+        error = null;
+        if (!IsEditMode || IsBusy || !IsCurrentTableEditable || SelectedTable is null)
+        {
+            error = "Текущая таблица недоступна для вставки.";
+            ShowError(error);
+            return false;
+        }
+
+        if (cells.Count == 0)
+        {
+            error = "В буфере обмена нет табличных значений.";
+            ShowError(error);
+            return false;
+        }
+
+        var seen = new HashSet<(RecordRowViewModel Record, int FieldId)>();
+        var pending = new List<(RecordRowViewModel Record, RecordFieldViewModel Field, string Value, DatabaseFieldState BeforeState)>();
+        foreach (SpreadsheetPasteCell cell in cells)
+        {
+            if (!SelectedTable.Records.Any(record => ReferenceEquals(record, cell.Record)) ||
+                !seen.Add((cell.Record, cell.FieldId)))
+            {
+                error = "Диапазон вставки содержит неизвестную или повторяющуюся ячейку.";
+                ShowError(error);
+                return false;
+            }
+
+            RecordFieldViewModel? field = cell.Record.GetCell(cell.FieldId);
+            if (field is null || !field.CanEdit)
+            {
+                error = $"Ячейка «{cell.Record.DisplayName} · поле {cell.FieldId}» доступна только для чтения.";
+                ShowError(error);
+                return false;
+            }
+
+            pending.Add((cell.Record, field, cell.Value, field.CaptureState()));
+        }
+
+        var edits = new List<FieldEditFrame>(pending.Count);
+        _isApplyingSpreadsheetPaste = true;
+        try
+        {
+            foreach (var item in pending)
+            {
+                item.Field.EditorText = item.Value;
+                if (item.Field.HasError)
+                {
+                    throw new InvalidOperationException(
+                        $"{item.Record.DisplayName} · {item.Field.DisplayName}: {item.Field.ErrorMessage}");
+                }
+
+                DatabaseFieldState afterState = item.Field.CaptureState();
+                if (!item.BeforeState.IsEquivalentTo(afterState))
+                {
+                    edits.Add(new FieldEditFrame(item.Record, item.Field, item.BeforeState, afterState));
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            foreach (var item in pending.AsEnumerable().Reverse())
+            {
+                item.Field.RestoreState(item.BeforeState);
+            }
+
+            RefreshChangedFields(pending.Select(item => (item.Record, item.Field)));
+            error = $"Вставка отменена без частичных изменений: {UnwrapMessage(exception)}";
+            ShowError(error);
+            return false;
+        }
+        finally
+        {
+            _isApplyingSpreadsheetPaste = false;
+        }
+
+        if (edits.Count == 0)
+        {
+            StatusText = "Вставленные значения уже совпадают с содержимым выбранных ячеек.";
+            return true;
+        }
+
+        _undo.Push(edits.Count == 1 ? edits[0] : new FieldBatchEditFrame(edits.ToArray()));
+        _redo.Clear();
+        RefreshChangedFields(edits.Select(edit => (edit.Record, edit.Field)));
+        RefreshValidationDeferred();
+        changedCellCount = edits.Count;
+        StatusText = $"Вставлено из буфера: {changedCellCount:N0} ячеек.";
+        RaiseCommandStates();
+        return true;
+    }
+
+    internal void ReportSpreadsheetCopy(int rowCount, int columnCount)
+    {
+        NotificationIsError = false;
+        StatusText = $"Скопировано: {rowCount:N0} × {columnCount:N0} ячеек. Можно вставить в Excel или другую таблицу.";
+    }
+
+    internal void ReportSpreadsheetError(string message) => ShowError(message);
 
     private void NavigateToDiagnostic(ValidationMessageViewModel? diagnostic)
     {
@@ -966,6 +1072,37 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 status = undo
                     ? $"Отменено: {fieldFrame.Record.DisplayName} · {fieldFrame.Field.DisplayName}"
                     : $"Повторено: {fieldFrame.Record.DisplayName} · {fieldFrame.Field.DisplayName}";
+                return true;
+
+            case FieldBatchEditFrame batchFrame:
+                FieldEditFrame[] orderedEdits = undo
+                    ? batchFrame.Edits.Reverse().ToArray()
+                    : batchFrame.Edits.ToArray();
+                var rollback = orderedEdits
+                    .Select(edit => (Edit: edit, State: edit.Field.CaptureState()))
+                    .ToArray();
+                for (var index = 0; index < orderedEdits.Length; index++)
+                {
+                    FieldEditFrame edit = orderedEdits[index];
+                    DatabaseFieldState batchState = undo ? edit.BeforeState : edit.AfterState;
+                    if (edit.Field.RestoreState(batchState))
+                    {
+                        continue;
+                    }
+
+                    for (var rollbackIndex = index; rollbackIndex >= 0; rollbackIndex--)
+                    {
+                        rollback[rollbackIndex].Edit.Field.RestoreState(rollback[rollbackIndex].State);
+                    }
+
+                    error = edit.Field.ErrorMessage ?? "Не удалось восстановить ячейку пакетной операции.";
+                    return false;
+                }
+
+                RefreshChangedFields(batchFrame.Edits.Select(edit => (edit.Record, edit.Field)));
+                status = undo
+                    ? $"Отменена вставка в {batchFrame.Edits.Count:N0} ячеек."
+                    : $"Повторена вставка в {batchFrame.Edits.Count:N0} ячеек.";
                 return true;
 
             case RecordPresenceEditFrame recordFrame:
@@ -1089,39 +1226,48 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void RefreshChangedField(RecordRowViewModel record, RecordFieldViewModel field)
     {
-        record.RefreshState();
-        if (record.IsAdded)
-        {
-            string key = GetRecordInsertionChangeKey(record);
-            if (_changesByPath.TryGetValue(key, out ChangeEntryViewModel? insertion))
-            {
-                insertion.NewValue = record.DisplayName;
-            }
+        RefreshChangedFields([(record, field)]);
+    }
 
-            RefreshAllCounts();
-            OnPropertyChanged(nameof(HasChanges));
-            (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
-            (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
-            RecordsView.Refresh();
-            return;
+    private void RefreshChangedFields(
+        IEnumerable<(RecordRowViewModel Record, RecordFieldViewModel Field)> changedFields)
+    {
+        var fields = changedFields
+            .DistinctBy(item => (item.Record, item.Field.Id))
+            .ToArray();
+        foreach (RecordRowViewModel record in fields.Select(item => item.Record).Distinct())
+        {
+            record.RefreshState();
+            if (record.IsAdded)
+            {
+                string key = GetRecordInsertionChangeKey(record);
+                if (_changesByPath.TryGetValue(key, out ChangeEntryViewModel? insertion))
+                {
+                    insertion.NewValue = record.DisplayName;
+                }
+            }
         }
 
-        if (field.IsModified)
+        foreach (var item in fields.Where(item => !item.Record.IsAdded))
         {
-            if (_changesByPath.TryGetValue(field.Path, out var existing))
+            RecordFieldViewModel field = item.Field;
+            if (field.IsModified)
             {
-                existing.NewValue = field.EditorText;
+                if (_changesByPath.TryGetValue(field.Path, out var existing))
+                {
+                    existing.NewValue = field.EditorText;
+                }
+                else
+                {
+                    var entry = new ChangeEntryViewModel(item.Record, field);
+                    _changesByPath.Add(field.Path, entry);
+                    Changes.Add(entry);
+                }
             }
-            else
+            else if (_changesByPath.Remove(field.Path, out var removed))
             {
-                var entry = new ChangeEntryViewModel(record, field);
-                _changesByPath.Add(field.Path, entry);
-                Changes.Add(entry);
+                Changes.Remove(removed);
             }
-        }
-        else if (_changesByPath.Remove(field.Path, out var removed))
-        {
-            Changes.Remove(removed);
         }
 
         RefreshAllCounts();
@@ -1383,6 +1529,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RecordFieldViewModel Field,
         DatabaseFieldState BeforeState,
         DatabaseFieldState AfterState) : WorkspaceEditFrame;
+
+    private sealed record FieldBatchEditFrame(
+        IReadOnlyList<FieldEditFrame> Edits) : WorkspaceEditFrame;
 
     private sealed record RecordPresenceEditFrame(
         DatabaseTableViewModel Table,

@@ -17,6 +17,7 @@
             <Color x:Key="SubtleTextColor">#969696</Color>
             <Color x:Key="AccentColor">#10A37F</Color>
             <Color x:Key="AccentHoverColor">#0E8F70</Color>
+            <Color x:Key="SpreadsheetSelectionColor">#1F5F50</Color>
             <Color x:Key="DangerColor">#F87171</Color>
             <Color x:Key="WarningColor">#E9C46A</Color>
 
@@ -31,6 +32,7 @@
             <SolidColorBrush x:Key="SubtleTextBrush" Color="{StaticResource SubtleTextColor}" />
             <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
             <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColor}" />
+            <SolidColorBrush x:Key="SpreadsheetSelectionBrush" Color="{StaticResource SpreadsheetSelectionColor}" />
             <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
             <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
 
@@ -249,8 +251,10 @@
                 <Setter Property="FocusVisualStyle" Value="{x:Null}" />
                 <Style.Triggers>
                     <Trigger Property="IsSelected" Value="True">
-                        <Setter Property="Background" Value="Transparent" />
+                        <Setter Property="Background" Value="{StaticResource SpreadsheetSelectionBrush}" />
                         <Setter Property="Foreground" Value="White" />
+                        <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                        <Setter Property="BorderThickness" Value="1" />
                     </Trigger>
                 </Style.Triggers>
             </Style>

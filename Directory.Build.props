@@ -7,7 +7,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
     <VersionPrefix>0.6.0</VersionPrefix>
-    <VersionSuffix>preview.2</VersionSuffix>
+    <VersionSuffix>preview.3</VersionSuffix>
     <AssemblyVersion>0.6.0.0</AssemblyVersion>
     <FileVersion>0.6.0.0</FileVersion>
     <DefaultItemExcludes>$(DefaultItemExcludes);**/obj-*/**</DefaultItemExcludes>

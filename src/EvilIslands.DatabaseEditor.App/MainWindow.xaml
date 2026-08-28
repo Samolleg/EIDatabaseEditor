@@ -690,7 +690,7 @@
                                               VerticalGridLinesBrush="#353535"
                                               SelectionMode="Extended"
                                               SelectionUnit="CellOrRowHeader"
-                                              ClipboardCopyMode="IncludeHeader"
+                                              ClipboardCopyMode="None"
                                               CanUserSortColumns="True"
                                               BeginningEdit="RecordsGrid_BeginningEdit"
                                               Sorting="RecordsGrid_Sorting">
@@ -729,14 +729,14 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Text="{Binding SelectedRecord.Path, TargetNullValue=Выберите строку · Ctrl+C копирует выбранные клетки}"
+                                    <TextBlock Text="{Binding SelectedRecord.Path, TargetNullValue=Выберите клетки · Ctrl+C — копировать · Ctrl+V — вставить}"
                                                Foreground="{StaticResource SubtleTextBrush}"
                                                FontFamily="Cascadia Mono, Consolas"
                                                FontSize="10"
                                                TextTrimming="CharacterEllipsis"
                                                VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1"
-                                               Text="F2 — изменить клетку · Ctrl+Insert — добавить по образцу · Enter — применить · Esc — отменить"
+                                               Text="Shift/Ctrl — выделить клетки · Ctrl+C/V — обмен с Excel · F2 — изменить · Enter — применить"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                FontSize="10"
                                                VerticalAlignment="Center" />

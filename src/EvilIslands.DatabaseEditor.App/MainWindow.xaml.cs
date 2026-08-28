@@ -2,6 +2,7 @@ using System.Collections;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -31,6 +32,14 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        RecordsGrid.CommandBindings.Add(new CommandBinding(
+            ApplicationCommands.Copy,
+            RecordsGrid_CopyExecuted,
+            RecordsGrid_CopyCanExecute));
+        RecordsGrid.CommandBindings.Add(new CommandBinding(
+            ApplicationCommands.Paste,
+            RecordsGrid_PasteExecuted,
+            RecordsGrid_PasteCanExecute));
         DataContextChanged += MainWindow_DataContextChanged;
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
@@ -243,6 +252,287 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
         }
+    }
+
+    private void RecordsGrid_CopyCanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
+                       (RecordsGrid.SelectedCells.Count > 0 || RecordsGrid.CurrentCell.IsValid);
+        e.Handled = true;
+    }
+
+    private void RecordsGrid_CopyExecuted(object sender, ExecutedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        try
+        {
+            if (!TryBuildClipboardMatrix(out IReadOnlyList<IReadOnlyList<string>> matrix) || matrix.Count == 0)
+            {
+                _viewModel.ReportSpreadsheetError("Выберите одну или несколько ячеек для копирования.");
+                return;
+            }
+
+            string text = SpreadsheetClipboardText.Serialize(matrix);
+            var data = new DataObject();
+            data.SetData(DataFormats.UnicodeText, text);
+            data.SetData(DataFormats.Text, text);
+            SetClipboardDataWithRetry(data);
+            _viewModel.ReportSpreadsheetCopy(matrix.Count, matrix.Max(row => row.Count));
+        }
+        catch (ExternalException exception)
+        {
+            _viewModel.ReportSpreadsheetError($"Буфер обмена сейчас занят другим приложением: {exception.Message}");
+        }
+    }
+
+    private void RecordsGrid_PasteCanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = _spreadsheetViewModel is
+        {
+            CurrentSection: WorkspaceSection.Records,
+            IsEditMode: true,
+            IsBusy: false,
+            IsCurrentTableEditable: true,
+        } &&
+        RecordsGrid.CurrentCell.IsValid;
+
+        e.Handled = true;
+    }
+
+    private void RecordsGrid_PasteExecuted(object sender, ExecutedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        try
+        {
+            string text = GetClipboardTextWithRetry();
+            IReadOnlyList<IReadOnlyList<string>> matrix = SpreadsheetClipboardText.Parse(text);
+            if (!TryBuildPasteCells(matrix, out IReadOnlyList<SpreadsheetPasteCell> cells, out string? error))
+            {
+                _viewModel.ReportSpreadsheetError(error ?? "Не удалось определить диапазон вставки.");
+                return;
+            }
+
+            _viewModel.TryPasteSpreadsheetCells(cells, out _, out _);
+        }
+        catch (Exception exception) when (exception is ExternalException or FormatException)
+        {
+            _viewModel.ReportSpreadsheetError($"Не удалось прочитать табличный буфер: {exception.Message}");
+        }
+    }
+
+    internal bool TryBuildClipboardMatrix(out IReadOnlyList<IReadOnlyList<string>> matrix)
+    {
+        RecordRowViewModel[] rows = RecordsGrid.Items.Cast<object>().OfType<RecordRowViewModel>().ToArray();
+        DataGridColumn[] columns = RecordsGrid.Columns
+            .Where(column => column.Visibility == Visibility.Visible)
+            .OrderBy(column => column.DisplayIndex)
+            .ToArray();
+        var rowIndexes = rows.Select((row, index) => (row, index)).ToDictionary(item => item.row, item => item.index);
+        var columnIndexes = columns.Select((column, index) => (column, index))
+            .ToDictionary(item => item.column, item => item.index);
+        var selected = RecordsGrid.SelectedCells
+            .Where(cell => cell.Item is RecordRowViewModel && columnIndexes.ContainsKey(cell.Column))
+            .Select(cell => ((RecordRowViewModel)cell.Item, cell.Column))
+            .Distinct()
+            .ToArray();
+        if (selected.Length == 0 &&
+            RecordsGrid.CurrentCell is { IsValid: true, Item: RecordRowViewModel currentRecord } &&
+            columnIndexes.ContainsKey(RecordsGrid.CurrentCell.Column))
+        {
+            selected = [(currentRecord, RecordsGrid.CurrentCell.Column)];
+        }
+
+        if (selected.Length == 0)
+        {
+            matrix = [];
+            return false;
+        }
+
+        int firstRow = selected.Min(cell => rowIndexes[cell.Item1]);
+        int lastRow = selected.Max(cell => rowIndexes[cell.Item1]);
+        int firstColumn = selected.Min(cell => columnIndexes[cell.Column]);
+        int lastColumn = selected.Max(cell => columnIndexes[cell.Column]);
+        var selectedSet = selected.ToHashSet();
+        var result = new List<IReadOnlyList<string>>(lastRow - firstRow + 1);
+        for (int rowIndex = firstRow; rowIndex <= lastRow; rowIndex++)
+        {
+            var values = new string[lastColumn - firstColumn + 1];
+            for (int columnIndex = firstColumn; columnIndex <= lastColumn; columnIndex++)
+            {
+                DataGridColumn column = columns[columnIndex];
+                RecordRowViewModel row = rows[rowIndex];
+                values[columnIndex - firstColumn] = selectedSet.Contains((row, column))
+                    ? GetClipboardCellText(row, column)
+                    : string.Empty;
+            }
+
+            result.Add(values);
+        }
+
+        matrix = result;
+        return true;
+    }
+
+    internal bool TryBuildPasteCells(
+        IReadOnlyList<IReadOnlyList<string>> matrix,
+        out IReadOnlyList<SpreadsheetPasteCell> cells,
+        out string? error)
+    {
+        cells = [];
+        error = null;
+        if (matrix.Count == 0 || matrix.All(row => row.Count == 0))
+        {
+            error = "В буфере обмена нет табличных значений.";
+            return false;
+        }
+
+        RecordRowViewModel[] rows = RecordsGrid.Items.Cast<object>().OfType<RecordRowViewModel>().ToArray();
+        DataGridColumn[] columns = RecordsGrid.Columns
+            .Where(column => column.Visibility == Visibility.Visible)
+            .OrderBy(column => column.DisplayIndex)
+            .ToArray();
+        int anchorRow = Array.FindIndex(rows, row => ReferenceEquals(row, RecordsGrid.CurrentCell.Item));
+        int anchorColumn = Array.FindIndex(columns, column => ReferenceEquals(column, RecordsGrid.CurrentCell.Column));
+        if (anchorRow < 0 || anchorColumn < 0)
+        {
+            error = "Выберите начальную ячейку для вставки.";
+            return false;
+        }
+
+        string? singleValue = matrix.Count == 1 && matrix[0].Count == 1 ? matrix[0][0] : null;
+        if (singleValue is not null && RecordsGrid.SelectedCells.Count > 1)
+        {
+            var selectedTargets = RecordsGrid.SelectedCells
+                .Where(cell => cell.Item is RecordRowViewModel)
+                .OrderBy(cell => Array.FindIndex(rows, row => ReferenceEquals(row, cell.Item)))
+                .ThenBy(cell => cell.Column.DisplayIndex)
+                .ToArray();
+            var fillCells = new List<SpreadsheetPasteCell>(selectedTargets.Length);
+            foreach (DataGridCellInfo selected in selectedTargets)
+            {
+                if (!TryGetPasteColumn(selected.Column, out SpreadsheetColumnViewModel? descriptor, out error))
+                {
+                    return false;
+                }
+
+                fillCells.Add(new SpreadsheetPasteCell(
+                    (RecordRowViewModel)selected.Item,
+                    descriptor.FieldId,
+                    singleValue));
+            }
+
+            cells = fillCells;
+            return true;
+        }
+
+        int width = matrix.Max(row => row.Count);
+        if (anchorRow + matrix.Count > rows.Length || anchorColumn + width > columns.Length)
+        {
+            error = "Диапазон из буфера не помещается в оставшиеся строки или столбцы таблицы.";
+            return false;
+        }
+
+        var result = new List<SpreadsheetPasteCell>(matrix.Count * width);
+        for (var rowOffset = 0; rowOffset < matrix.Count; rowOffset++)
+        {
+            for (var columnOffset = 0; columnOffset < width; columnOffset++)
+            {
+                DataGridColumn column = columns[anchorColumn + columnOffset];
+                if (!TryGetPasteColumn(column, out SpreadsheetColumnViewModel? descriptor, out error))
+                {
+                    return false;
+                }
+
+                string value = columnOffset < matrix[rowOffset].Count
+                    ? matrix[rowOffset][columnOffset]
+                    : string.Empty;
+                result.Add(new SpreadsheetPasteCell(
+                    rows[anchorRow + rowOffset],
+                    descriptor.FieldId,
+                    value));
+            }
+        }
+
+        cells = result;
+        return true;
+    }
+
+    private bool TryGetPasteColumn(
+        DataGridColumn column,
+        out SpreadsheetColumnViewModel descriptor,
+        out string? error)
+    {
+        if (!_spreadsheetColumns.TryGetValue(column, out descriptor!) ||
+            !descriptor.IsEditable ||
+            descriptor.Projection is not null)
+        {
+            error = "Вставка возможна только в редактируемые физические поля; служебные и расшифрованные колонки доступны только для копирования.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private string GetClipboardCellText(RecordRowViewModel record, DataGridColumn column)
+    {
+        if (_spreadsheetColumns.TryGetValue(column, out SpreadsheetColumnViewModel? descriptor))
+        {
+            RecordFieldViewModel? field = record.GetCell(descriptor.FieldId);
+            if (field is null)
+            {
+                return string.Empty;
+            }
+
+            return descriptor.Projection is null
+                ? field.EditorText
+                : field.GetProjectedText(descriptor.Projection);
+        }
+
+        return Equals(column.Header, "#")
+            ? record.Index.ToString(CultureInfo.InvariantCulture)
+            : string.Empty;
+    }
+
+    private static void SetClipboardDataWithRetry(IDataObject data)
+    {
+        ExternalException? lastError = null;
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                Clipboard.SetDataObject(data, copy: true);
+                return;
+            }
+            catch (ExternalException exception)
+            {
+                lastError = exception;
+                Thread.Sleep(15 * (attempt + 1));
+            }
+        }
+
+        throw lastError ?? new ExternalException("Не удалось открыть буфер обмена.");
+    }
+
+    private static string GetClipboardTextWithRetry()
+    {
+        ExternalException? lastError = null;
+        for (var attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                return Clipboard.ContainsText(TextDataFormat.UnicodeText)
+                    ? Clipboard.GetText(TextDataFormat.UnicodeText)
+                    : string.Empty;
+            }
+            catch (ExternalException exception)
+            {
+                lastError = exception;
+                Thread.Sleep(15 * (attempt + 1));
+            }
+        }
+
+        throw lastError ?? new ExternalException("Не удалось открыть буфер обмена.");
     }
 
     private void RecordsGrid_Sorting(object sender, DataGridSortingEventArgs e)

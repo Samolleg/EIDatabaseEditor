@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -33,6 +34,7 @@ internal static class Program
             var window = new MainWindow();
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
+            VerifySpreadsheetClipboardText();
             VerifyNavigationRequery(application);
             VerifyDatabaseTableNavigation();
             VerifyPreferencesStore();
@@ -63,9 +65,12 @@ internal static class Program
             .FirstOrDefault(trigger => trigger.Property == DataGridCell.IsSelectedProperty && Equals(trigger.Value, true));
         var selectedBackground = selectedTrigger?.Setters.OfType<Setter>()
             .FirstOrDefault(setter => setter.Property == Control.BackgroundProperty)?.Value;
-        if (!Equals(selectedBackground, Brushes.Transparent))
+        var expectedSelection = (SolidColorBrush)application.Resources["SpreadsheetSelectionBrush"];
+        if (selectedBackground is not SolidColorBrush actualSelection ||
+            actualSelection.Color != expectedSelection.Color)
         {
-            throw new InvalidOperationException("Выбранная DataGridCell должна оставлять видимым тёмно-зелёный фон строки.");
+            throw new InvalidOperationException(
+                "Выбранная DataGridCell должна иметь отдельный видимый Excel-подобный фон.");
         }
 
     }
@@ -93,10 +98,30 @@ internal static class Program
             !grid.CanUserResizeColumns ||
             grid.SelectionUnit != DataGridSelectionUnit.CellOrRowHeader ||
             grid.SelectionMode != DataGridSelectionMode.Extended ||
+            grid.ClipboardCopyMode != DataGridClipboardCopyMode.None ||
+            !grid.CommandBindings.OfType<CommandBinding>().Any(binding => binding.Command == ApplicationCommands.Copy) ||
+            !grid.CommandBindings.OfType<CommandBinding>().Any(binding => binding.Command == ApplicationCommands.Paste) ||
             grid.Columns.Count != 2)
         {
             throw new InvalidOperationException(
                 "RecordsGrid должен иметь две фиксированные колонки, выбор клеток и обе виртуализации.");
+        }
+    }
+
+    private static void VerifySpreadsheetClipboardText()
+    {
+        IReadOnlyList<IReadOnlyList<string>> source =
+        [
+            ["alpha", "beta"],
+            ["строка 1\nстрока 2", "кавычка \" внутри"],
+        ];
+        string serialized = SpreadsheetClipboardText.Serialize(source);
+        IReadOnlyList<IReadOnlyList<string>> parsed = SpreadsheetClipboardText.Parse(serialized + "\r\n");
+        if (parsed.Count != source.Count ||
+            parsed.Where((row, index) => !row.SequenceEqual(source[index], StringComparer.Ordinal)).Any())
+        {
+            throw new InvalidOperationException(
+                "Excel-совместимый TSV должен сохранять строки, табуляции и кавычки без лишней последней строки.");
         }
     }
 
@@ -602,6 +627,160 @@ internal static class Program
             throw new InvalidOperationException(
                 "Профиль компактности должен различать имя, дробные значения и битовые колонки.");
         }
+
+        SpreadsheetColumnViewModel materialName = materials.Columns.Single(column => column.IsNameField);
+        SpreadsheetColumnViewModel materialType = materials.Columns.Single(column => column.Title == "Тип");
+        DataGridColumn materialNameGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, materialName));
+        DataGridColumn materialTypeGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, materialType));
+        RecordRowViewModel[] copyRows = [materials.Records[0], materials.Records[1]];
+        recordsGrid.SelectedCells.Clear();
+        foreach (RecordRowViewModel copyRow in copyRows)
+        {
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(copyRow, materialNameGridColumn));
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(copyRow, materialTypeGridColumn));
+        }
+
+        recordsGrid.CurrentCell = new DataGridCellInfo(copyRows[0], materialNameGridColumn);
+        if (!ApplicationCommands.Copy.CanExecute(null, recordsGrid))
+        {
+            throw new InvalidOperationException("Выбранный диапазон обязан разрешать Ctrl+C.");
+        }
+
+        if (!window.TryBuildClipboardMatrix(out IReadOnlyList<IReadOnlyList<string>> copiedMatrix))
+        {
+            throw new InvalidOperationException("Выбранный диапазон не преобразован в табличный буфер.");
+        }
+
+        string copiedText = SpreadsheetClipboardText.Serialize(copiedMatrix);
+        string expectedCopiedText = SpreadsheetClipboardText.Serialize(
+        [
+            [copyRows[0].GetCell(materialName.FieldId)!.EditorText, copyRows[0].GetCell(materialType.FieldId)!.EditorText],
+            [copyRows[1].GetCell(materialName.FieldId)!.EditorText, copyRows[1].GetCell(materialType.FieldId)!.EditorText],
+        ]);
+        if (!string.Equals(copiedText, expectedCopiedText, StringComparison.Ordinal) ||
+            copiedText.StartsWith("Имя", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Ctrl+C должен помещать в буфер прямоугольные значения без лишней строки заголовков.");
+        }
+
+        RecordRowViewModel[] pasteRows = [materials.Records[2], materials.Records[3]];
+        string[] originalPasteValues =
+        [
+            pasteRows[0].GetCell(materialName.FieldId)!.EditorText,
+            pasteRows[0].GetCell(materialType.FieldId)!.EditorText,
+            pasteRows[1].GetCell(materialName.FieldId)!.EditorText,
+            pasteRows[1].GetCell(materialType.FieldId)!.EditorText,
+        ];
+        IReadOnlyList<IReadOnlyList<string>> externalExcelValues =
+        [
+            ["clipboard material alpha", "ClipboardTypeA"],
+            ["clipboard material beta", "ClipboardTypeB"],
+        ];
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(pasteRows[0], materialNameGridColumn));
+        recordsGrid.CurrentCell = new DataGridCellInfo(pasteRows[0], materialNameGridColumn);
+        if (!ApplicationCommands.Paste.CanExecute(null, recordsGrid))
+        {
+            throw new InvalidOperationException("Редактируемая клетка и табличный буфер обязаны разрешать Ctrl+V.");
+        }
+
+        if (!window.TryBuildPasteCells(externalExcelValues, out IReadOnlyList<SpreadsheetPasteCell> pasteCells, out string? pasteError) ||
+            !viewModel.TryPasteSpreadsheetCells(pasteCells, out int pastedCellCount, out pasteError) ||
+            pastedCellCount != 4)
+        {
+            throw new InvalidOperationException($"Табличная вставка не подготовлена: {pasteError}");
+        }
+
+        if (viewModel.ChangeCount != 4 ||
+            pasteRows[0].GetCell(materialName.FieldId)!.EditorText != externalExcelValues[0][0] ||
+            pasteRows[0].GetCell(materialType.FieldId)!.EditorText != externalExcelValues[0][1] ||
+            pasteRows[1].GetCell(materialName.FieldId)!.EditorText != externalExcelValues[1][0] ||
+            pasteRows[1].GetCell(materialType.FieldId)!.EditorText != externalExcelValues[1][1] ||
+            !viewModel.UndoCommand.CanExecute(null))
+        {
+            throw new InvalidOperationException(
+                $"Ctrl+V из Excel должен изменить точный прямоугольник и создать одну пакетную Undo-операцию. " +
+                $"changes={viewModel.ChangeCount}; values=" +
+                $"[{pasteRows[0].GetCell(materialName.FieldId)!.EditorText}] " +
+                $"[{pasteRows[0].GetCell(materialType.FieldId)!.EditorText}] " +
+                $"[{pasteRows[1].GetCell(materialName.FieldId)!.EditorText}] " +
+                $"[{pasteRows[1].GetCell(materialType.FieldId)!.EditorText}]; " +
+                $"notification={viewModel.NotificationMessage}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        string[] restoredPasteValues =
+        [
+            pasteRows[0].GetCell(materialName.FieldId)!.EditorText,
+            pasteRows[0].GetCell(materialType.FieldId)!.EditorText,
+            pasteRows[1].GetCell(materialName.FieldId)!.EditorText,
+            pasteRows[1].GetCell(materialType.FieldId)!.EditorText,
+        ];
+        if (!restoredPasteValues.SequenceEqual(originalPasteValues, StringComparer.Ordinal) ||
+            viewModel.ChangeCount != 0 ||
+            viewModel.UndoCommand.CanExecute(null))
+        {
+            throw new InvalidOperationException(
+                "Один Ctrl+Z должен полностью отменять прямоугольную вставку из Excel.");
+        }
+
+        recordsGrid.SelectedCells.Clear();
+        foreach (RecordRowViewModel pasteRow in pasteRows)
+        {
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(pasteRow, materialTypeGridColumn));
+        }
+
+        recordsGrid.CurrentCell = new DataGridCellInfo(pasteRows[0], materialTypeGridColumn);
+        IReadOnlyList<IReadOnlyList<string>> fillMatrix = [["FilledFromOneCell"]];
+        if (!window.TryBuildPasteCells(fillMatrix, out IReadOnlyList<SpreadsheetPasteCell> fillCells, out string? fillError) ||
+            fillCells.Count != 2 ||
+            !viewModel.TryPasteSpreadsheetCells(fillCells, out int filledCellCount, out fillError) ||
+            filledCellCount != 2 ||
+            pasteRows.Any(row => row.GetCell(materialType.FieldId)!.EditorText != "FilledFromOneCell"))
+        {
+            throw new InvalidOperationException(
+                $"Одна скопированная клетка должна заполнить весь выбранный диапазон: {fillError}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        if (pasteRows[0].GetCell(materialType.FieldId)!.EditorText != originalPasteValues[1] ||
+            pasteRows[1].GetCell(materialType.FieldId)!.EditorText != originalPasteValues[3] ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Один Ctrl+Z должен отменять заполнение диапазона одной скопированной клеткой.");
+        }
+
+        SpreadsheetColumnViewModel materialId = materials.Columns.Single(column => column.Title == "ID");
+        SpreadsheetColumnViewModel materialPrice = materials.Columns.Single(column => column.Title == "Цена");
+        DataGridColumn materialIdGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, materialId));
+        string originalId = pasteRows[0].GetCell(materialId.FieldId)!.EditorText;
+        string originalPrice = pasteRows[0].GetCell(materialPrice.FieldId)!.EditorText;
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(pasteRows[0], materialIdGridColumn));
+        recordsGrid.CurrentCell = new DataGridCellInfo(pasteRows[0], materialIdGridColumn);
+        IReadOnlyList<IReadOnlyList<string>> invalidMatrix = SpreadsheetClipboardText.Parse("49\tне число");
+        if (!window.TryBuildPasteCells(invalidMatrix, out IReadOnlyList<SpreadsheetPasteCell> invalidCells, out string? invalidError) ||
+            viewModel.TryPasteSpreadsheetCells(invalidCells, out _, out invalidError))
+        {
+            throw new InvalidOperationException(
+                $"Некорректный табличный диапазон должен быть принят маршрутизатором и отклонён моделью: {invalidError}");
+        }
+
+        if (pasteRows[0].GetCell(materialId.FieldId)!.EditorText != originalId ||
+            pasteRows[0].GetCell(materialPrice.FieldId)!.EditorText != originalPrice ||
+            viewModel.ChangeCount != 0 ||
+            !viewModel.NotificationIsError)
+        {
+            throw new InvalidOperationException(
+                "Ошибка одной клетки должна отменять всю вставку без частично изменённых значений.");
+        }
+
+        viewModel.DismissNotificationCommand.Execute(null);
 
         foreach (var expectedCell in new[] { (Title: "Колющий", Value: "1.14"), (Title: "Магазин 1", Value: "1") })
         {
