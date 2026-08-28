@@ -12,6 +12,8 @@ internal interface IDatabaseWorkspaceService
 
     RecordRowViewModel AppendRecordClone(DatabaseTableViewModel table, RecordRowViewModel template);
 
+    void RefreshRelatedTexts(RecordRowViewModel record);
+
     void RemoveAddedRecord(RecordRowViewModel record);
 
     void RestoreAddedRecord(RecordRowViewModel record);

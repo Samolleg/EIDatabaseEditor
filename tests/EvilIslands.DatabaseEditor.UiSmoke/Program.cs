@@ -304,6 +304,17 @@ internal static class Program
                 throw new InvalidOperationException("Материал должен связываться с MATERIAL и MATSHORT в texts.res.");
             }
 
+            LocalizationEntryViewModel primaryMaterialText = material.RelatedTexts.Single(text =>
+                text.Prefix.Equals("MATERIAL", StringComparison.OrdinalIgnoreCase));
+            if (!material.CanEditPrimaryLocalization ||
+                material.LocalizationKeyText != primaryMaterialText.ResourceName ||
+                material.LocalizationTitle != primaryMaterialText.Title ||
+                material.LocalizationDescription != primaryMaterialText.Description)
+            {
+                throw new InvalidOperationException(
+                    "Основная таблица материалов должна показывать редактируемые поля MATERIAL из texts.res в той же строке.");
+            }
+
             LocalizationEntryViewModel textProbe = material.RelatedTexts.First(text => !text.IsNew);
             string originalTitle = textProbe.Title;
             textProbe.Title = originalTitle + " тест";
@@ -351,11 +362,54 @@ internal static class Program
         }
 
         viewModel.SelectTableCommand.Execute(prototypes);
+        if (viewModel.HasTextsDocument)
+        {
+            RecordRowViewModel linkedUnit = prototypes.Records.FirstOrDefault(record =>
+                record.CanEditPrimaryLocalization &&
+                record.LocalizationKeyText.StartsWith("UNIT ", StringComparison.OrdinalIgnoreCase))
+                ?? throw new InvalidOperationException(
+                    "Хотя бы один прототип юнита должен связываться с UNIT из texts.res.");
+            if (string.IsNullOrWhiteSpace(linkedUnit.LocalizationTitle))
+            {
+                throw new InvalidOperationException(
+                    "Связанный UNIT обязан показывать русское название прямо в основной строке database.res.");
+            }
+
+            string linkedTitle = linkedUnit.LocalizationTitle;
+            RecordFieldViewModel linkedName = linkedUnit.GetCell(0)
+                ?? throw new InvalidOperationException("У прототипа юнита отсутствует поле имени.");
+            linkedName.EditorText = linkedUnit.DisplayName + " Missing Link";
+            if (linkedUnit.CanEditPrimaryLocalization ||
+                !linkedUnit.LocalizationKeyText.Contains("нет ресурса", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "После изменения технического имени связь с UNIT должна немедленно пересчитываться.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (!linkedUnit.CanEditPrimaryLocalization ||
+                linkedUnit.LocalizationTitle != linkedTitle ||
+                viewModel.ChangeCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Undo имени прототипа должен восстановить связанную русскую строку texts.res.");
+            }
+
+            RecordRowViewModel unlinkedHero = prototypes.Records.First(record =>
+                record.DisplayName.Equals("Human Hero Hadagan5", StringComparison.OrdinalIgnoreCase));
+            if (unlinkedHero.CanEditPrimaryLocalization ||
+                !unlinkedHero.LocalizationKeyText.Contains("нет ресурса", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Для технического прототипа без UNIT основная строка должна явно показывать ожидаемый отсутствующий ключ.");
+            }
+        }
+
         if (prototypes.Columns.Count <= prototypes.Records[0].FieldCount ||
-            records.Sum(record => record.MaterializedFieldCount) != 0)
+            records.Sum(record => record.MaterializedFieldCount) > 1)
         {
             throw new InvalidOperationException(
-                "Построение столбцов должно использовать метаданные полей и не создавать редакторы клеток.");
+                "Построение столбцов должно использовать метаданные полей и не создавать редакторы клеток пачками.");
         }
 
         window.DataContext = viewModel;
@@ -381,8 +435,8 @@ internal static class Program
             _ => true,
         });
         if (window.FindName("RecordsGrid") is not DataGrid recordsGrid ||
-            recordsGrid.Columns.Count != readablePrototypeColumnCount + 2 ||
-            recordsGrid.FrozenColumnCount != 3)
+            recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 5 : 2) ||
+            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 5 : 3))
         {
             throw new InvalidOperationException(
                 "DataGrid должен по умолчанию показать понятные значения без исходных raw-дубликатов и заморозить начало строки.");
@@ -409,7 +463,7 @@ internal static class Program
         if (!viewModel.ShowAllColumns ||
             viewModel.ColumnModeButtonText != "Понятные поля" ||
             viewModel.VisibleSpreadsheetColumns.Count != prototypes.Columns.Count ||
-            recordsGrid.Columns.Count != prototypes.Columns.Count + 2)
+            recordsGrid.Columns.Count != prototypes.Columns.Count + (viewModel.HasTextsDocument ? 5 : 2))
         {
             throw new InvalidOperationException(
                 "Режим технических полей должен восстановить все физические столбцы и расшифровки.");
@@ -418,7 +472,7 @@ internal static class Program
         viewModel.ToggleColumnModeCommand.Execute(null);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (viewModel.ShowAllColumns ||
-            recordsGrid.Columns.Count != readablePrototypeColumnCount + 2 ||
+            recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 5 : 2) ||
             viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex"))
         {
             throw new InvalidOperationException(
@@ -645,7 +699,8 @@ internal static class Program
                 column.Kind == "RawHex" || column.Title.EndsWith(" · raw", StringComparison.Ordinal)) ||
             !viewModel.VisibleSpreadsheetColumns.Any(column =>
                 column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue) ||
-            recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count + 2)
+            recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
+                (viewModel.HasTextsDocument ? 5 : 2))
         {
             throw new InvalidOperationException(
                 "acks.db/Ответы и команды должен по умолчанию показывать File/параметры без соседних raw-hex столбцов.");
@@ -713,8 +768,9 @@ internal static class Program
             "Колющий", "Рубящий", "Дробящий", "Термический", "Химический", "Электрический", "Общий",
             "Маска травм", "Магазин 1", "Магазин 2", "Магазин 3", "Магазин 4", "Магазин 5",
         ];
-        if (recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count + 2 ||
-            recordsGrid.FrozenColumnCount != 3 ||
+        if (recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
+                (viewModel.HasTextsDocument ? 5 : 2) ||
+            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 5 : 3) ||
             !viewModel.VisibleSpreadsheetColumns.Select(column => column.Title)
                 .SequenceEqual(readableMaterialHeaders, StringComparer.Ordinal))
         {
@@ -753,21 +809,23 @@ internal static class Program
                 "Профиль компактности должен различать имя, дробные значения и битовые колонки.");
         }
 
-        SpreadsheetColumnViewModel materialName = materials.Columns.Single(column => column.IsNameField);
+        // The localization columns intentionally follow the database name column. Use two
+        // adjacent physical database fields to verify rectangular Excel copy/paste semantics.
         SpreadsheetColumnViewModel materialType = materials.Columns.Single(column => column.Title == "Тип");
-        DataGridColumn materialNameGridColumn = recordsGrid.Columns.Single(column =>
-            ReferenceEquals(column.Header, materialName));
+        SpreadsheetColumnViewModel materialCode = materials.Columns.Single(column => column.Title == "Код");
         DataGridColumn materialTypeGridColumn = recordsGrid.Columns.Single(column =>
             ReferenceEquals(column.Header, materialType));
+        DataGridColumn materialCodeGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, materialCode));
         RecordRowViewModel[] copyRows = [materials.Records[0], materials.Records[1]];
         recordsGrid.SelectedCells.Clear();
         foreach (RecordRowViewModel copyRow in copyRows)
         {
-            recordsGrid.SelectedCells.Add(new DataGridCellInfo(copyRow, materialNameGridColumn));
             recordsGrid.SelectedCells.Add(new DataGridCellInfo(copyRow, materialTypeGridColumn));
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(copyRow, materialCodeGridColumn));
         }
 
-        recordsGrid.CurrentCell = new DataGridCellInfo(copyRows[0], materialNameGridColumn);
+        recordsGrid.CurrentCell = new DataGridCellInfo(copyRows[0], materialTypeGridColumn);
         if (!ApplicationCommands.Copy.CanExecute(null, recordsGrid))
         {
             throw new InvalidOperationException("Выбранный диапазон обязан разрешать Ctrl+C.");
@@ -781,8 +839,8 @@ internal static class Program
         string copiedText = SpreadsheetClipboardText.Serialize(copiedMatrix);
         string expectedCopiedText = SpreadsheetClipboardText.Serialize(
         [
-            [copyRows[0].GetCell(materialName.FieldId)!.EditorText, copyRows[0].GetCell(materialType.FieldId)!.EditorText],
-            [copyRows[1].GetCell(materialName.FieldId)!.EditorText, copyRows[1].GetCell(materialType.FieldId)!.EditorText],
+            [copyRows[0].GetCell(materialType.FieldId)!.EditorText, copyRows[0].GetCell(materialCode.FieldId)!.EditorText],
+            [copyRows[1].GetCell(materialType.FieldId)!.EditorText, copyRows[1].GetCell(materialCode.FieldId)!.EditorText],
         ]);
         if (!string.Equals(copiedText, expectedCopiedText, StringComparison.Ordinal) ||
             copiedText.StartsWith("Имя", StringComparison.OrdinalIgnoreCase))
@@ -794,10 +852,10 @@ internal static class Program
         RecordRowViewModel[] pasteRows = [materials.Records[2], materials.Records[3]];
         string[] originalPasteValues =
         [
-            pasteRows[0].GetCell(materialName.FieldId)!.EditorText,
             pasteRows[0].GetCell(materialType.FieldId)!.EditorText,
-            pasteRows[1].GetCell(materialName.FieldId)!.EditorText,
+            pasteRows[0].GetCell(materialCode.FieldId)!.EditorText,
             pasteRows[1].GetCell(materialType.FieldId)!.EditorText,
+            pasteRows[1].GetCell(materialCode.FieldId)!.EditorText,
         ];
         IReadOnlyList<IReadOnlyList<string>> externalExcelValues =
         [
@@ -805,8 +863,8 @@ internal static class Program
             ["clipboard material beta", "ClipboardTypeB"],
         ];
         recordsGrid.SelectedCells.Clear();
-        recordsGrid.SelectedCells.Add(new DataGridCellInfo(pasteRows[0], materialNameGridColumn));
-        recordsGrid.CurrentCell = new DataGridCellInfo(pasteRows[0], materialNameGridColumn);
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(pasteRows[0], materialTypeGridColumn));
+        recordsGrid.CurrentCell = new DataGridCellInfo(pasteRows[0], materialTypeGridColumn);
         if (!ApplicationCommands.Paste.CanExecute(null, recordsGrid))
         {
             throw new InvalidOperationException("Редактируемая клетка и табличный буфер обязаны разрешать Ctrl+V.");
@@ -820,29 +878,29 @@ internal static class Program
         }
 
         if (viewModel.ChangeCount != 4 ||
-            pasteRows[0].GetCell(materialName.FieldId)!.EditorText != externalExcelValues[0][0] ||
-            pasteRows[0].GetCell(materialType.FieldId)!.EditorText != externalExcelValues[0][1] ||
-            pasteRows[1].GetCell(materialName.FieldId)!.EditorText != externalExcelValues[1][0] ||
-            pasteRows[1].GetCell(materialType.FieldId)!.EditorText != externalExcelValues[1][1] ||
+            pasteRows[0].GetCell(materialType.FieldId)!.EditorText != externalExcelValues[0][0] ||
+            pasteRows[0].GetCell(materialCode.FieldId)!.EditorText != externalExcelValues[0][1] ||
+            pasteRows[1].GetCell(materialType.FieldId)!.EditorText != externalExcelValues[1][0] ||
+            pasteRows[1].GetCell(materialCode.FieldId)!.EditorText != externalExcelValues[1][1] ||
             !viewModel.UndoCommand.CanExecute(null))
         {
             throw new InvalidOperationException(
                 $"Ctrl+V из Excel должен изменить точный прямоугольник и создать одну пакетную Undo-операцию. " +
                 $"changes={viewModel.ChangeCount}; values=" +
-                $"[{pasteRows[0].GetCell(materialName.FieldId)!.EditorText}] " +
                 $"[{pasteRows[0].GetCell(materialType.FieldId)!.EditorText}] " +
-                $"[{pasteRows[1].GetCell(materialName.FieldId)!.EditorText}] " +
+                $"[{pasteRows[0].GetCell(materialCode.FieldId)!.EditorText}] " +
                 $"[{pasteRows[1].GetCell(materialType.FieldId)!.EditorText}]; " +
+                $"[{pasteRows[1].GetCell(materialCode.FieldId)!.EditorText}]; " +
                 $"notification={viewModel.NotificationMessage}");
         }
 
         viewModel.UndoCommand.Execute(null);
         string[] restoredPasteValues =
         [
-            pasteRows[0].GetCell(materialName.FieldId)!.EditorText,
             pasteRows[0].GetCell(materialType.FieldId)!.EditorText,
-            pasteRows[1].GetCell(materialName.FieldId)!.EditorText,
+            pasteRows[0].GetCell(materialCode.FieldId)!.EditorText,
             pasteRows[1].GetCell(materialType.FieldId)!.EditorText,
+            pasteRows[1].GetCell(materialCode.FieldId)!.EditorText,
         ];
         if (!restoredPasteValues.SequenceEqual(originalPasteValues, StringComparer.Ordinal) ||
             viewModel.ChangeCount != 0 ||
@@ -871,8 +929,8 @@ internal static class Program
         }
 
         viewModel.UndoCommand.Execute(null);
-        if (pasteRows[0].GetCell(materialType.FieldId)!.EditorText != originalPasteValues[1] ||
-            pasteRows[1].GetCell(materialType.FieldId)!.EditorText != originalPasteValues[3] ||
+        if (pasteRows[0].GetCell(materialType.FieldId)!.EditorText != originalPasteValues[0] ||
+            pasteRows[1].GetCell(materialType.FieldId)!.EditorText != originalPasteValues[2] ||
             viewModel.ChangeCount != 0)
         {
             throw new InvalidOperationException(
@@ -907,12 +965,21 @@ internal static class Program
 
         viewModel.DismissNotificationCommand.Execute(null);
 
+        // Inspect the concrete cell template after the virtualization behavior itself was
+        // already verified above. WPF can otherwise keep a far horizontal column unrealized
+        // when five leading database/text columns are frozen.
+        recordsGrid.EnableColumnVirtualization = false;
+        recordsGrid.UpdateLayout();
         foreach (var expectedCell in new[] { (Title: "Колющий", Value: "1.14"), (Title: "Магазин 1", Value: "1") })
         {
             DataGridColumn projectedColumn = recordsGrid.Columns.Single(column =>
                 column.Header is SpreadsheetColumnViewModel descriptor && descriptor.Title == expectedCell.Title);
             recordsGrid.SelectedItem = thin;
             recordsGrid.CurrentCell = new DataGridCellInfo(thin, projectedColumn);
+            recordsGrid.ScrollIntoView(thin);
+            recordsGrid.ScrollIntoView(thin, projectedColumn);
+            recordsGrid.UpdateLayout();
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
             recordsGrid.ScrollIntoView(thin, projectedColumn);
             recordsGrid.UpdateLayout();
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
@@ -930,6 +997,7 @@ internal static class Program
                     $"Компактная клетка {expectedCell.Title} должна раскрывать полное значение в tooltip.");
             }
         }
+        recordsGrid.EnableColumnVirtualization = true;
 
         DataGridColumn firstMaterialColumn = recordsGrid.Columns.Single(column =>
             column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
@@ -979,6 +1047,18 @@ internal static class Program
 
         if (!string.IsNullOrWhiteSpace(screenshotPath))
         {
+            if (viewModel.HasTextsDocument)
+            {
+                viewModel.SelectTableCommand.Execute(prototypes);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                RecordRowViewModel linkedUnit = prototypes.Records.First(record =>
+                    record.CanEditPrimaryLocalization &&
+                    record.LocalizationKeyText.StartsWith("UNIT ", StringComparison.OrdinalIgnoreCase));
+                viewModel.SelectedRecord = linkedUnit;
+                recordsGrid.SelectedItem = linkedUnit;
+                recordsGrid.ScrollIntoView(linkedUnit);
+            }
+
             window.UpdateLayout();
             var bitmap = new RenderTargetBitmap(
                 Math.Max(1, (int)Math.Ceiling(window.ActualWidth)),
@@ -1253,6 +1333,10 @@ internal static class Program
 
         public RecordRowViewModel AppendRecordClone(DatabaseTableViewModel table, RecordRowViewModel template) =>
             throw new NotSupportedException();
+
+        public void RefreshRelatedTexts(RecordRowViewModel record)
+        {
+        }
 
         public void RemoveAddedRecord(RecordRowViewModel record) => throw new NotSupportedException();
 

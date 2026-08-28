@@ -128,7 +128,49 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         }
 
         DatabaseRecord record = RequireDocument().AppendRecordClone(template.CoreRecord);
-        return new RecordRowViewModel(record, table.Key, table.Title, table.IsEditable);
+        var viewModel = new RecordRowViewModel(record, table.Key, table.Title, table.IsEditable);
+        RefreshRelatedTexts(viewModel);
+        return viewModel;
+    }
+
+    public void RefreshRelatedTexts(RecordRowViewModel record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        foreach (LocalizationEntryViewModel previous in record.RelatedTexts)
+        {
+            if (_textOwners.TryGetValue(previous, out List<RecordRowViewModel>? owners))
+            {
+                owners.Remove(record);
+            }
+        }
+
+        if (_textsDocument is null)
+        {
+            record.SetRelatedTexts([]);
+            return;
+        }
+
+        string[] expectedKeys = BuildExpectedTextKeys(record, _mappedDatabases)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var related = new List<LocalizationEntryViewModel>();
+        foreach (string key in expectedKeys)
+        {
+            if (_textsDocument.TryGetResource(key, out TextResource? resource) && resource is not null)
+            {
+                related.Add(GetOrCreateTextViewModel(resource));
+            }
+        }
+
+        LocalizationEntryViewModel[] distinct = related
+            .Distinct()
+            .OrderBy(item => item.ResourceName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        record.SetRelatedTexts(distinct, expectedKeys);
+        foreach (LocalizationEntryViewModel entry in distinct)
+        {
+            AddTextOwner(entry, record);
+        }
     }
 
     public void RemoveAddedRecord(RecordRowViewModel record)
@@ -313,10 +355,11 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             foreach (RecordRowViewModel record in table.Records)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                string[] exactKeys = BuildExactTextKeys(record).ToArray();
-                string[] prefixes = BuildTextPrefixes(record).ToArray();
+                string[] expectedKeys = BuildExpectedTextKeys(record, databases)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 var related = new List<LocalizationEntryViewModel>();
-                foreach (string key in exactKeys)
+                foreach (string key in expectedKeys)
                 {
                     if (byName.TryGetValue(key, out LocalizationEntryViewModel? item))
                     {
@@ -324,17 +367,11 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                     }
                 }
 
-                if (prefixes.Length > 0)
-                {
-                    related.AddRange(texts.Where(item => prefixes.Any(prefix =>
-                        item.ResourceName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))));
-                }
-
                 LocalizationEntryViewModel[] distinct = related
                     .Distinct()
                     .OrderBy(item => item.ResourceName, StringComparer.OrdinalIgnoreCase)
                     .ToArray();
-                record.SetRelatedTexts(distinct);
+                record.SetRelatedTexts(distinct, expectedKeys);
                 foreach (LocalizationEntryViewModel item in distinct)
                 {
                     AddTextOwner(item, record);
@@ -357,7 +394,9 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         }
     }
 
-    private IEnumerable<string> BuildExpectedTextKeys(RecordRowViewModel record)
+    private IEnumerable<string> BuildExpectedTextKeys(
+        RecordRowViewModel record,
+        IReadOnlyList<DatabaseGroupViewModel>? databases = null)
     {
         string[] exact = BuildExactTextKeys(record).ToArray();
         if (exact.Length > 0 && record.TableKey is not (
@@ -380,7 +419,8 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         }
 
         string materialType = GetFieldText(record, 3);
-        DatabaseTableViewModel? materials = _mappedDatabases
+        IReadOnlyList<DatabaseGroupViewModel> databaseSource = databases ?? _mappedDatabases;
+        DatabaseTableViewModel? materials = databaseSource
             .SelectMany(group => group.Tables)
             .FirstOrDefault(table => table.Key == "items.materials");
         string[] materialNames = materials?.Records
@@ -421,23 +461,6 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             "perks.skills" or "perks.perks" => [$"PERK {name}"],
             "quests.quests" => [$"QUEST {name}"],
             "quests.briefings" => [$"BRIEFING {name}"],
-            _ => [],
-        };
-    }
-
-    private static IEnumerable<string> BuildTextPrefixes(RecordRowViewModel record)
-    {
-        string name = NormalizeKeyPart(GetFieldText(record, 0));
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return [];
-        }
-
-        return record.TableKey switch
-        {
-            "items.weapons" => [$"WEAPON {name} "],
-            "items.armors" => [$"ARMOR {name} "],
-            "items.quick_items" => [$"QITEM {name} "],
             _ => [],
         };
     }

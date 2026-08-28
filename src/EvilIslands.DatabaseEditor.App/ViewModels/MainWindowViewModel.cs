@@ -372,7 +372,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public string SpreadsheetColumnCountText => SelectedTable is null
         ? "0 столбцов"
-        : $"{VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} столбцов";
+        : $"{VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} полей" +
+          (HasTextsDocument ? " + 3 столбца texts.res" : string.Empty);
 
     public string ColumnModeButtonText => ShowAllColumns ? "Понятные поля" : "Технические поля";
 
@@ -1061,7 +1062,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         _undo.Push(new TextEditFrame(entry, eventArgs.BeforeState, eventArgs.AfterState));
         _redo.Clear();
         RefreshLocalizationChanges(entry);
-        SelectedRecord?.RefreshState();
+        RefreshLocalizationOwners(entry);
         RecordsView.Refresh();
         RefreshTextsFilter();
         StatusText = $"Изменён {entry.ResourceName} · {eventArgs.FieldName}";
@@ -1319,7 +1320,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 TextResourceState textState = undo ? textFrame.BeforeState : textFrame.AfterState;
                 textFrame.Entry.RestoreState(textState);
                 RefreshLocalizationChanges(textFrame.Entry);
-                SelectedRecord?.RefreshState();
+                RefreshLocalizationOwners(textFrame.Entry);
                 RecordsView.Refresh();
                 status = undo
                     ? $"Отменено: {textFrame.Entry.ResourceName}"
@@ -1383,6 +1384,17 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RefreshAllCounts();
         NotifyWorkspaceProperties();
         OnPropertyChanged(nameof(HasChanges));
+    }
+
+    private void RefreshLocalizationOwners(LocalizationEntryViewModel entry)
+    {
+        foreach (RecordRowViewModel record in Databases
+                     .SelectMany(database => database.Tables)
+                     .SelectMany(table => table.Records)
+                     .Where(record => record.RelatedTexts.Contains(entry)))
+        {
+            record.RefreshLocalizationState();
+        }
     }
 
     private void SetAddedRecordPresence(
@@ -1589,6 +1601,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         foreach (RecordRowViewModel record in fields.Select(item => item.Record).Distinct())
         {
             record.RefreshState();
+            _service.RefreshRelatedTexts(record);
             if (record.IsAdded)
             {
                 string key = GetRecordInsertionChangeKey(record);

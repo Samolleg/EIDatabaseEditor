@@ -560,6 +560,8 @@ internal sealed class RecordRowViewModel : ObservableObject
     private int _diagnosticCount;
     private bool _hasBlockingDiagnostics;
     private IReadOnlyList<LocalizationEntryViewModel> _relatedTexts = [];
+    private IReadOnlyList<string> _expectedTextKeys = [];
+    private LocalizationEntryViewModel? _primaryText;
 
     public RecordRowViewModel(
         DatabaseRecord record,
@@ -621,6 +623,48 @@ internal sealed class RecordRowViewModel : ObservableObject
     public bool HasRelatedTexts => RelatedTexts.Count > 0;
 
     public int RelatedTextCount => RelatedTexts.Count;
+
+    public bool CanEditPrimaryLocalization => _primaryText is not null;
+
+    public string LocalizationKeyText => _primaryText?.ResourceName ?? (RelatedTexts.Count, ExpectedTextKeys.Count) switch
+    {
+        (> 1, _) => $"{RelatedTexts.Count:N0} вариантов texts.res",
+        (0, 1) => $"{ExpectedTextKeys[0]} — нет ресурса",
+        (0, > 1) => $"0 из {ExpectedTextKeys.Count:N0} вариантов",
+        _ => "—",
+    };
+
+    public string LocalizationTitle
+    {
+        get => _primaryText?.Title ?? (RelatedTexts.Count > 1 ? $"{RelatedTexts.Count:N0} вариантов — выберите строку" : string.Empty);
+        set
+        {
+            if (_primaryText is null)
+            {
+                return;
+            }
+
+            _primaryText.Title = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string LocalizationDescription
+    {
+        get => _primaryText?.Description ?? string.Empty;
+        set
+        {
+            if (_primaryText is null)
+            {
+                return;
+            }
+
+            _primaryText.Description = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public IReadOnlyList<string> ExpectedTextKeys => _expectedTextKeys;
 
     public string Path { get; }
 
@@ -716,11 +760,54 @@ internal sealed class RecordRowViewModel : ObservableObject
 
     internal DatabaseRecord CoreRecord => _record;
 
-    internal void SetRelatedTexts(IReadOnlyList<LocalizationEntryViewModel> texts)
+    internal void SetRelatedTexts(
+        IReadOnlyList<LocalizationEntryViewModel> texts,
+        IReadOnlyList<string>? expectedKeys = null)
     {
         RelatedTexts = texts;
+        if (expectedKeys is not null)
+        {
+            _expectedTextKeys = expectedKeys;
+        }
+
+        _primaryText = SelectPrimaryText(texts);
+        OnPropertyChanged(nameof(ExpectedTextKeys));
+        OnPropertyChanged(nameof(CanEditPrimaryLocalization));
+        OnPropertyChanged(nameof(LocalizationKeyText));
+        OnPropertyChanged(nameof(LocalizationTitle));
+        OnPropertyChanged(nameof(LocalizationDescription));
         SearchText = BuildSearchText();
         OnPropertyChanged(nameof(SearchText));
+    }
+
+    internal void RefreshLocalizationState()
+    {
+        OnPropertyChanged(nameof(LocalizationKeyText));
+        OnPropertyChanged(nameof(LocalizationTitle));
+        OnPropertyChanged(nameof(LocalizationDescription));
+        SearchText = BuildSearchText();
+        OnPropertyChanged(nameof(SearchText));
+    }
+
+    private LocalizationEntryViewModel? SelectPrimaryText(IReadOnlyList<LocalizationEntryViewModel> texts)
+    {
+        string? preferredPrefix = TableKey switch
+        {
+            "items.materials" => "MATERIAL",
+            "items.loot_items" => "LITEM",
+            _ => null,
+        };
+        if (preferredPrefix is not null)
+        {
+            LocalizationEntryViewModel? preferred = texts.FirstOrDefault(text =>
+                text.Prefix.Equals(preferredPrefix, StringComparison.OrdinalIgnoreCase));
+            if (preferred is not null)
+            {
+                return preferred;
+            }
+        }
+
+        return texts.Count == 1 ? texts[0] : null;
     }
 
     internal void SetDisplayIndex(int value)

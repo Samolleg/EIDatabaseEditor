@@ -25,6 +25,9 @@ public partial class MainWindow : Window
     private readonly MainWindowViewModel _viewModel;
     private readonly EditorPreferencesStore _preferences = new();
     private readonly Dictionary<DataGridColumn, SpreadsheetColumnViewModel> _spreadsheetColumns = [];
+    private DataGridColumn? _localizationKeyColumn;
+    private DataGridColumn? _localizationTitleColumn;
+    private DataGridColumn? _localizationDescriptionColumn;
     private MainWindowViewModel? _spreadsheetViewModel;
     private bool _allowClose;
     private bool _closePromptPending;
@@ -149,6 +152,9 @@ public partial class MainWindow : Window
         }
 
         _spreadsheetColumns.Clear();
+        _localizationKeyColumn = null;
+        _localizationTitleColumn = null;
+        _localizationDescriptionColumn = null;
         if (_spreadsheetViewModel?.SelectedTable is null)
         {
             RecordsGrid.FrozenColumnCount = Math.Min(fixedColumnCount, RecordsGrid.Columns.Count);
@@ -159,6 +165,8 @@ public partial class MainWindow : Window
         var headerStyle = (Style)FindResource("SpreadsheetColumnHeaderStyle");
         var elementStyle = (Style)FindResource("SpreadsheetCellText");
         var editingStyle = (Style)FindResource("SpreadsheetCellEditor");
+        int nameFieldId = _spreadsheetViewModel.SelectedTable.Records.FirstOrDefault()?.NameFieldId ?? -1;
+        var localizationColumnsAdded = false;
         foreach (var descriptor in _spreadsheetViewModel.VisibleSpreadsheetColumns)
         {
             var bindingPath = descriptor.Projection is null
@@ -192,10 +200,70 @@ public partial class MainWindow : Window
             column.CanUserSort = descriptor.IsSortable;
             RecordsGrid.Columns.Add(column);
             _spreadsheetColumns.Add(column, descriptor);
+            if (!localizationColumnsAdded &&
+                descriptor.Projection is null &&
+                descriptor.FieldId == nameFieldId &&
+                _spreadsheetViewModel.HasTextsDocument)
+            {
+                AddLocalizationColumns(elementStyle, editingStyle);
+                localizationColumnsAdded = true;
+            }
         }
 
-        RecordsGrid.FrozenColumnCount = Math.Min(3, RecordsGrid.Columns.Count);
+        if (!localizationColumnsAdded && _spreadsheetViewModel.HasTextsDocument)
+        {
+            AddLocalizationColumns(elementStyle, editingStyle);
+        }
+
+        RecordsGrid.FrozenColumnCount = Math.Min(
+            _localizationTitleColumn is null ? 3 : 5,
+            RecordsGrid.Columns.Count);
         UpdateSpreadsheetColumnReadOnlyStates();
+    }
+
+    private void AddLocalizationColumns(Style elementStyle, Style editingStyle)
+    {
+        _localizationKeyColumn = new DataGridTextColumn
+        {
+            Header = "Ключ texts.res",
+            Binding = new Binding(nameof(RecordRowViewModel.LocalizationKeyText)),
+            ElementStyle = elementStyle,
+            IsReadOnly = true,
+            Width = new DataGridLength(250),
+            MinWidth = 170,
+            MaxWidth = 420,
+        };
+        _localizationTitleColumn = new DataGridTextColumn
+        {
+            Header = "Название RU",
+            Binding = new Binding(nameof(RecordRowViewModel.LocalizationTitle))
+            {
+                Mode = BindingMode.TwoWay,
+                UpdateSourceTrigger = UpdateSourceTrigger.LostFocus,
+            },
+            ElementStyle = elementStyle,
+            EditingElementStyle = editingStyle,
+            Width = new DataGridLength(240),
+            MinWidth = 160,
+            MaxWidth = 520,
+        };
+        _localizationDescriptionColumn = new DataGridTextColumn
+        {
+            Header = "Описание RU",
+            Binding = new Binding(nameof(RecordRowViewModel.LocalizationDescription))
+            {
+                Mode = BindingMode.TwoWay,
+                UpdateSourceTrigger = UpdateSourceTrigger.LostFocus,
+            },
+            ElementStyle = elementStyle,
+            EditingElementStyle = editingStyle,
+            Width = new DataGridLength(320),
+            MinWidth = 220,
+            MaxWidth = 700,
+        };
+        RecordsGrid.Columns.Add(_localizationKeyColumn);
+        RecordsGrid.Columns.Add(_localizationTitleColumn);
+        RecordsGrid.Columns.Add(_localizationDescriptionColumn);
     }
 
     private Style CreateSpreadsheetCellStyle(SpreadsheetColumnViewModel descriptor)
@@ -262,10 +330,29 @@ public partial class MainWindow : Window
         {
             pair.Key.IsReadOnly = !canEdit || !pair.Value.IsEditable;
         }
+
+        if (_localizationTitleColumn is not null)
+        {
+            _localizationTitleColumn.IsReadOnly = !canEdit;
+        }
+
+        if (_localizationDescriptionColumn is not null)
+        {
+            _localizationDescriptionColumn.IsReadOnly = !canEdit;
+        }
     }
 
     private void RecordsGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e)
     {
+        if (e.Row.Item is RecordRowViewModel localizationRecord &&
+            (ReferenceEquals(e.Column, _localizationTitleColumn) ||
+             ReferenceEquals(e.Column, _localizationDescriptionColumn)))
+        {
+            e.Cancel = _spreadsheetViewModel is not { IsEditMode: true, IsBusy: false } ||
+                       !localizationRecord.CanEditPrimaryLocalization;
+            return;
+        }
+
         if (_spreadsheetViewModel is not { IsEditMode: true, IsBusy: false, IsCurrentTableEditable: true } ||
             e.Row.Item is not RecordRowViewModel record ||
             !_spreadsheetColumns.TryGetValue(e.Column, out var descriptor) ||
@@ -509,6 +596,21 @@ public partial class MainWindow : Window
             return descriptor.Projection is null
                 ? field.EditorText
                 : field.GetProjectedText(descriptor.Projection);
+        }
+
+        if (ReferenceEquals(column, _localizationKeyColumn))
+        {
+            return record.LocalizationKeyText;
+        }
+
+        if (ReferenceEquals(column, _localizationTitleColumn))
+        {
+            return record.LocalizationTitle;
+        }
+
+        if (ReferenceEquals(column, _localizationDescriptionColumn))
+        {
+            return record.LocalizationDescription;
         }
 
         return Equals(column.Header, "#")
