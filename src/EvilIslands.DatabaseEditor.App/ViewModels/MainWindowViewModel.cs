@@ -37,7 +37,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isOperationCancelable;
     private string _busyText = string.Empty;
     private bool _isEditMode;
-    private bool _showAllColumns = true;
+    private bool _showAllColumns;
     private int _filteredRecordCount;
     private string? _lastSavedPath;
     private bool _isApplyingSpreadsheetPaste;
@@ -296,48 +296,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         get
         {
-            if (SelectedTable is null || ShowAllColumns || SelectedTable.Columns.Count <= 12)
+            if (SelectedTable is null || ShowAllColumns)
             {
                 return SelectedTable?.Columns ?? [];
             }
 
-            var result = new List<SpreadsheetColumnViewModel>(12);
-            foreach (var column in SelectedTable.Columns)
-            {
-                if (column.IsNameField)
-                {
-                    result.Add(column);
-                }
-            }
-
-            foreach (var column in SelectedTable.Columns)
-            {
-                if (result.Count >= 12)
-                {
-                    break;
-                }
-
-                if (!column.IsNameField && column.IsPrimitive &&
-                    (column.IsEditable || column.Key.Contains("code", StringComparison.OrdinalIgnoreCase)))
-                {
-                    result.Add(column);
-                }
-            }
-
-            foreach (var column in SelectedTable.Columns)
-            {
-                if (result.Count >= 12)
-                {
-                    break;
-                }
-
-                if (!result.Contains(column))
-                {
-                    result.Add(column);
-                }
-            }
-
-            return result;
+            return BuildReadableColumns(SelectedTable.Columns);
         }
     }
 
@@ -362,7 +326,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ? "0 столбцов"
         : $"{VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} столбцов";
 
-    public string ColumnModeButtonText => ShowAllColumns ? "Основные столбцы" : "Все столбцы";
+    public string ColumnModeButtonText => ShowAllColumns ? "Понятные поля" : "Технические поля";
 
     public string SearchText
     {
@@ -726,15 +690,40 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void ToggleColumnMode()
     {
-        if (SelectedTable is null || SelectedTable.Columns.Count <= 12)
+        if (SelectedTable is null)
         {
             return;
         }
 
         ShowAllColumns = !ShowAllColumns;
         StatusText = ShowAllColumns
-            ? $"Показаны все поля таблицы: {SelectedTable.Columns.Count:N0} столбцов."
-            : $"Показаны основные поля: {VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} столбцов.";
+            ? $"Показаны технические исходные поля и их расшифровки: {SelectedTable.Columns.Count:N0} столбцов."
+            : $"Показаны понятные значения без дублирующих raw-полей: {VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} столбцов.";
+    }
+
+    private static IReadOnlyList<SpreadsheetColumnViewModel> BuildReadableColumns(
+        IReadOnlyList<SpreadsheetColumnViewModel> columns)
+    {
+        var fieldsWithSpecificProjections = columns
+            .Where(column => column.Projection is not null &&
+                             column.Projection.Kind != DatabaseFieldProjectionKind.DecodedValue)
+            .Select(column => column.FieldId)
+            .ToHashSet();
+        var fieldsWithDecodedProjection = columns
+            .Where(column => column.Projection?.Kind == DatabaseFieldProjectionKind.DecodedValue)
+            .Select(column => column.FieldId)
+            .ToHashSet();
+
+        return columns
+            .Where(column => column.Projection switch
+            {
+                null => !fieldsWithSpecificProjections.Contains(column.FieldId) &&
+                        !fieldsWithDecodedProjection.Contains(column.FieldId),
+                { Kind: DatabaseFieldProjectionKind.DecodedValue } =>
+                    !fieldsWithSpecificProjections.Contains(column.FieldId),
+                _ => true,
+            })
+            .ToArray();
     }
 
     private void Navigate(NavigationItemViewModel? item)
@@ -762,7 +751,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         ApplyTableEditMode(SelectedTable, false);
         SearchText = string.Empty;
-        ShowAllColumns = true;
+        ShowAllColumns = false;
         SelectedRecord = null;
         SelectedTable = table;
         CurrentSection = WorkspaceSection.Records;

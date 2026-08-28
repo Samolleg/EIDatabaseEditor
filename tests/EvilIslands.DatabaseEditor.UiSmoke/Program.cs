@@ -300,12 +300,38 @@ internal static class Program
         window.Show();
         window.UpdateLayout();
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+        HashSet<int> prototypeFieldsWithSpecificProjections = prototypes.Columns
+            .Where(column => column.Projection is not null &&
+                             column.Projection.Kind != EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue)
+            .Select(column => column.FieldId)
+            .ToHashSet();
+        HashSet<int> prototypeFieldsWithDecodedProjection = prototypes.Columns
+            .Where(column => column.Projection?.Kind ==
+                             EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue)
+            .Select(column => column.FieldId)
+            .ToHashSet();
+        int readablePrototypeColumnCount = prototypes.Columns.Count(column => column.Projection switch
+        {
+            null => !prototypeFieldsWithSpecificProjections.Contains(column.FieldId) &&
+                    !prototypeFieldsWithDecodedProjection.Contains(column.FieldId),
+            { Kind: EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue } =>
+                !prototypeFieldsWithSpecificProjections.Contains(column.FieldId),
+            _ => true,
+        });
         if (window.FindName("RecordsGrid") is not DataGrid recordsGrid ||
-            recordsGrid.Columns.Count != prototypes.Columns.Count + 2 ||
+            recordsGrid.Columns.Count != readablePrototypeColumnCount + 2 ||
             recordsGrid.FrozenColumnCount != 3)
         {
             throw new InvalidOperationException(
-                "DataGrid обязан создать отдельный столбец для каждого поля и заморозить начало строки.");
+                "DataGrid должен по умолчанию показать понятные значения без исходных raw-дубликатов и заморозить начало строки.");
+        }
+
+        if (viewModel.ShowAllColumns ||
+            viewModel.ColumnModeButtonText != "Технические поля" ||
+            viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex"))
+        {
+            throw new InvalidOperationException(
+                "Таблица должна открываться в понятном режиме без RawHex и предлагать отдельный переход к техническим полям.");
         }
 
         DataGridColumn raceGridColumn = recordsGrid.Columns.Single(column =>
@@ -318,18 +344,23 @@ internal static class Program
 
         viewModel.ToggleColumnModeCommand.Execute(null);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-        if (viewModel.VisibleSpreadsheetColumns.Count != 12 || recordsGrid.Columns.Count != 14)
+        if (!viewModel.ShowAllColumns ||
+            viewModel.ColumnModeButtonText != "Понятные поля" ||
+            viewModel.VisibleSpreadsheetColumns.Count != prototypes.Columns.Count ||
+            recordsGrid.Columns.Count != prototypes.Columns.Count + 2)
         {
             throw new InvalidOperationException(
-                "Режим основных полей должен оставить 12 содержательных и две служебные колонки.");
+                "Режим технических полей должен восстановить все физические столбцы и расшифровки.");
         }
 
         viewModel.ToggleColumnModeCommand.Execute(null);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-        if (recordsGrid.Columns.Count != prototypes.Columns.Count + 2)
+        if (viewModel.ShowAllColumns ||
+            recordsGrid.Columns.Count != readablePrototypeColumnCount + 2 ||
+            viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex"))
         {
             throw new InvalidOperationException(
-                "Повторное включение всех полей должно восстановить колонки без накопления дубликатов.");
+                "Возврат в понятный режим должен снова скрыть raw-дубликаты без накопления колонок.");
         }
 
         var materializedAfterRender = records.Sum(record => record.MaterializedFieldCount);
@@ -544,6 +575,29 @@ internal static class Program
             throw new InvalidOperationException("Вложенные реплики должны показывать имена файлов и параметры, а не raw Hex.");
         }
 
+        viewModel.SelectTableCommand.Execute(acks);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (viewModel.ShowAllColumns ||
+            viewModel.VisibleSpreadsheetColumns.Count >= acks.Columns.Count ||
+            viewModel.VisibleSpreadsheetColumns.Any(column =>
+                column.Kind == "RawHex" || column.Title.EndsWith(" · raw", StringComparison.Ordinal)) ||
+            !viewModel.VisibleSpreadsheetColumns.Any(column =>
+                column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue) ||
+            recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count + 2)
+        {
+            throw new InvalidOperationException(
+                "acks.db/Ответы и команды должен по умолчанию показывать File/параметры без соседних raw-hex столбцов.");
+        }
+
+        viewModel.ToggleColumnModeCommand.Execute(null);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (!viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex") ||
+            viewModel.VisibleSpreadsheetColumns.Count != acks.Columns.Count)
+        {
+            throw new InvalidOperationException(
+                "Технический режим acks.db должен по запросу вернуть исходные raw-редакторы без потери колонок.");
+        }
+
         var prints = tables.Single(table => table.Key == "prints.blood");
         if (prints.Columns.Count(column => column.Projection is null) != prints.Records[0].FieldCount ||
             prints.Columns.Where(column => column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.NestedField)
@@ -591,16 +645,25 @@ internal static class Program
 
         viewModel.SelectTableCommand.Execute(materials);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-        if (recordsGrid.Columns.Count != materials.Columns.Count + 2 || recordsGrid.FrozenColumnCount != 3)
+        string[] readableMaterialHeaders =
+        [
+            "Имя", "Тип", "Код", "ID", "Цена", "Вес", "Мана", "Слоты", "Прочность", "Навык", "Урон",
+            "Колющий", "Рубящий", "Дробящий", "Термический", "Химический", "Электрический", "Общий",
+            "Маска травм", "Магазин 1", "Магазин 2", "Магазин 3", "Магазин 4", "Магазин 5",
+        ];
+        if (recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count + 2 ||
+            recordsGrid.FrozenColumnCount != 3 ||
+            !viewModel.VisibleSpreadsheetColumns.Select(column => column.Title)
+                .SequenceEqual(readableMaterialHeaders, StringComparer.Ordinal))
         {
             throw new InvalidOperationException(
-                "DataGrid Материалов обязан создать все 26 содержательных столбцов без дубликатов.");
+                "DataGrid Материалов должен скрыть два агрегированных исходных поля и оставить их понятные коэффициенты и биты.");
         }
 
         var materialGridColumns = recordsGrid.Columns
             .Where(column => column.Header is SpreadsheetColumnViewModel)
             .ToArray();
-        double preferredMaterialWidth = materials.Columns.Sum(column => column.Layout.PreferredWidth);
+        double preferredMaterialWidth = viewModel.VisibleSpreadsheetColumns.Sum(column => column.Layout.PreferredWidth);
         if (preferredMaterialWidth >= 2200 ||
             materialGridColumns.Sum(column => column.Width.Value) >= 2200 ||
             materialGridColumns.Any(column =>

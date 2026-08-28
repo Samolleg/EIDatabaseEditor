@@ -646,6 +646,7 @@
                                         <Button Style="{StaticResource RoundedButton}"
                                                 Command="{Binding ToggleColumnModeCommand}"
                                                 Content="{Binding ColumnModeButtonText}"
+                                                ToolTip="Показать или скрыть исходные raw-поля. В понятном режиме вместо них выводятся отдельные значения и расшифровки."
                                                 Padding="11,6"
                                                 Margin="0,0,10,0" />
                                         <TextBlock Text="{Binding SpreadsheetColumnCountText}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,12,0" />
