@@ -454,14 +454,29 @@ internal static class Program
 
         var weapons = tables.Single(table => table.Key == "items.weapons");
         var armors = tables.Single(table => table.Key == "items.armors");
-        if (!weapons.Columns.Any(column => column.Title == "Science" && column.Kind == "Byte") ||
+        int[] editableWeaponFields = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 21, 23, 24, 25, 29, 30];
+        int[] protectedWeaponFields = [14, 22, 26, 27, 28];
+        int[] editableArmorFields = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 23, 24];
+        int[] protectedArmorFields = [14, 21, 22, 25, 26];
+        if (!weapons.IsEditable || !weapons.CanAppendRecords ||
+            !armors.IsEditable || !armors.CanAppendRecords ||
+            weapons.Columns.Where(column => editableWeaponFields.Contains(column.FieldId))
+                .Any(column => !column.IsEditable) ||
+            weapons.Columns.Where(column => protectedWeaponFields.Contains(column.FieldId))
+                .Any(column => column.IsEditable) ||
+            armors.Columns.Where(column => editableArmorFields.Contains(column.FieldId))
+                .Any(column => !column.IsEditable) ||
+            armors.Columns.Where(column => protectedArmorFields.Contains(column.FieldId))
+                .Any(column => column.IsEditable) ||
+            !weapons.Columns.Any(column => column.Title == "Science" && column.Kind == "Byte") ||
             !weapons.Columns.Any(column => column.Title == "Awareness" && column.Kind == "Byte") ||
             armors.Columns.Count(column => column.Projection?.Kind ==
                 EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.PackedField) != 18 ||
             armors.Columns.Count(column => column.Title.EndsWith("cripple mask", StringComparison.Ordinal)) != 2)
         {
             throw new InvalidOperationException(
-                "Известные raw-массивы оружия и смешанные структуры защиты доспехов должны раскрываться по native-layout.");
+                "Оружие и броня должны редактировать подтверждённые примитивы, разрешать клонирование строк, " +
+                "а сложные native-массивы оставлять раскрытыми только для чтения.");
         }
 
         var acks = tables.Single(table => table.Key == "acks.answers");

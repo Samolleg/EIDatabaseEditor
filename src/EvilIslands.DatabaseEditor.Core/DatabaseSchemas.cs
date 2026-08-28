@@ -42,8 +42,20 @@ internal static class DatabaseSchemas
                 Bit(2, "Магазин 3", "Shop 3"),
                 Bit(3, "Магазин 4", "Shop 4"),
                 Bit(4, "Магазин 5", "Shop 5"))),
-        ReadOnlySection(2, "items.weapons", "Оружие", 0),
-        ReadOnlySection(3, "items.armors", "Броня", 0),
+        Section(2, "items.weapons", "Оружие", 0,
+            (0, S, "Имя"), (1, S, "Тип"), (2, I, "ID типа"), (3, S, "Материал"),
+            (4, I, "Неизвестное 4"), (5, I, "Индекс текстуры"), (6, I, "Индекс текстуры 2"),
+            (7, F, "Цена"), (8, F, "Вес"), (9, F, "Размер"), (10, F, "Мана"),
+            (11, I, "Слоты"), (12, F, "Прочность"), (13, I, "Компоненты"),
+            (15, B, "Разбираемый"), (21, I, "Действия"), (23, F, "Дальность"),
+            (24, F, "Мин. урон"), (25, F, "Макс. урон"),
+            (29, F, "Модификатор атаки"), (30, F, "Модификатор защиты")),
+        Section(3, "items.armors", "Броня", 0,
+            (0, S, "Имя"), (1, S, "Тип"), (2, I, "ID типа"), (3, S, "Материал"),
+            (4, I, "Неизвестное 4"), (5, I, "Индекс текстуры"), (6, I, "Индекс текстуры 2"),
+            (7, F, "Цена"), (8, F, "Вес"), (9, F, "Размер"), (10, F, "Мана"),
+            (11, I, "Слоты"), (12, F, "Прочность"), (13, I, "Компоненты"),
+            (15, B, "Разбираемый"), (23, B, "Наносит раны"), (24, I, "Порядок надевания")),
         ReadOnlySection(4, "items.quick_items", "Быстрые предметы", 0),
         ReadOnlySection(5, "items.quest_items", "Квестовые предметы", 0),
         ReadOnlySection(6, "items.loot_items", "Лут", 0),
@@ -223,7 +235,7 @@ internal static class DatabaseSchemas
         byte identityFieldId = key is "spells.prototypes" or "spells.modifiers"
             ? (byte)1
             : nameFieldId;
-        bool canAppendRecords = key.Equals("items.materials", StringComparison.Ordinal) ||
+        bool canAppendRecords = key is "items.materials" or "items.weapons" or "items.armors" ||
                                 key.StartsWith("units.", StringComparison.Ordinal) ||
                                 key.StartsWith("spells.", StringComparison.Ordinal);
         return new SectionSchema(

@@ -327,6 +327,8 @@ internal static class Program
         HashSet<string> expectedEditableTables =
         [
             "items.materials",
+            "items.weapons",
+            "items.armors",
             "units.hit_locations",
             "units.races",
             "units.prototypes",
@@ -342,13 +344,13 @@ internal static class Program
                 .All(table => table.SupportState == DatabaseSupportState.Editable && table.CanAppendRecords) &&
             tables.Where(table => !expectedEditableTables.Contains(table.Key))
                 .All(table => table.SupportState == DatabaseSupportState.ReadOnly && !table.CanAppendRecords),
-            "Добавление строк разрешено ровно в 10 проверенных таблицах Materials/Units/Spells.");
+            "Добавление строк разрешено ровно в 12 проверенных таблицах Items/Units/Spells.");
         log.Assert(
             tables.Where(table => table.SupportState == DatabaseSupportState.ReadOnly)
                 .SelectMany(table => table.Records)
                 .SelectMany(record => record.Fields)
                 .All(field => !field.IsEditable),
-            "Все поля 16 read-only таблиц защищены от редактирования.");
+            "Все поля 14 read-only таблиц защищены от редактирования.");
 
         int boundaryRecordCount = boundaries.Sum(summary => summary.Records);
         log.Assert(
@@ -378,6 +380,18 @@ internal static class Program
         VerificationLog log)
     {
         AssertMaterialsSchema(RequireTable(tables, "items.materials"), baseline, log);
+        AssertEditableItemSchema(
+            RequireTable(tables, "items.weapons"),
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 21, 23, 24, 25, 29, 30],
+            [14, 22, 26, 27, 28],
+            "Оружие",
+            log);
+        AssertEditableItemSchema(
+            RequireTable(tables, "items.armors"),
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 23, 24],
+            [14, 21, 22, 25, 26],
+            "Броня",
+            log);
 
         DatabaseRecord hitLocation = RequireTable(tables, "units.hit_locations").Records[0];
         DatabaseRecord race = RequireTable(tables, "units.races").Records[0];
@@ -472,6 +486,23 @@ internal static class Program
                 requiredInteractiveReferences.OrderBy(value => value, StringComparer.Ordinal),
                 StringComparer.Ordinal),
             "Общий каталог ссылок содержит Base Race и три поля Prototype шаблонов магии без дублирования UI-правил.");
+    }
+
+    private static void AssertEditableItemSchema(
+        DatabaseTable table,
+        IReadOnlyCollection<int> editableFieldIds,
+        IReadOnlyCollection<int> protectedFieldIds,
+        string title,
+        VerificationLog log)
+    {
+        log.Assert(
+            table.SupportState == DatabaseSupportState.Editable && table.CanAppendRecords,
+            $"{title}: таблица разрешает редактирование и клонирование строк.");
+        log.Assert(
+            table.Records.All(record =>
+                record.Fields.Where(field => editableFieldIds.Contains(field.Id)).All(field => field.IsEditable) &&
+                record.Fields.Where(field => protectedFieldIds.Contains(field.Id)).All(field => !field.IsEditable)),
+            $"{title}: подтверждённые примитивы редактируются, сложные массивы и неизвестные поля защищены.");
     }
 
     private static void AssertMaterialsSchema(
@@ -657,6 +688,24 @@ internal static class Program
             sourceArchive,
             sourceRecordCount,
             log).ConfigureAwait(false);
+        await VerifyItemAppendSafetyAsync(
+            sourcePath,
+            allSourcePaths,
+            staging,
+            sourceArchive,
+            sourceRecordCount,
+            "items.weapons",
+            "оружия",
+            log).ConfigureAwait(false);
+        await VerifyItemAppendSafetyAsync(
+            sourcePath,
+            allSourcePaths,
+            staging,
+            sourceArchive,
+            sourceRecordCount,
+            "items.armors",
+            "брони",
+            log).ConfigureAwait(false);
         await VerifyMonsterAppendSafetyAsync(
             sourcePath,
             allSourcePaths,
@@ -664,6 +713,75 @@ internal static class Program
             sourceArchive,
             sourceRecordCount,
             log).ConfigureAwait(false);
+    }
+
+    private static async Task VerifyItemAppendSafetyAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        ResArchiveDocument sourceArchive,
+        int sourceRecordCount,
+        string tableKey,
+        string title,
+        VerificationLog log)
+    {
+        DatabaseDocument document = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        DatabaseTable table = RequireTable(document.Databases.SelectMany(group => group.Tables), tableKey);
+        int originalCount = table.RecordCount;
+        DatabaseRecord template = table.Records.First(record =>
+            record.Fields.Any(field => !field.IsEditable && field.Id != record.IdentityFieldId));
+        DatabaseRawRecord rawTemplate = DatabaseBoundaryVerifier.CaptureRecord(
+            sourceArchive,
+            template.ResourceName,
+            template.SectionId,
+            template.RecordIndex);
+
+        DatabaseRecord added = document.AppendRecordClone(template);
+        log.Assert(
+            table.CanAppendRecords && added.IsNew && added.RecordIndex == originalCount &&
+            table.RecordCount == originalCount + 1,
+            $"Клон {title} добавлен строго в конец таблицы.");
+
+        DatabaseField identityField = RequireField(added, added.IdentityFieldId);
+        string uniqueIdentity = $"codex_{tableKey.Replace('.', '_')}_{Guid.NewGuid():N}";
+        SetFieldValue(identityField, uniqueIdentity, $"уникальный ключ {title}");
+        DatabaseField editedPriceField = RequireField(added, 7);
+        float editedPrice = Convert.ToSingle(
+            editedPriceField.Value,
+            System.Globalization.CultureInfo.InvariantCulture) + 1f;
+        SetFieldValue(
+            editedPriceField,
+            editedPrice.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            $"изменённая цена {title}");
+        log.Assert(
+            document.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            $"Уникальный ключ разрешает безопасное сохранение нового {title}.");
+
+        string savedTarget = staging.GetNewOutputPath($"{Guid.NewGuid():N}-{tableKey.Replace('.', '-')}-added.res");
+        staging.AssertOutputPath(savedTarget, allSourcePaths);
+        await document.SaveAsAsync(savedTarget).ConfigureAwait(false);
+
+        DatabaseDocument reopened = await DatabaseDocument.OpenAsync(savedTarget).ConfigureAwait(false);
+        DatabaseTable reopenedTable = RequireTable(reopened.Databases.SelectMany(group => group.Tables), tableKey);
+        DatabaseRecord reopenedAdded = reopenedTable.Records.Single(record =>
+            record.IdentityValue.Equals(uniqueIdentity, StringComparison.Ordinal));
+        log.Assert(
+            reopenedTable.RecordCount == originalCount + 1 &&
+            reopenedAdded.RecordIndex == originalCount && !reopenedAdded.IsNew &&
+            NearlyEqual(RequireField(reopenedAdded, 7).Value, editedPrice),
+            $"Новый объект {title} сохранён последней записью вместе с изменённой ценой.");
+
+        ResArchiveDocument savedArchive = ResArchiveDocument.Open(savedTarget);
+        AssertResourceIdentity(sourceArchive, savedArchive, "items.idb", log);
+        log.Assert(
+            DatabaseBoundaryVerifier.Verify(savedArchive).Sum(summary => summary.Records) == sourceRecordCount + 1,
+            $"Добавление {title} увеличило число физических DB-записей ровно на одну.");
+        DatabaseRawRecord rawAdded = DatabaseBoundaryVerifier.CaptureRecord(
+            savedArchive,
+            reopenedAdded.ResourceName,
+            reopenedAdded.SectionId,
+            reopenedAdded.RecordIndex);
+        AssertClonedRawFields(rawTemplate, rawAdded, [(byte)template.IdentityFieldId, 7], title, log);
     }
 
     private static async Task VerifyMaterialAppendSafetyAsync(
