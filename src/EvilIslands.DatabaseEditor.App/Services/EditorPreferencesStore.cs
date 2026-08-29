@@ -7,6 +7,10 @@ internal sealed class EditorPreferencesStore
 {
     private const double MinimumStoredColumnWidth = 32;
     private const double MaximumStoredColumnWidth = 2000;
+    private const double MinimumInterfaceScale = 1.0;
+    private const double MaximumInterfaceScale = 1.5;
+    private const double MinimumSoundPaneHeight = 180;
+    private const double MaximumSoundPaneHeight = 900;
     private readonly string _settingsPath;
 
     public EditorPreferencesStore(string? settingsPath = null)
@@ -121,6 +125,54 @@ internal sealed class EditorPreferencesStore
         }
     }
 
+    public double? GetInterfaceScale()
+    {
+        double? scale = LoadSettings().InterfaceScale;
+        return scale is double value && IsValidInterfaceScale(value) ? value : null;
+    }
+
+    public void RememberInterfaceScale(double scale)
+    {
+        if (!IsValidInterfaceScale(scale))
+        {
+            return;
+        }
+
+        EditorPreferences settings = LoadSettings();
+        double rounded = Math.Round(scale, 2, MidpointRounding.AwayFromZero);
+        if (settings.InterfaceScale is double existing && Math.Abs(existing - rounded) < 0.005)
+        {
+            return;
+        }
+
+        settings.InterfaceScale = rounded;
+        SaveSettings(settings);
+    }
+
+    public double? GetSoundPaneHeight()
+    {
+        double? height = LoadSettings().SoundPaneHeight;
+        return height is double value && IsValidSoundPaneHeight(value) ? value : null;
+    }
+
+    public void RememberSoundPaneHeight(double height)
+    {
+        if (!IsValidSoundPaneHeight(height))
+        {
+            return;
+        }
+
+        EditorPreferences settings = LoadSettings();
+        double rounded = Math.Round(height, 1, MidpointRounding.AwayFromZero);
+        if (settings.SoundPaneHeight is double existing && Math.Abs(existing - rounded) < 0.05)
+        {
+            return;
+        }
+
+        settings.SoundPaneHeight = rounded;
+        SaveSettings(settings);
+    }
+
     private EditorPreferences LoadSettings()
     {
         try
@@ -188,9 +240,19 @@ internal sealed class EditorPreferencesStore
     private static bool IsValidColumnWidth(double width) =>
         double.IsFinite(width) && width is >= MinimumStoredColumnWidth and <= MaximumStoredColumnWidth;
 
+    private static bool IsValidInterfaceScale(double scale) =>
+        double.IsFinite(scale) && scale is >= MinimumInterfaceScale and <= MaximumInterfaceScale;
+
+    private static bool IsValidSoundPaneHeight(double height) =>
+        double.IsFinite(height) && height is >= MinimumSoundPaneHeight and <= MaximumSoundPaneHeight;
+
     private sealed class EditorPreferences
     {
         public string? LastDatabaseDirectory { get; set; }
+
+        public double? InterfaceScale { get; set; }
+
+        public double? SoundPaneHeight { get; set; }
 
         public Dictionary<string, Dictionary<string, double>> ColumnWidths { get; set; } = [];
     }

@@ -40,6 +40,8 @@ internal static class Program
             preferences.RememberColumnWidths(
                 "units.prototypes",
                 new Dictionary<string, double> { ["0"] = 222 });
+            preferences.RememberInterfaceScale(1.0);
+            preferences.RememberSoundPaneHeight(360);
             var application = new EvilIslands.DatabaseEditor.App.App
             {
                 ShutdownMode = ShutdownMode.OnExplicitShutdown,
@@ -227,6 +229,48 @@ internal static class Program
                 "Экран основной таблицы обязан содержать строку формул с адресом, полным значением, применением и отменой.");
         }
 
+        if (window.FindName("TextsFormulaAddressBox") is not TextBox { IsReadOnly: true } ||
+            window.FindName("TextsFormulaEditorBox") is not TextBox textsFormulaEditor ||
+            !textsFormulaEditor.AcceptsReturn || textsFormulaEditor.MinLines < 3 ||
+            window.FindName("TextsFormulaApplyButton") is not Button ||
+            window.FindName("TextsFormulaCancelButton") is not Button ||
+            window.FindName("TextsFormulaErrorText") is not TextBlock)
+        {
+            throw new InvalidOperationException(
+                "Полный раздел texts.res обязан иметь крупную строку формул для названий и длинных описаний.");
+        }
+
+        if (window.FindName("NewRowButton") is not Button newRowButton ||
+            !Equals(newRowButton.Content, "＋ Новая строка") ||
+            newRowButton.ToolTip?.ToString()?.Contains("выберите наиболее похожую строку", StringComparison.OrdinalIgnoreCase) is not true)
+        {
+            throw new InvalidOperationException(
+                "Команда добавления должна называться «Новая строка» и объяснять безопасное клонирование выбранной строки.");
+        }
+
+        if (window.FindName("InterfaceScaleText") is not TextBlock scaleText ||
+            window.FindName("ScaleDownButton") is not Button ||
+            window.FindName("ScaleUpButton") is not Button ||
+            Math.Abs(window.CurrentInterfaceScale - 1.0) > 0.001)
+        {
+            throw new InvalidOperationException("Окно обязано иметь сохраняемый пользовательский масштаб интерфейса.");
+        }
+
+        window.SetInterfaceScale(1.25, persist: false);
+        if (Math.Abs(window.CurrentInterfaceScale - 1.25) > 0.001 || scaleText.Text != "125%")
+        {
+            throw new InvalidOperationException("Переключатель масштаба должен применять 125% ко всему интерфейсу.");
+        }
+
+        window.SetInterfaceScale(1.0, persist: false);
+        if (MainWindow.ChooseAutomaticInterfaceScale(1.0, 2560, 1400) != 1.25 ||
+            MainWindow.ChooseAutomaticInterfaceScale(2.0, 3840, 2080) != 1.0 ||
+            MainWindow.ChooseAutomaticInterfaceScale(1.0, 1920, 1040) != 1.0)
+        {
+            throw new InvalidOperationException(
+                "Автомасштаб должен увеличивать интерфейс на 2K/100%, но не удваивать уже масштабированный 4K или Full HD.");
+        }
+
         if (grid.AutoGenerateColumns || grid.IsReadOnly ||
             !grid.EnableRowVirtualization || !grid.EnableColumnVirtualization ||
             !grid.CanUserResizeColumns || grid.CanUserReorderColumns ||
@@ -383,6 +427,8 @@ internal static class Program
                 ["texts:title"] = 211,
                 ["invalid"] = double.NaN,
             });
+        store.RememberInterfaceScale(1.25);
+        store.RememberSoundPaneHeight(420);
         var reopenedStore = new EditorPreferencesStore(settingsPath);
         if (!string.Equals(
                 reopenedStore.GetLastDatabaseDirectory(),
@@ -390,10 +436,12 @@ internal static class Program
                 StringComparison.OrdinalIgnoreCase) ||
             reopenedStore.GetColumnWidth("items.materials", "0") != 123.5 ||
             reopenedStore.GetColumnWidth("items.materials", "texts:title") != 211 ||
-            reopenedStore.GetColumnWidth("items.materials", "invalid") is not null)
+            reopenedStore.GetColumnWidth("items.materials", "invalid") is not null ||
+            reopenedStore.GetInterfaceScale() != 1.25 ||
+            reopenedStore.GetSoundPaneHeight() != 420)
         {
             throw new InvalidOperationException(
-                "Настройки должны между запусками сохранять последнюю папку database.res и допустимую ширину каждой колонки.");
+                "Настройки должны сохранять последнюю папку, ширины колонок, масштаб интерфейса и высоту панели реплик.");
         }
 
         reopenedStore.RememberDatabasePath(databasePath);
@@ -498,6 +546,21 @@ internal static class Program
             DatabaseTableViewModel materialsTable = tables.Single(table => table.Key == "items.materials");
             viewModel.SelectTableCommand.Execute(materialsTable);
             RecordRowViewModel material = materialsTable.Records.First();
+            viewModel.SelectedRecord = null;
+            if (!viewModel.AppendRecordCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException(
+                    "Кнопка «Новая строка» должна оставаться доступной и объяснять необходимость выбора строки-образца.");
+            }
+
+            viewModel.AppendRecordCommand.Execute(null);
+            if (!viewModel.NotificationIsError ||
+                viewModel.NotificationMessage?.Contains("Сначала выберите", StringComparison.Ordinal) is not true)
+            {
+                throw new InvalidOperationException(
+                    "Нажатие «Новая строка» без выбора должно показать понятную инструкцию, а не ничего не делать.");
+            }
+
             viewModel.SelectedRecord = material;
             if (!material.RelatedTexts.Any(text => text.Prefix.Equals("MATERIAL", StringComparison.OrdinalIgnoreCase)) ||
                 !material.RelatedTexts.Any(text => text.Prefix.Equals("MATSHORT", StringComparison.OrdinalIgnoreCase)))
@@ -1080,8 +1143,15 @@ internal static class Program
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
             Border? soundPanel = window.FindName("SoundPanel") as Border;
             DataGrid? soundLinksGrid = window.FindName("SoundLinksGrid") as DataGrid;
+            GridSplitter? detailsPaneSplitter = window.FindName("DetailsPaneSplitter") as GridSplitter;
+            RowDefinition? detailsPaneRow = window.FindName("DetailsPaneRow") as RowDefinition;
             if (soundPanel?.Visibility != Visibility.Visible ||
-                soundLinksGrid?.Items.Count != ackWithSound.RelatedSounds.Count ||
+                soundLinksGrid is null ||
+                soundLinksGrid.Items.Count != ackWithSound.RelatedSounds.Count ||
+                detailsPaneSplitter?.Visibility != Visibility.Visible ||
+                detailsPaneRow?.Height.IsAbsolute != true ||
+                ScrollViewer.GetCanContentScroll(soundLinksGrid) ||
+                ScrollViewer.GetIsDeferredScrollingEnabled(soundLinksGrid) ||
                 !ackWithSound.RelatedSounds.Any(sound =>
                     sound.IsResolved &&
                     sound.ResourceName.StartsWith("Acks\\", StringComparison.OrdinalIgnoreCase)) ||
@@ -1089,7 +1159,7 @@ internal static class Program
                 !recordsGrid.Columns.Any(column => Equals(column.Header, "Файл в звуковом RES")))
             {
                 throw new InvalidOperationException(
-                    "Таблица реплик должна показывать связанные WAV и подробную нижнюю панель звуковых RES.");
+                    "Таблица реплик должна показывать WAV в регулируемой нижней панели с плавной пиксельной прокруткой.");
             }
 
             DatabaseTableViewModel briefings = tables.Single(table => table.Key == "quests.briefings");
@@ -1234,6 +1304,7 @@ internal static class Program
         }
 
         VerifyFormulaBar(window, viewModel, recordsGrid, materials, prototypes);
+        VerifyTextsFormulaBar(window, viewModel, materials);
 
         // The localization columns intentionally follow the database name column. Use two
         // adjacent physical database fields to verify rectangular Excel copy/paste semantics.
@@ -2197,6 +2268,67 @@ internal static class Program
         }
 
         viewModel.SelectTableCommand.Execute(materials);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+    }
+
+    private static void VerifyTextsFormulaBar(
+        MainWindow window,
+        MainWindowViewModel viewModel,
+        DatabaseTableViewModel returnTable)
+    {
+        if (!viewModel.HasTextsDocument)
+        {
+            return;
+        }
+
+        viewModel.NavigateCommand.Execute(viewModel.TextsNavigationItem);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        var textsGrid = (DataGrid)window.FindName("TextsGrid");
+        var addressBox = (TextBox)window.FindName("TextsFormulaAddressBox");
+        var editorBox = (TextBox)window.FindName("TextsFormulaEditorBox");
+        var applyButton = (Button)window.FindName("TextsFormulaApplyButton");
+        DataGridColumn descriptionColumn = textsGrid.Columns.Single(column => Equals(column.Header, "Описание RU"));
+        LocalizationEntryViewModel entry = viewModel.TextResources.First(candidate =>
+            !string.IsNullOrWhiteSpace(candidate.Description) && !candidate.IsNew);
+        string originalDescription = entry.Description;
+
+        textsGrid.CurrentCell = new DataGridCellInfo(entry, descriptionColumn);
+        textsGrid.SelectedCells.Clear();
+        textsGrid.SelectedCells.Add(new DataGridCellInfo(entry, descriptionColumn));
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        if (string.IsNullOrWhiteSpace(addressBox.Text) ||
+            editorBox.Text != originalDescription ||
+            editorBox.IsReadOnly ||
+            !applyButton.IsEnabled ||
+            editorBox.MinLines < 3 ||
+            editorBox.ActualHeight < 80)
+        {
+            throw new InvalidOperationException(
+                "Раздел texts.res должен показывать выбранное полное описание в крупной редактируемой строке формул.");
+        }
+
+        string changedDescription = originalDescription + " fx-texts";
+        if (!window.TryApplyTextsFormulaValue(changedDescription, out string? error) ||
+            error is not null ||
+            entry.Description != changedDescription ||
+            viewModel.ChangeCount != 1)
+        {
+            throw new InvalidOperationException(
+                $"Строка формул texts.res должна записывать описание через общий Undo: {error}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (entry.Description != originalDescription ||
+            editorBox.Text != originalDescription ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Undo должен полностью вернуть описание, изменённое через строку формул texts.res.");
+        }
+
+        viewModel.SelectTableCommand.Execute(returnTable);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
     }
 

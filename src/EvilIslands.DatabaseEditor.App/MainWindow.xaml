@@ -364,9 +364,13 @@
 
     </Window.Resources>
 
-    <Border Background="{StaticResource WindowBrush}"
+    <Border x:Name="MainRoot"
+            Background="{StaticResource WindowBrush}"
             BorderBrush="#080A0D"
             BorderThickness="1">
+        <Border.LayoutTransform>
+            <ScaleTransform x:Name="InterfaceScaleTransform" ScaleX="1" ScaleY="1" />
+        </Border.LayoutTransform>
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="52" />
@@ -409,7 +413,46 @@
                         </Border>
                     </StackPanel>
 
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Border x:Name="InterfaceScaleControl"
+                                Margin="0,0,8,0"
+                                Padding="3"
+                                CornerRadius="7"
+                                Background="#1A1E1C"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                ToolTip="Масштаб интерфейса. Настройка сохраняется для следующих запусков.">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="ScaleDownButton"
+                                        Style="{StaticResource RoundedButton}"
+                                        Content="−"
+                                        Width="28"
+                                        Height="26"
+                                        MinHeight="0"
+                                        Padding="0"
+                                        Margin="0"
+                                        Click="ScaleDownButton_Click"
+                                        ToolTip="Уменьшить интерфейс" />
+                                <TextBlock x:Name="InterfaceScaleText"
+                                           Text="100%"
+                                           Width="48"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Center"
+                                           FontSize="11"
+                                           FontWeight="SemiBold" />
+                                <Button x:Name="ScaleUpButton"
+                                        Style="{StaticResource RoundedButton}"
+                                        Content="＋"
+                                        Width="28"
+                                        Height="26"
+                                        MinHeight="0"
+                                        Padding="0"
+                                        Margin="0"
+                                        Click="ScaleUpButton_Click"
+                                        ToolTip="Увеличить интерфейс" />
+                            </StackPanel>
+                        </Border>
                         <Button Style="{StaticResource ChromeButton}" ToolTip="Свернуть" Click="MinimizeButton_Click" Content="—" />
                         <Button x:Name="MaximizeButton" Style="{StaticResource ChromeButton}" ToolTip="Развернуть" Click="MaximizeButton_Click" Content="□" />
                         <Button Style="{StaticResource ChromeButton}" ToolTip="Закрыть" Click="CloseButton_Click" Content="×">
@@ -902,7 +945,9 @@
                                   Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Texts}">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="8" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="0" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="34" />
                                 </Grid.RowDefinitions>
@@ -954,7 +999,101 @@
                                         <TextBlock Text="{Binding TextResourceCount, StringFormat={} из {0:N0} ресурсов}" Foreground="{StaticResource MutedTextBrush}" Margin="4,0,0,0" />
                                     </StackPanel>
                                 </Grid>
-                                <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource LocalizationBorderBrush}" BorderThickness="1">
+                                <Border x:Name="TextsFormulaBarBorder"
+                                        Grid.Row="2"
+                                        Background="{StaticResource SurfaceBrush}"
+                                        BorderBrush="{StaticResource LocalizationBorderBrush}"
+                                        BorderThickness="1,1,1,0"
+                                        CornerRadius="7,7,0,0"
+                                        Padding="0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="86" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="38" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="36" />
+                                            <ColumnDefinition Width="36" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="TextsFormulaAddressBox"
+                                                 Grid.Column="0"
+                                                 Style="{StaticResource FormulaTextBox}"
+                                                 Height="86"
+                                                 Padding="8,6"
+                                                 IsReadOnly="True"
+                                                 Focusable="False"
+                                                 IsTabStop="False"
+                                                 HorizontalContentAlignment="Center"
+                                                 FontFamily="Cascadia Mono, Consolas"
+                                                 FontSize="13"
+                                                 FontWeight="SemiBold"
+                                                 ToolTip="Адрес текущей ячейки texts.res" />
+                                        <Border Grid.Column="1"
+                                                BorderBrush="{StaticResource LocalizationBorderBrush}"
+                                                BorderThickness="1,0"
+                                                Background="#181B1A">
+                                            <TextBlock Text="fx"
+                                                       Foreground="{StaticResource LocalizationAccentBrush}"
+                                                       FontFamily="Georgia"
+                                                       FontStyle="Italic"
+                                                       FontSize="15"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                        <TextBox x:Name="TextsFormulaEditorBox"
+                                                 Grid.Column="2"
+                                                 Style="{StaticResource FormulaTextBox}"
+                                                 Height="86"
+                                                 Padding="10,8"
+                                                 FontSize="14"
+                                                 AcceptsReturn="True"
+                                                 MinLines="3"
+                                                 MaxLines="3"
+                                                 TextWrapping="Wrap"
+                                                 HorizontalScrollBarVisibility="Disabled"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 VerticalContentAlignment="Top"
+                                                 Cursor="IBeam"
+                                                 IsTabStop="True"
+                                                 PreviewMouseLeftButtonDown="TextsFormulaEditorBox_PreviewMouseLeftButtonDown"
+                                                 PreviewKeyDown="TextsFormulaEditorBox_PreviewKeyDown"
+                                                 AutomationProperties.HelpText="Редактирование полного значения выбранной ячейки texts.res. Enter — применить, Esc — отменить." />
+                                        <Button x:Name="TextsFormulaCancelButton"
+                                                Grid.Column="3"
+                                                Style="{StaticResource FormulaActionButton}"
+                                                Content="×"
+                                                Width="36"
+                                                Height="86"
+                                                FontSize="17"
+                                                Margin="0"
+                                                Click="TextsFormulaCancelButton_Click"
+                                                ToolTip="Отменить ввод (Esc)" />
+                                        <Button x:Name="TextsFormulaApplyButton"
+                                                Grid.Column="4"
+                                                Style="{StaticResource FormulaActionButton}"
+                                                Content="✓"
+                                                Foreground="{StaticResource LocalizationAccentBrush}"
+                                                Width="36"
+                                                Height="86"
+                                                FontSize="16"
+                                                Margin="0"
+                                                Click="TextsFormulaApplyButton_Click"
+                                                ToolTip="Применить значение (Enter)" />
+                                        <TextBlock x:Name="TextsFormulaErrorText"
+                                                   Grid.Row="1"
+                                                   Grid.Column="2"
+                                                   Grid.ColumnSpan="3"
+                                                   Margin="10,5,4,0"
+                                                   Foreground="{StaticResource DangerBrush}"
+                                                   FontSize="10"
+                                                   TextWrapping="Wrap"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                </Border>
+                                <Border Grid.Row="4" CornerRadius="0,0,10,10" ClipToBounds="True" BorderBrush="{StaticResource LocalizationBorderBrush}" BorderThickness="1">
                                     <DataGrid x:Name="TextsGrid"
                                               ItemsSource="{Binding TextsView}"
                                               AutoGenerateColumns="False"
@@ -970,23 +1109,27 @@
                                               HorizontalGridLinesBrush="{StaticResource LocalizationBorderBrush}"
                                               VerticalGridLinesBrush="Transparent"
                                               EnableRowVirtualization="True"
-                                              EnableColumnVirtualization="True">
+                                              EnableColumnVirtualization="True"
+                                              CurrentCellChanged="TextsGrid_CurrentCellChanged"
+                                              SelectedCellsChanged="TextsGrid_SelectedCellsChanged"
+                                              CellEditEnding="TextsGrid_CellEditEnding">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="#"
+                                            <DataGridTextColumn x:Name="TextsIndexColumn"
+                                                                Header="#"
                                                                 Binding="{Binding Index}"
                                                                 Width="56"
                                                                 IsReadOnly="True"
                                                                 HeaderStyle="{StaticResource IndexColumnHeaderStyle}"
                                                                 CellStyle="{StaticResource IndexColumnCellStyle}"
                                                                 ElementStyle="{StaticResource CenteredIndexTextStyle}" />
-                                            <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                            <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="300" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                            <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="300" ElementStyle="{StaticResource LocalizationGridCellText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                            <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="420" ElementStyle="{StaticResource LocalizationGridDescriptionText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn x:Name="TextsPrefixColumn" Header="Тип" Binding="{Binding Prefix}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn x:Name="TextsResourceColumn" Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="300" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn x:Name="TextsTitleColumn" Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="300" ElementStyle="{StaticResource LocalizationGridCellText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn x:Name="TextsDescriptionColumn" Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="420" ElementStyle="{StaticResource LocalizationGridDescriptionText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </Border>
-                                <Grid Grid.Row="3" Margin="2,7,2,0">
+                                <Grid Grid.Row="5" Margin="2,7,2,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
@@ -996,7 +1139,7 @@
                                                FontSize="10"
                                                VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1"
-                                               Text="Ctrl+C — копировать в Excel · F2 — изменить · Enter — применить"
+                                               Text="Ctrl+C — копировать в Excel · F2 — строка формул · Enter — применить"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                FontSize="10"
                                                VerticalAlignment="Center" />
@@ -1040,10 +1183,12 @@
                                     </Grid>
 
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                        <Button Style="{StaticResource RoundedButton}"
+                                        <Button x:Name="NewRowButton"
+                                                Style="{StaticResource RoundedButton}"
                                                 Command="{Binding AppendRecordCommand}"
-                                                Content="＋ Добавить по образцу"
-                                                ToolTip="Клонировать выбранную строку и безопасно добавить её в конец таблицы (Ctrl+Insert)"
+                                                Content="＋ Новая строка"
+                                                ToolTip="Создать строку в конце таблицы. Сначала выберите наиболее похожую строку: редактор скопирует её безопасную структуру, затем измените ключ и значения. Ctrl+Insert."
+                                                ToolTipService.ShowOnDisabled="True"
                                                 Padding="11,6"
                                                 Margin="0,0,10,0" />
                                         <Button Style="{StaticResource RoundedButton}"
@@ -1210,8 +1355,9 @@
                                 <Border x:Name="RecordsTableBorder" Grid.Row="4" CornerRadius="0,0,10,10" ClipToBounds="True" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
                                     <Grid>
                                         <Grid.RowDefinitions>
-                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="*" MinHeight="160" />
                                             <RowDefinition Height="Auto" />
+                                            <RowDefinition x:Name="DetailsPaneRow" Height="Auto" />
                                         </Grid.RowDefinitions>
                                     <DataGrid x:Name="RecordsGrid"
                                               ItemsSource="{Binding RecordsView}"
@@ -1253,8 +1399,26 @@
                                             </DataGridTemplateColumn>
                                         </DataGrid.Columns>
                                     </DataGrid>
-                                        <StackPanel Grid.Row="1">
+                                        <GridSplitter x:Name="DetailsPaneSplitter"
+                                                      Grid.Row="1"
+                                                      Height="8"
+                                                      HorizontalAlignment="Stretch"
+                                                      VerticalAlignment="Center"
+                                                      Background="{StaticResource StrongBorderBrush}"
+                                                      ResizeDirection="Rows"
+                                                      ResizeBehavior="PreviousAndNext"
+                                                      ShowsPreview="True"
+                                                      Cursor="SizeNS"
+                                                      DragCompleted="DetailsPaneSplitter_DragCompleted"
+                                                      ToolTip="Потяните, чтобы увеличить или уменьшить область русских текстов и реплик"
+                                                      Visibility="{Binding SelectedRecord.HasSoundReferences, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Grid x:Name="DetailsPane" Grid.Row="2">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
                                         <Border x:Name="LocalizationPanel"
+                                                Grid.Row="0"
                                                 Background="{StaticResource LocalizationSurfaceBrush}"
                                                 BorderBrush="{StaticResource LocalizationBorderBrush}"
                                                 BorderThickness="0,2,0,0"
@@ -1367,11 +1531,11 @@
                                             </Grid>
                                         </Border>
                                         <Border x:Name="SoundPanel"
+                                                Grid.Row="1"
                                                 Background="{StaticResource SoundSurfaceBrush}"
                                                 BorderBrush="{StaticResource SoundBorderBrush}"
                                                 BorderThickness="0,2,0,0"
                                                 Padding="12,10"
-                                                MaxHeight="230"
                                                 Visibility="{Binding SelectedRecord.HasSoundReferences, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid>
                                                 <Grid.RowDefinitions>
@@ -1407,9 +1571,12 @@
                                                           FontSize="13"
                                                           RowHeight="36"
                                                           ColumnHeaderHeight="38"
+                                                          ScrollViewer.CanContentScroll="False"
+                                                          ScrollViewer.IsDeferredScrollingEnabled="False"
                                                           GridLinesVisibility="Horizontal"
                                                           HorizontalGridLinesBrush="{StaticResource SoundBorderBrush}"
-                                                          VerticalGridLinesBrush="Transparent">
+                                                          VerticalGridLinesBrush="Transparent"
+                                                          PreviewMouseWheel="SoundLinksGrid_PreviewMouseWheel">
                                                     <DataGrid.Columns>
                                                         <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" Width="100" MinWidth="90" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Связь / персонаж" Binding="{Binding Source}" Width="220" MinWidth="180" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
@@ -1422,7 +1589,7 @@
                                                 </DataGrid>
                                             </Grid>
                                         </Border>
-                                        </StackPanel>
+                                        </Grid>
                                     </Grid>
                                 </Border>
 
@@ -1438,7 +1605,7 @@
                                                TextTrimming="CharacterEllipsis"
                                                VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1"
-                                               Text="Shift/Ctrl — выделить клетки · Ctrl+C/V — обмен с Excel · F2 — изменить · Enter — применить"
+                                               Text="Shift/Ctrl — выделить · Ctrl+C/V — обмен с Excel · Ctrl+Insert — новая строка из выбранной · F2 — изменить"
                                                Foreground="{StaticResource MutedTextBrush}"
                                                FontSize="11"
                                                VerticalAlignment="Center" />

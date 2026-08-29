@@ -94,7 +94,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectTableCommand = new RelayCommand<DatabaseTableViewModel>(SelectTable, table => table?.IsEnabled is true);
         AppendRecordCommand = new RelayCommand(
             AppendSelectedRecord,
-            () => IsEditMode && IsRecordsSection && IsCurrentTableAddable && HasSelectedRecord && !IsBusy);
+            () => IsEditMode && IsRecordsSection && IsCurrentTableAddable && !IsBusy);
         AddMissingTextsCommand = new RelayCommand(
             AddMissingTexts,
             () => IsEditMode && IsRecordsSection &&
@@ -973,8 +973,16 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         DatabaseTableViewModel? table = SelectedTable;
         RecordRowViewModel? template = SelectedRecord;
-        if (table is null || template is null || !IsEditMode || !table.CanAppendRecords)
+        if (table is null || !IsEditMode || !table.CanAppendRecords)
         {
+            return;
+        }
+
+        if (template is null)
+        {
+            ShowError(
+                "Сначала выберите в таблице строку, наиболее похожую на новую. " +
+                "Затем нажмите «Новая строка»: редактор безопасно скопирует её структуру в конец таблицы.");
             return;
         }
 

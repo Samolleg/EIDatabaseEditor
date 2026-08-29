@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -30,6 +31,8 @@ public partial class MainWindow : Window
     private const string LocalizationDescriptionColumnIdentity = "texts:description";
     private const string SoundSummaryColumnIdentity = "sound:summary";
     private const string SoundPathColumnIdentity = "sound:path";
+    private const double DefaultSoundPaneHeight = 360;
+    private static readonly double[] InterfaceScaleSteps = [1.0, 1.1, 1.25, 1.5];
     private static readonly IValueConverter ProjectionConverter = new SpreadsheetProjectionConverter();
     private readonly MainWindowViewModel _viewModel;
     private readonly EditorPreferencesStore _preferences;
@@ -40,9 +43,12 @@ public partial class MainWindow : Window
     private DataGridColumn? _soundSummaryColumn;
     private DataGridColumn? _soundPathColumn;
     private FormulaCellContext? _formulaCellContext;
+    private FormulaCellContext? _textsFormulaCellContext;
     private MainWindowViewModel? _spreadsheetViewModel;
     private HwndSource? _windowSource;
     private string? _columnLayoutTableKey;
+    private double _preferredSoundPaneHeight;
+    private bool _hasExplicitInterfaceScale;
     private bool _allowClose;
     private bool _closePromptPending;
 
@@ -54,6 +60,10 @@ public partial class MainWindow : Window
     {
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         InitializeComponent();
+        _preferredSoundPaneHeight = _preferences.GetSoundPaneHeight() ?? DefaultSoundPaneHeight;
+        double? storedInterfaceScale = _preferences.GetInterfaceScale();
+        _hasExplicitInterfaceScale = storedInterfaceScale.HasValue;
+        SetInterfaceScale(storedInterfaceScale ?? 1.0, persist: false);
         SourceInitialized += Window_SourceInitialized;
         Closed += Window_Closed;
         RecordsGrid.CommandBindings.Add(new CommandBinding(
@@ -179,19 +189,41 @@ public partial class MainWindow : Window
         {
             UpdateSpreadsheetColumnReadOnlyStates();
             RefreshFormulaBar();
+            RefreshTextsFormulaBar();
             return;
         }
 
         if (e.PropertyName is nameof(MainWindowViewModel.ChangeCount) or nameof(MainWindowViewModel.HasChanges))
         {
             Dispatcher.BeginInvoke(RefreshFormulaBar, DispatcherPriority.DataBind);
+            Dispatcher.BeginInvoke(RefreshTextsFormulaBar, DispatcherPriority.DataBind);
             return;
         }
 
-        if (e.PropertyName == nameof(MainWindowViewModel.SelectedRecord))
+        if (e.PropertyName == nameof(MainWindowViewModel.CurrentSection))
         {
             Dispatcher.BeginInvoke(
-                () => FindVisualDescendant<ScrollViewer>(SoundLinksGrid)?.ScrollToLeftEnd(),
+                () =>
+                {
+                    RefreshFormulaBar();
+                    RefreshTextsFormulaBar();
+                    UpdateDetailsPaneLayout();
+                },
+                DispatcherPriority.DataBind);
+            return;
+        }
+
+        if (e.PropertyName is nameof(MainWindowViewModel.SelectedRecord) or
+            nameof(MainWindowViewModel.SelectedRecordHasSoundReferences))
+        {
+            Dispatcher.BeginInvoke(
+                () =>
+                {
+                    ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(SoundLinksGrid);
+                    viewer?.ScrollToLeftEnd();
+                    viewer?.ScrollToTop();
+                    UpdateDetailsPaneLayout();
+                },
                 DispatcherPriority.DataBind);
         }
     }
@@ -840,6 +872,264 @@ public partial class MainWindow : Window
         {
             _spreadsheetViewModel.SelectedRecord = record;
         }
+    }
+
+    private void TextsGrid_CurrentCellChanged(object? sender, EventArgs e) => RefreshTextsFormulaBar();
+
+    private void TextsGrid_SelectedCellsChanged(object? sender, SelectedCellsChangedEventArgs e) =>
+        RefreshTextsFormulaBar();
+
+    private void TextsGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
+    {
+        if (e.EditAction == DataGridEditAction.Commit)
+        {
+            Dispatcher.BeginInvoke(RefreshTextsFormulaBar, DispatcherPriority.DataBind);
+        }
+    }
+
+    private void RefreshTextsFormulaBar()
+    {
+        if (TextsFormulaAddressBox is null || TextsFormulaEditorBox is null)
+        {
+            return;
+        }
+
+        if (!TryCreateTextsFormulaCellContext(out FormulaCellContext context))
+        {
+            if (_textsFormulaCellContext is null ||
+                _spreadsheetViewModel?.CurrentSection != WorkspaceSection.Texts)
+            {
+                ClearTextsFormulaBar();
+            }
+
+            return;
+        }
+
+        bool keepPendingInput = TextsFormulaEditorBox.IsKeyboardFocusWithin &&
+                                _textsFormulaCellContext is not null &&
+                                ReferenceEquals(_textsFormulaCellContext.Item, context.Item) &&
+                                ReferenceEquals(_textsFormulaCellContext.Column, context.Column);
+        string pendingInput = TextsFormulaEditorBox.Text;
+        _textsFormulaCellContext = context;
+        TextsFormulaAddressBox.Text = context.Address;
+        TextsFormulaAddressBox.ToolTip = $"{context.Address} · {context.Label}";
+        TextsFormulaEditorBox.Text = keepPendingInput ? pendingInput : context.ReadValue();
+        TextsFormulaEditorBox.IsReadOnly = !context.IsEditable;
+        TextsFormulaEditorBox.ToolTip = null;
+        AutomationProperties.SetHelpText(
+            TextsFormulaEditorBox,
+            context.IsEditable
+                ? $"{context.Label}. Enter — применить, Esc — отменить, Alt+Enter — перенос строки."
+                : $"{context.Label}. Служебное поле доступно только для чтения.");
+        TextsFormulaApplyButton.IsEnabled = context.IsEditable;
+        TextsFormulaCancelButton.IsEnabled = context.IsEditable;
+        SetTextsFormulaError(null);
+    }
+
+    private bool TryCreateTextsFormulaCellContext(out FormulaCellContext context)
+    {
+        context = null!;
+        if (_spreadsheetViewModel?.CurrentSection != WorkspaceSection.Texts ||
+            TextsGrid.CurrentCell is not { IsValid: true, Item: LocalizationEntryViewModel entry } currentCell)
+        {
+            return false;
+        }
+
+        DataGridColumn column = currentCell.Column;
+        string address = GetSpreadsheetAddress(TextsGrid, entry, column);
+        if (ReferenceEquals(column, TextsIndexColumn))
+        {
+            context = new FormulaCellContext(
+                entry,
+                column,
+                address,
+                "Номер строки",
+                () => entry.Index?.ToString(CultureInfo.InvariantCulture) ?? string.Empty);
+            return true;
+        }
+
+        if (ReferenceEquals(column, TextsPrefixColumn))
+        {
+            context = new FormulaCellContext(entry, column, address, "Тип", () => entry.Prefix);
+            return true;
+        }
+
+        if (ReferenceEquals(column, TextsResourceColumn))
+        {
+            context = new FormulaCellContext(entry, column, address, "Ключ texts.res", () => entry.ResourceName);
+            return true;
+        }
+
+        if (ReferenceEquals(column, TextsTitleColumn))
+        {
+            Action<string>? writeValue = CanEditTextResource()
+                ? value => entry.Title = value
+                : null;
+            context = new FormulaCellContext(
+                entry,
+                column,
+                address,
+                "Название RU",
+                () => entry.Title,
+                writeValue,
+                () => entry.ErrorMessage);
+            return true;
+        }
+
+        if (ReferenceEquals(column, TextsDescriptionColumn))
+        {
+            Action<string>? writeValue = CanEditTextResource()
+                ? value => entry.Description = value
+                : null;
+            context = new FormulaCellContext(
+                entry,
+                column,
+                address,
+                "Описание RU",
+                () => entry.Description,
+                writeValue,
+                () => entry.ErrorMessage);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool CanEditTextResource() =>
+        _spreadsheetViewModel is { IsEditMode: true, IsBusy: false, HasTextsDocument: true };
+
+    private void ClearTextsFormulaBar()
+    {
+        _textsFormulaCellContext = null;
+        if (TextsFormulaAddressBox is null || TextsFormulaEditorBox is null)
+        {
+            return;
+        }
+
+        TextsFormulaAddressBox.Text = string.Empty;
+        TextsFormulaAddressBox.ToolTip = "Адрес текущей ячейки texts.res";
+        TextsFormulaEditorBox.Text = string.Empty;
+        TextsFormulaEditorBox.IsReadOnly = true;
+        TextsFormulaEditorBox.ToolTip = null;
+        AutomationProperties.SetHelpText(TextsFormulaEditorBox, "Выберите ячейку texts.res.");
+        TextsFormulaApplyButton.IsEnabled = false;
+        TextsFormulaCancelButton.IsEnabled = false;
+        SetTextsFormulaError(null);
+    }
+
+    private void TextsFormulaEditorBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            CancelTextsFormulaEdit();
+            e.Handled = true;
+            return;
+        }
+
+        bool isEnter = e.Key == Key.Enter || (e.Key == Key.System && e.SystemKey == Key.Enter);
+        if (isEnter && (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
+        {
+            ApplyTextsFormulaEdit();
+            e.Handled = true;
+        }
+    }
+
+    private void TextsFormulaEditorBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not TextBox editor || editor.IsReadOnly || editor.IsKeyboardFocusWithin)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (!TryFocusTextsFormulaEditor(selectAll: false))
+        {
+            return;
+        }
+
+        int characterIndex = editor.GetCharacterIndexFromPoint(e.GetPosition(editor), snapToText: true);
+        editor.CaretIndex = characterIndex >= 0 ? characterIndex : editor.Text.Length;
+    }
+
+    internal bool TryFocusTextsFormulaEditor(bool selectAll)
+    {
+        if (_textsFormulaCellContext is null)
+        {
+            RefreshTextsFormulaBar();
+        }
+
+        if (_textsFormulaCellContext?.IsEditable is not true || TextsFormulaEditorBox.IsReadOnly)
+        {
+            return false;
+        }
+
+        bool focused = TextsFormulaEditorBox.Focus();
+        if (focused && selectAll)
+        {
+            TextsFormulaEditorBox.SelectAll();
+        }
+
+        return focused && TextsFormulaEditorBox.IsKeyboardFocusWithin;
+    }
+
+    private void TextsFormulaCancelButton_Click(object sender, RoutedEventArgs e) => CancelTextsFormulaEdit();
+
+    private void TextsFormulaApplyButton_Click(object sender, RoutedEventArgs e) => ApplyTextsFormulaEdit();
+
+    private void CancelTextsFormulaEdit()
+    {
+        if (_textsFormulaCellContext is not null)
+        {
+            TextsFormulaEditorBox.Text = _textsFormulaCellContext.ReadValue();
+        }
+
+        SetTextsFormulaError(null);
+        TextsGrid.Focus();
+    }
+
+    private void ApplyTextsFormulaEdit()
+    {
+        if (!TryApplyTextsFormulaValue(TextsFormulaEditorBox.Text, out string? error))
+        {
+            SetTextsFormulaError(error ?? "Значение не принято.");
+            TextsFormulaEditorBox.Focus();
+            TextsFormulaEditorBox.SelectAll();
+            return;
+        }
+
+        SetTextsFormulaError(null);
+        TextsFormulaEditorBox.Text = _textsFormulaCellContext?.ReadValue() ?? TextsFormulaEditorBox.Text;
+        TextsGrid.Focus();
+    }
+
+    internal bool TryApplyTextsFormulaValue(string value, out string? error)
+    {
+        error = null;
+        FormulaCellContext? context = _textsFormulaCellContext;
+        if (context?.WriteValue is null)
+        {
+            error = "Выбранная ячейка доступна только для чтения.";
+            return false;
+        }
+
+        context.WriteValue(value);
+        error = context.ReadError?.Invoke();
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            return false;
+        }
+
+        TextsFormulaEditorBox.Text = context.ReadValue();
+        return true;
+    }
+
+    private void SetTextsFormulaError(string? error)
+    {
+        TextsFormulaErrorText.Text = error ?? string.Empty;
+        TextsFormulaErrorText.Visibility = string.IsNullOrWhiteSpace(error) ? Visibility.Collapsed : Visibility.Visible;
+        TextsFormulaEditorBox.BorderBrush = string.IsNullOrWhiteSpace(error)
+            ? (Brush)FindResource("LocalizationBorderBrush")
+            : (Brush)FindResource("DangerBrush");
     }
 
     private void RefreshFormulaBar()
@@ -1736,6 +2026,131 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
     }
 
+    private void ScaleDownButton_Click(object sender, RoutedEventArgs e) => ChangeInterfaceScale(-1);
+
+    private void ScaleUpButton_Click(object sender, RoutedEventArgs e) => ChangeInterfaceScale(1);
+
+    private void ChangeInterfaceScale(int direction)
+    {
+        double current = InterfaceScaleTransform.ScaleX;
+        int currentIndex = Enumerable.Range(0, InterfaceScaleSteps.Length)
+            .OrderBy(index => Math.Abs(InterfaceScaleSteps[index] - current))
+            .First();
+        int nextIndex = Math.Clamp(currentIndex + Math.Sign(direction), 0, InterfaceScaleSteps.Length - 1);
+        _hasExplicitInterfaceScale = true;
+        SetInterfaceScale(InterfaceScaleSteps[nextIndex], persist: true);
+    }
+
+    internal double CurrentInterfaceScale => InterfaceScaleTransform.ScaleX;
+
+    internal void SetInterfaceScale(double scale, bool persist)
+    {
+        double normalized = InterfaceScaleSteps
+            .OrderBy(candidate => Math.Abs(candidate - scale))
+            .First();
+        InterfaceScaleTransform.ScaleX = normalized;
+        InterfaceScaleTransform.ScaleY = normalized;
+        InterfaceScaleText.Text = $"{normalized * 100:0}%";
+        ScaleDownButton.IsEnabled = normalized > InterfaceScaleSteps[0];
+        ScaleUpButton.IsEnabled = normalized < InterfaceScaleSteps[^1];
+        if (persist)
+        {
+            _preferences.RememberInterfaceScale(normalized);
+        }
+    }
+
+    private void ApplyAutomaticInterfaceScale(IntPtr windowHandle)
+    {
+        if (_hasExplicitInterfaceScale)
+        {
+            return;
+        }
+
+        double dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        IntPtr monitor = MonitorFromWindow(windowHandle, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var monitorInfo = new NativeMonitorInfo
+        {
+            Size = (uint)Marshal.SizeOf<NativeMonitorInfo>(),
+        };
+        if (!GetMonitorInfo(monitor, ref monitorInfo))
+        {
+            return;
+        }
+
+        int workWidth = monitorInfo.WorkArea.Right - monitorInfo.WorkArea.Left;
+        int workHeight = monitorInfo.WorkArea.Bottom - monitorInfo.WorkArea.Top;
+        double automaticScale = ChooseAutomaticInterfaceScale(dpiScale, workWidth, workHeight);
+        SetInterfaceScale(automaticScale, persist: false);
+    }
+
+    internal static double ChooseAutomaticInterfaceScale(double dpiScale, int workWidth, int workHeight) =>
+        dpiScale <= 1.1 && workWidth >= 2400 && workHeight >= 1300
+            ? 1.25
+            : 1.0;
+
+    private void UpdateDetailsPaneLayout()
+    {
+        if (DetailsPaneRow is null || RecordsTableBorder is null)
+        {
+            return;
+        }
+
+        bool hasSound = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
+                        _spreadsheetViewModel.SelectedRecordHasSoundReferences;
+        if (!hasSound)
+        {
+            DetailsPaneRow.MinHeight = 0;
+            DetailsPaneRow.Height = GridLength.Auto;
+            return;
+        }
+
+        const double minimumDetailsHeight = 220;
+        double maximumDetailsHeight = RecordsTableBorder.ActualHeight > 0
+            ? Math.Max(minimumDetailsHeight, RecordsTableBorder.ActualHeight - 160)
+            : 640;
+        DetailsPaneRow.MinHeight = minimumDetailsHeight;
+        DetailsPaneRow.Height = new GridLength(
+            Math.Clamp(_preferredSoundPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
+            GridUnitType.Pixel);
+    }
+
+    private void DetailsPaneSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (_spreadsheetViewModel?.SelectedRecordHasSoundReferences is not true ||
+            !double.IsFinite(DetailsPane.ActualHeight) ||
+            DetailsPane.ActualHeight < 180)
+        {
+            return;
+        }
+
+        _preferredSoundPaneHeight = DetailsPane.ActualHeight;
+        _preferences.RememberSoundPaneHeight(_preferredSoundPaneHeight);
+    }
+
+    private void SoundLinksGrid_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(SoundLinksGrid);
+        if (viewer is null || viewer.ScrollableHeight <= 0)
+        {
+            return;
+        }
+
+        double delta = -e.Delta / 120d * 42d;
+        double target = Math.Clamp(viewer.VerticalOffset + delta, 0, viewer.ScrollableHeight);
+        if (Math.Abs(target - viewer.VerticalOffset) < 0.1)
+        {
+            return;
+        }
+
+        viewer.ScrollToVerticalOffset(target);
+        e.Handled = true;
+    }
+
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ChangedButton != MouseButton.Left)
@@ -1758,6 +2173,15 @@ public partial class MainWindow : Window
             _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
             !FormulaEditorBox.IsKeyboardFocusWithin &&
             TryFocusFormulaEditor(selectAll: true))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F2 &&
+            _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Texts &&
+            !TextsFormulaEditorBox.IsKeyboardFocusWithin &&
+            TryFocusTextsFormulaEditor(selectAll: true))
         {
             e.Handled = true;
             return;
@@ -1801,6 +2225,7 @@ public partial class MainWindow : Window
         var handle = new WindowInteropHelper(this).Handle;
         _windowSource = HwndSource.FromHwnd(handle);
         _windowSource?.AddHook(WindowMessageHook);
+        ApplyAutomaticInterfaceScale(handle);
     }
 
     private void Window_Closed(object? sender, EventArgs e)
