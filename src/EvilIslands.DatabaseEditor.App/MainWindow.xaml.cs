@@ -218,8 +218,8 @@ public partial class MainWindow : Window
             DataGridColumn column = new DataGridTextColumn
             {
                 Binding = binding,
-                ElementStyle = elementStyle,
-                EditingElementStyle = editingStyle,
+                ElementStyle = CreateSpreadsheetElementStyle(descriptor, elementStyle),
+                EditingElementStyle = CreateSpreadsheetEditingStyle(descriptor, editingStyle),
             };
 
             column.Header = descriptor;
@@ -453,6 +453,36 @@ public partial class MainWindow : Window
         style.Triggers.Add(selectedTrigger);
         return style;
     }
+
+    private static Style CreateSpreadsheetElementStyle(
+        SpreadsheetColumnViewModel descriptor,
+        Style baseStyle)
+    {
+        var style = new Style(typeof(TextBlock), baseStyle);
+        style.Setters.Add(new Setter(
+            TextBlock.TextAlignmentProperty,
+            GetSpreadsheetTextAlignment(descriptor)));
+        return style;
+    }
+
+    private static Style CreateSpreadsheetEditingStyle(
+        SpreadsheetColumnViewModel descriptor,
+        Style baseStyle)
+    {
+        var style = new Style(typeof(TextBox), baseStyle);
+        style.Setters.Add(new Setter(
+            TextBox.TextAlignmentProperty,
+            GetSpreadsheetTextAlignment(descriptor)));
+        return style;
+    }
+
+    private static TextAlignment GetSpreadsheetTextAlignment(SpreadsheetColumnViewModel descriptor) =>
+        descriptor.Kind switch
+        {
+            "Boolean" => TextAlignment.Center,
+            "Byte" or "Int32" or "UInt32" or "Float32" => TextAlignment.Right,
+            _ => TextAlignment.Left,
+        };
 
     private Style CreateSpreadsheetCellStyle(SpreadsheetColumnViewModel descriptor)
     {

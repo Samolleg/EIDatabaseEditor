@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -604,6 +605,7 @@ internal static class Program
         }
 
         VerifyFrozenIdentityColumns(recordsGrid, viewModel.HasTextsDocument);
+        VerifySpreadsheetVisualRhythm(window, recordsGrid);
 
         DataGridColumn prototypeNameGridColumn = recordsGrid.Columns.Single(column =>
             column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
@@ -1269,18 +1271,36 @@ internal static class Program
 
         if (!string.IsNullOrWhiteSpace(screenshotPath))
         {
-            viewModel.SelectTableCommand.Execute(prototypes);
+            viewModel.SelectTableCommand.Execute(materials);
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-            SpreadsheetColumnViewModel longValueColumn = prototypes.Columns.Single(column =>
-                column.FieldId == 29 && column.Projection is null);
-            RecordRowViewModel longValueRecord = prototypes.Records.First(record =>
-                (record.GetCell(longValueColumn.FieldId)?.EditorText.Length ?? 0) > 80);
-            DataGridColumn longValueGridColumn = recordsGrid.Columns.Single(column =>
-                ReferenceEquals(column.Header, longValueColumn));
-            recordsGrid.CurrentCell = new DataGridCellInfo(longValueRecord, longValueGridColumn);
-            recordsGrid.SelectedCells.Clear();
-            recordsGrid.SelectedCells.Add(new DataGridCellInfo(longValueRecord, longValueGridColumn));
-            recordsGrid.ScrollIntoView(longValueRecord, longValueGridColumn);
+            RecordRowViewModel? multilineRecord = viewModel.HasTextsDocument
+                ? materials.Records.FirstOrDefault(record =>
+                    record.DisplayName.Equals("lizard blue", StringComparison.OrdinalIgnoreCase))
+                : null;
+            if (multilineRecord is not null)
+            {
+                DataGridColumn descriptionColumn = recordsGrid.Columns.Single(column =>
+                    Equals(column.Header, "Описание RU"));
+                recordsGrid.CurrentCell = new DataGridCellInfo(multilineRecord, descriptionColumn);
+                recordsGrid.SelectedCells.Clear();
+                recordsGrid.SelectedCells.Add(new DataGridCellInfo(multilineRecord, descriptionColumn));
+                recordsGrid.ScrollIntoView(multilineRecord, descriptionColumn);
+            }
+            else
+            {
+                viewModel.SelectTableCommand.Execute(prototypes);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                SpreadsheetColumnViewModel longValueColumn = prototypes.Columns.Single(column =>
+                    column.FieldId == 29 && column.Projection is null);
+                RecordRowViewModel longValueRecord = prototypes.Records.First(record =>
+                    (record.GetCell(longValueColumn.FieldId)?.EditorText.Length ?? 0) > 80);
+                DataGridColumn longValueGridColumn = recordsGrid.Columns.Single(column =>
+                    ReferenceEquals(column.Header, longValueColumn));
+                recordsGrid.CurrentCell = new DataGridCellInfo(longValueRecord, longValueGridColumn);
+                recordsGrid.SelectedCells.Clear();
+                recordsGrid.SelectedCells.Add(new DataGridCellInfo(longValueRecord, longValueGridColumn));
+                recordsGrid.ScrollIntoView(longValueRecord, longValueGridColumn);
+            }
 
             window.UpdateLayout();
             var bitmap = new RenderTargetBitmap(
@@ -1461,6 +1481,87 @@ internal static class Program
             : field.GetProjectedText(column.Projection);
     }
 
+    private static void VerifySpreadsheetVisualRhythm(MainWindow window, DataGrid recordsGrid)
+    {
+        var formulaBar = (Border)window.FindName("FormulaBarBorder");
+        var formulaEditor = (TextBox)window.FindName("FormulaEditorBox");
+        var recordsTable = (Border)window.FindName("RecordsTableBorder");
+        var localizationGrid = (DataGrid)window.FindName("LocalizationGrid");
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+
+        double tableGap = recordsTable.TranslatePoint(new Point(0, 0), window).Y -
+                          formulaBar.TranslatePoint(new Point(0, formulaBar.ActualHeight), window).Y;
+        if (recordsGrid.FontSize < 14 ||
+            recordsGrid.RowHeight < 36 ||
+            recordsGrid.ColumnHeaderHeight < 58 ||
+            localizationGrid.FontSize < 14 ||
+            localizationGrid.RowHeight < 38 ||
+            localizationGrid.ColumnHeaderHeight < 40 ||
+            Math.Abs(tableGap) > 1)
+        {
+            throw new InvalidOperationException(
+                "Основная и связанная таблицы должны использовать единую читаемую типографику, " +
+                "а строка формул должна непосредственно соединяться с заголовками таблицы. " +
+                $"records={recordsGrid.FontSize:0.#}/{recordsGrid.RowHeight:0.#}/{recordsGrid.ColumnHeaderHeight:0.#}, " +
+                $"texts={localizationGrid.FontSize:0.#}/{localizationGrid.RowHeight:0.#}/{localizationGrid.ColumnHeaderHeight:0.#}, " +
+                $"gap={tableGap:0.#}.");
+        }
+
+        if (formulaEditor.FontSize < 14 ||
+            formulaEditor.MinLines != 2 ||
+            formulaEditor.MaxLines != 2 ||
+            formulaEditor.TextWrapping != TextWrapping.Wrap ||
+            formulaEditor.VerticalContentAlignment != VerticalAlignment.Top ||
+            formulaEditor.ActualHeight < 54)
+        {
+            throw new InvalidOperationException(
+                "Строка формул должна быть полноценным двухстрочным редактором с переносом текста. " +
+                $"font={formulaEditor.FontSize:0.#}, lines={formulaEditor.MinLines}/{formulaEditor.MaxLines}, " +
+                $"wrap={formulaEditor.TextWrapping}, height={formulaEditor.ActualHeight:0.#}.");
+        }
+
+        DataGridColumnHeader spreadsheetHeader = FindVisualChildren<DataGridColumnHeader>(recordsGrid)
+            .FirstOrDefault(header => header.Content is SpreadsheetColumnViewModel)
+            ?? throw new InvalidOperationException("Не найден отображаемый заголовок физической колонки.");
+        TextBlock[] headerText = FindVisualChildren<TextBlock>(spreadsheetHeader).ToArray();
+        if (spreadsheetHeader.VerticalContentAlignment != VerticalAlignment.Center ||
+            headerText.Length < 2 ||
+            headerText.Max(text => text.FontSize) < 12 ||
+            headerText.Min(text => text.FontSize) < 10)
+        {
+            throw new InvalidOperationException(
+                "Заголовок поля и его техническая подпись должны быть читаемыми и центрированными по высоте.");
+        }
+
+        DataGridColumn nameColumn = recordsGrid.Columns.Single(column =>
+            column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
+        RecordRowViewModel firstRecord = (RecordRowViewModel)recordsGrid.Items[0];
+        recordsGrid.ScrollIntoView(firstRecord, nameColumn);
+        recordsGrid.UpdateLayout();
+        TextBlock cellText = FindVisualChild<TextBlock>(nameColumn.GetCellContent(firstRecord))
+            ?? throw new InvalidOperationException("Не найден текст отображаемой Excel-клетки.");
+        if (cellText.FontSize < 14 || cellText.VerticalAlignment != VerticalAlignment.Center)
+        {
+            throw new InvalidOperationException(
+                "Текст основной Excel-клетки должен быть читаемым и располагаться по вертикальному центру.");
+        }
+
+        DataGridColumn numericColumn = recordsGrid.Columns.First(column =>
+            column.Header is SpreadsheetColumnViewModel descriptor &&
+            descriptor.Kind is "Byte" or "Int32" or "UInt32" or "Float32");
+        recordsGrid.ScrollIntoView(firstRecord, numericColumn);
+        recordsGrid.UpdateLayout();
+        TextBlock numericText = FindVisualChild<TextBlock>(numericColumn.GetCellContent(firstRecord))
+            ?? throw new InvalidOperationException("Не найден текст числовой Excel-клетки.");
+        if (cellText.TextAlignment != TextAlignment.Left ||
+            numericText.TextAlignment != TextAlignment.Right)
+        {
+            throw new InvalidOperationException(
+                "Excel-подобная сетка должна располагать текст слева, а числовые значения справа.");
+        }
+    }
+
     private static void VerifyFormulaBar(
         MainWindow window,
         MainWindowViewModel viewModel,
@@ -1594,6 +1695,27 @@ internal static class Program
                 throw new InvalidOperationException(
                     "Undo должен вернуть ввод из сфокусированной строки формул для Описания RU.");
             }
+
+            RecordRowViewModel? multilineDescriptionRecord = materials.Records.FirstOrDefault(candidate =>
+                candidate.DisplayName.Equals("lizard blue", StringComparison.OrdinalIgnoreCase));
+            if (multilineDescriptionRecord is not null)
+            {
+                recordsGrid.CurrentCell = new DataGridCellInfo(multilineDescriptionRecord, descriptionColumn);
+                recordsGrid.SelectedCells.Clear();
+                recordsGrid.SelectedCells.Add(new DataGridCellInfo(multilineDescriptionRecord, descriptionColumn));
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+                ScrollViewer multilineContentHost = FindVisualChild<ScrollViewer>(editorBox)
+                    ?? throw new InvalidOperationException("Не найдено содержимое двухстрочной строки формул.");
+                if (editorBox.Text != multilineDescriptionRecord.LocalizationDescription ||
+                    editorBox.LineCount < 2 ||
+                    multilineContentHost.ViewportHeight < editorBox.FontSize * 2)
+                {
+                    throw new InvalidOperationException(
+                        "Описание RU с явным переносом должно показывать обе строки в редакторе формул. " +
+                        $"lines={editorBox.LineCount}, viewport={multilineContentHost.ViewportHeight:0.##}.");
+                }
+            }
         }
 
         SpreadsheetColumnViewModel projectedColumn = materials.Columns.Single(column => column.Title == "Магазин 1");
@@ -1628,26 +1750,21 @@ internal static class Program
         ScrollViewer formulaContentHost = FindVisualChild<ScrollViewer>(editorBox)
             ?? throw new InvalidOperationException("Строка формул должна содержать ScrollViewer PART_ContentHost.");
         if (editorBox.Text != longValueField.EditorText ||
+            editorBox.TextWrapping != TextWrapping.Wrap ||
+            editorBox.LineCount < 2 ||
             formulaContentHost.ComputedHorizontalScrollBarVisibility != Visibility.Collapsed ||
             formulaContentHost.ComputedVerticalScrollBarVisibility != Visibility.Collapsed ||
-            formulaContentHost.ViewportHeight < editorBox.FontSize)
+            formulaContentHost.ViewportHeight < editorBox.FontSize * 2 ||
+            formulaContentHost.ScrollableWidth > 0)
         {
             throw new InvalidOperationException(
-                "Длинный StringList должен оставаться видимым: полосы прокрутки не должны съедать высоту текста строки формул. " +
+                "Длинный StringList должен переноситься минимум на две видимые строки без горизонтальной полосы. " +
+                $"lines={editorBox.LineCount}, wrap={editorBox.TextWrapping}, " +
                 $"H={formulaContentHost.ComputedHorizontalScrollBarVisibility}, " +
                 $"V={formulaContentHost.ComputedVerticalScrollBarVisibility}, " +
-                $"viewport={formulaContentHost.ViewportHeight:0.##}, font={editorBox.FontSize:0.##}.");
+                $"viewport={formulaContentHost.ViewportHeight:0.##}, font={editorBox.FontSize:0.##}, " +
+                $"horizontal={formulaContentHost.ScrollableWidth:0.##}.");
         }
-
-        formulaContentHost.ScrollToHorizontalOffset(formulaContentHost.ScrollableWidth);
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
-        if (formulaContentHost.ScrollableWidth <= 0 || formulaContentHost.HorizontalOffset <= 0)
-        {
-            throw new InvalidOperationException(
-                "Скрытая полоса не должна отключать горизонтальную навигацию по длинному значению строки формул.");
-        }
-
-        formulaContentHost.ScrollToLeftEnd();
 
         viewModel.SelectTableCommand.Execute(materials);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
@@ -1682,6 +1799,29 @@ internal static class Program
         }
 
         return null;
+    }
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject? parent)
+        where T : DependencyObject
+    {
+        if (parent is null)
+        {
+            yield break;
+        }
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (T nested in FindVisualChildren<T>(child))
+            {
+                yield return nested;
+            }
+        }
     }
 
     private static void VerifyMaximizedWindowFitsWorkArea(MainWindow window)

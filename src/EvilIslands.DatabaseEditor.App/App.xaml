@@ -94,7 +94,7 @@
                 <Setter Property="Background" Value="{StaticResource WindowBrush}" />
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                 <Setter Property="FontFamily" Value="Segoe UI" />
-                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontSize" Value="14" />
                 <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
                 <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
                 <Setter Property="SnapsToDevicePixels" Value="True" />
@@ -243,6 +243,7 @@
             <Style TargetType="DataGrid">
                 <Setter Property="Background" Value="{StaticResource WindowBrush}" />
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="FontSize" Value="14" />
                 <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
                 <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="GridLinesVisibility" Value="Horizontal" />
@@ -266,8 +267,8 @@
                 <Setter Property="ScrollViewer.IsDeferredScrollingEnabled" Value="True" />
                 <Setter Property="SelectionMode" Value="Single" />
                 <Setter Property="SelectionUnit" Value="FullRow" />
-                <Setter Property="RowHeight" Value="42" />
-                <Setter Property="ColumnHeaderHeight" Value="38" />
+                <Setter Property="RowHeight" Value="38" />
+                <Setter Property="ColumnHeaderHeight" Value="42" />
             </Style>
 
             <Style TargetType="DataGridColumnHeader">
@@ -275,9 +276,11 @@
                 <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
                 <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
                 <Setter Property="BorderThickness" Value="0,0,1,1" />
-                <Setter Property="Padding" Value="12,0" />
+                <Setter Property="Padding" Value="10,0" />
+                <Setter Property="FontSize" Value="13" />
                 <Setter Property="FontWeight" Value="SemiBold" />
                 <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
 
             <Style TargetType="DataGridRow">
@@ -297,7 +300,9 @@
 
             <Style TargetType="DataGridCell">
                 <Setter Property="BorderThickness" Value="0" />
-                <Setter Property="Padding" Value="12,0" />
+                <Setter Property="Padding" Value="10,0" />
+                <Setter Property="FontSize" Value="14" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="FocusVisualStyle" Value="{x:Null}" />
                 <Style.Triggers>

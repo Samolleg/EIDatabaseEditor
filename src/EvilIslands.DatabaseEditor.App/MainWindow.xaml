@@ -45,14 +45,14 @@
 
         <Style x:Key="PageHeading" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="FontSize" Value="21" />
+            <Setter Property="FontSize" Value="22" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
         </Style>
 
         <Style x:Key="MutedLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
-            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontSize" Value="13" />
         </Style>
 
         <Style x:Key="MetricValue" TargetType="TextBlock">
@@ -75,7 +75,8 @@
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
             <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -105,20 +106,58 @@
             </Setter>
         </Style>
 
+        <Style x:Key="FormulaActionButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{StaticResource StrongBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1,0,0,0" />
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="60" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="FormulaActionBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="FormulaActionBorder" Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="FormulaActionBorder" Property="Background" Value="{StaticResource SurfacePressedBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="FormulaActionBorder" Property="Opacity" Value="0.38" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <DataTemplate x:Key="SpreadsheetColumnHeaderTemplate">
-            <StackPanel Margin="0,3"
+            <StackPanel Margin="0,4"
+                        VerticalAlignment="Center"
                         ToolTip="{Binding HeaderToolTip}"
                         ToolTipService.ShowDuration="12000">
                 <TextBlock Text="{Binding Title}"
                            Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridColumnHeader}}"
-                           FontSize="11"
+                           FontSize="12"
                            FontWeight="SemiBold"
                            TextTrimming="CharacterEllipsis" />
                 <TextBlock Text="{Binding Subtitle}"
                            Foreground="{StaticResource SubtleTextBrush}"
                            FontFamily="Cascadia Mono, Consolas"
-                           FontSize="9"
-                           Margin="0,3,0,0"
+                           FontSize="10"
+                           Margin="0,2,0,0"
                            TextTrimming="CharacterEllipsis" />
             </StackPanel>
         </DataTemplate>
@@ -127,6 +166,7 @@
                TargetType="DataGridColumnHeader"
                BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
             <Setter Property="Padding" Value="6,0" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="Background" Value="{StaticResource DatabaseHeaderBrush}" />
             <Setter Property="Foreground" Value="{StaticResource DatabaseTextBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource DatabaseBorderBrush}" />
@@ -156,7 +196,9 @@
             <Setter Property="Foreground" Value="{StaticResource LocalizationTextBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource LocalizationBorderBrush}" />
             <Setter Property="BorderThickness" Value="0,0,1,2" />
-            <Setter Property="Padding" Value="9,0" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
 
         <Style x:Key="LocalizationEntryCellStyle"
@@ -179,6 +221,23 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="LocalizationGridCellText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource LocalizationTextBrush}" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="ToolTipService.ShowDuration" Value="12000" />
+        </Style>
+
+        <Style x:Key="LocalizationGridDescriptionText"
+               TargetType="TextBlock"
+               BasedOn="{StaticResource LocalizationGridCellText}">
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+
         <Style x:Key="IndexColumnHeaderStyle"
                TargetType="DataGridColumnHeader"
                BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
@@ -187,6 +246,7 @@
             <Setter Property="BorderBrush" Value="{StaticResource StrongBorderBrush}" />
             <Setter Property="BorderThickness" Value="0,0,1,1" />
             <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
@@ -205,7 +265,7 @@
         <Style x:Key="CenteredIndexTextStyle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource SubtleTextBrush}" />
             <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" />
-            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontSize" Value="12" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="TextAlignment" Value="Center" />
@@ -232,9 +292,12 @@
 
         <Style x:Key="SpreadsheetCellText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextAlignment" Value="Left" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
-            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="Padding" Value="4,0" />
             <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
             <Setter Property="ToolTipService.ShowDuration" Value="12000" />
         </Style>
@@ -246,7 +309,9 @@
             <Setter Property="SelectionBrush" Value="#356F62" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="7,3" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
             <Setter Property="ToolTipService.ShowDuration" Value="12000" />
@@ -405,11 +470,11 @@
                                                             <ColumnDefinition Width="Auto" />
                                                         </Grid.ColumnDefinitions>
                                                         <StackPanel>
-                                                            <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
+                                                            <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}" />
                                                             <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-                                                                <TextBlock Text="{Binding ResourceName}" FontSize="10" Foreground="{StaticResource SubtleTextBrush}" />
-                                                                <TextBlock Text="  ·  " FontSize="10" Foreground="{StaticResource SubtleTextBrush}" />
-                                                                <TextBlock Text="{Binding StatusText}" FontSize="10">
+                                                                <TextBlock Text="{Binding ResourceName}" FontSize="11" Foreground="{StaticResource SubtleTextBrush}" />
+                                                                <TextBlock Text="  ·  " FontSize="11" Foreground="{StaticResource SubtleTextBrush}" />
+                                                                <TextBlock Text="{Binding StatusText}" FontSize="11">
                                                                     <TextBlock.Style>
                                                                         <Style TargetType="TextBlock">
                                                                             <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
@@ -424,7 +489,7 @@
                                                             </StackPanel>
                                                         </StackPanel>
                                                         <Border Grid.Column="1" Background="#303030" CornerRadius="7" Padding="7,3" MinWidth="32" VerticalAlignment="Center">
-                                                            <TextBlock Text="{Binding RecordCount, StringFormat=N0}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
+                                                            <TextBlock Text="{Binding RecordCount, StringFormat=N0}" FontSize="11" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
                                                         </Border>
                                                     </Grid>
                                                 </Expander.Header>
@@ -457,8 +522,8 @@
                                                                             </Style>
                                                                         </TextBlock.Style>
                                                                     </TextBlock>
-                                                                    <TextBlock Grid.Column="1" Text="{Binding Title}" Margin="7,0,8,0" FontSize="12" Foreground="{Binding RelativeSource={RelativeSource AncestorType=RadioButton}, Path=Foreground}" TextTrimming="CharacterEllipsis" />
-                                                                    <TextBlock Grid.Column="2" Text="{Binding RecordCount, StringFormat=N0}" FontSize="10" Foreground="{StaticResource SubtleTextBrush}" />
+                                                                    <TextBlock Grid.Column="1" Text="{Binding Title}" Margin="7,0,8,0" FontSize="13" Foreground="{Binding RelativeSource={RelativeSource AncestorType=RadioButton}, Path=Foreground}" TextTrimming="CharacterEllipsis" />
+                                                                    <TextBlock Grid.Column="2" Text="{Binding RecordCount, StringFormat=N0}" FontSize="11" Foreground="{StaticResource SubtleTextBrush}" />
                                                                 </Grid>
                                                             </RadioButton>
                                                         </DataTemplate>
@@ -536,9 +601,9 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding BreadcrumbText}" Foreground="{StaticResource AccentBrush}" FontSize="10" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding BreadcrumbText}" Foreground="{StaticResource AccentBrush}" FontSize="11" TextTrimming="CharacterEllipsis" />
                                 <TextBlock Text="{Binding PageTitle}" Style="{StaticResource PageHeading}" />
-                                <TextBlock Text="{Binding PageSubtitle}" Margin="0,2,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding PageSubtitle}" Margin="0,2,0,0" FontSize="12" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                                 <Button Style="{StaticResource SmallIconButton}" Command="{Binding UndoCommand}" Content="↶" ToolTip="Отменить (Ctrl+Z)" />
@@ -845,8 +910,9 @@
                                               SelectionMode="Extended"
                                               SelectionUnit="CellOrRowHeader"
                                               ClipboardCopyMode="ExcludeHeader"
-                                              RowHeight="34"
-                                              ColumnHeaderHeight="38"
+                                              FontSize="14"
+                                              RowHeight="38"
+                                              ColumnHeaderHeight="42"
                                               GridLinesVisibility="Horizontal"
                                               HorizontalGridLinesBrush="{StaticResource LocalizationBorderBrush}"
                                               VerticalGridLinesBrush="Transparent"
@@ -860,10 +926,10 @@
                                                                 HeaderStyle="{StaticResource IndexColumnHeaderStyle}"
                                                                 CellStyle="{StaticResource IndexColumnCellStyle}"
                                                                 ElementStyle="{StaticResource CenteredIndexTextStyle}" />
-                                            <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="110" IsReadOnly="True" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                            <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="300" IsReadOnly="True" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                            <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="300" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                            <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="420" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="110" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="300" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="300" ElementStyle="{StaticResource LocalizationGridCellText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                            <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="420" ElementStyle="{StaticResource LocalizationGridDescriptionText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </Border>
@@ -889,9 +955,9 @@
                                   Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Records}">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="0" />
-                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="10" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="0" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="34" />
                                 </Grid.RowDefinitions>
@@ -946,7 +1012,7 @@
                                                 Padding="8,4"
                                                 Margin="0,0,6,0"
                                                 ToolTip="Столбцы database.res">
-                                            <TextBlock Text="DB" Foreground="{StaticResource DatabaseAccentBrush}" FontSize="10" FontWeight="Bold" />
+                                            <TextBlock Text="DB" Foreground="{StaticResource DatabaseAccentBrush}" FontSize="11" FontWeight="Bold" />
                                         </Border>
                                         <Border Background="{StaticResource LocalizationSurfaceBrush}"
                                                 BorderBrush="{StaticResource LocalizationBorderBrush}"
@@ -956,7 +1022,7 @@
                                                 Margin="0,0,10,0"
                                                 ToolTip="Русские названия и описания texts.res"
                                                 Visibility="{Binding HasTextsDocument, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <TextBlock Text="RU" Foreground="{StaticResource LocalizationAccentBrush}" FontSize="10" FontWeight="Bold" />
+                                            <TextBlock Text="RU" Foreground="{StaticResource LocalizationAccentBrush}" FontSize="11" FontWeight="Bold" />
                                         </Border>
                                         <TextBlock Text="{Binding SpreadsheetColumnCountText}"
                                                    Foreground="{StaticResource MutedTextBrush}"
@@ -974,7 +1040,7 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
-                                            <TextBlock Text="{Binding CurrentTableStatusText}" FontSize="10">
+                                            <TextBlock Text="{Binding CurrentTableStatusText}" FontSize="11">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
@@ -993,33 +1059,34 @@
 
                                 <Border x:Name="FormulaBarBorder"
                                         Grid.Row="2"
-                                        Background="{StaticResource WindowBrush}"
+                                        Background="{StaticResource SurfaceBrush}"
                                         BorderBrush="{StaticResource StrongBorderBrush}"
                                         BorderThickness="1,1,1,0"
                                         CornerRadius="7,7,0,0"
                                         Padding="0">
                                     <Grid>
                                         <Grid.RowDefinitions>
-                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="60" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="76" />
-                                            <ColumnDefinition Width="34" />
+                                            <ColumnDefinition Width="80" />
+                                            <ColumnDefinition Width="38" />
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="30" />
-                                            <ColumnDefinition Width="30" />
+                                            <ColumnDefinition Width="36" />
+                                            <ColumnDefinition Width="36" />
                                         </Grid.ColumnDefinitions>
                                         <TextBox x:Name="FormulaAddressBox"
                                                  Grid.Column="0"
                                                  Style="{StaticResource FormulaTextBox}"
-                                                 Height="34"
-                                                 Padding="6,4"
+                                                 Height="60"
+                                                 Padding="8,6"
                                                  IsReadOnly="True"
                                                  Focusable="False"
                                                  IsTabStop="False"
                                                  HorizontalContentAlignment="Center"
                                                  FontFamily="Cascadia Mono, Consolas"
+                                                 FontSize="13"
                                                  FontWeight="SemiBold"
                                                  ToolTip="Адрес текущей ячейки в видимой таблице" />
                                         <Border Grid.Column="1"
@@ -1030,19 +1097,23 @@
                                                        Foreground="{StaticResource AccentBrush}"
                                                        FontFamily="Georgia"
                                                        FontStyle="Italic"
-                                                       FontSize="14"
+                                                       FontSize="15"
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center" />
                                         </Border>
                                         <TextBox x:Name="FormulaEditorBox"
                                                  Grid.Column="2"
                                                  Style="{StaticResource FormulaTextBox}"
-                                                 Height="34"
-                                                 Padding="9,3"
+                                                 Height="60"
+                                                 Padding="10,8"
+                                                 FontSize="14"
                                                  AcceptsReturn="True"
-                                                 TextWrapping="NoWrap"
-                                                 HorizontalScrollBarVisibility="Hidden"
+                                                 MinLines="2"
+                                                 MaxLines="2"
+                                                 TextWrapping="Wrap"
+                                                 HorizontalScrollBarVisibility="Disabled"
                                                  VerticalScrollBarVisibility="Hidden"
+                                                 VerticalContentAlignment="Top"
                                                  Cursor="IBeam"
                                                  IsTabStop="True"
                                                  PreviewMouseLeftButtonDown="FormulaEditorBox_PreviewMouseLeftButtonDown"
@@ -1050,27 +1121,23 @@
                                                  AutomationProperties.HelpText="Редактирование полного значения выбранной ячейки. Enter — применить, Esc — отменить." />
                                         <Button x:Name="FormulaCancelButton"
                                                 Grid.Column="3"
-                                                Style="{StaticResource SmallIconButton}"
+                                                Style="{StaticResource FormulaActionButton}"
                                                 Content="×"
-                                                Width="30"
-                                                Height="34"
+                                                Width="36"
+                                                Height="60"
+                                                FontSize="17"
                                                 Margin="0"
-                                                Background="Transparent"
-                                                BorderBrush="{StaticResource StrongBorderBrush}"
-                                                BorderThickness="1,0,0,0"
                                                 Click="FormulaCancelButton_Click"
                                                 ToolTip="Отменить ввод (Esc)" />
                                         <Button x:Name="FormulaApplyButton"
                                                 Grid.Column="4"
-                                                Style="{StaticResource SmallIconButton}"
+                                                Style="{StaticResource FormulaActionButton}"
                                                 Content="✓"
                                                 Foreground="{StaticResource AccentBrush}"
-                                                Width="30"
-                                                Height="34"
+                                                Width="36"
+                                                Height="60"
+                                                FontSize="16"
                                                 Margin="0"
-                                                Background="Transparent"
-                                                BorderBrush="{StaticResource StrongBorderBrush}"
-                                                BorderThickness="1,0,0,0"
                                                 Click="FormulaApplyButton_Click"
                                                 ToolTip="Применить значение (Enter)" />
                                         <TextBlock x:Name="FormulaErrorText"
@@ -1096,8 +1163,9 @@
                                               SelectedItem="{Binding SelectedRecord, Mode=OneWay}"
                                               BorderThickness="0"
                                               IsReadOnly="False"
-                                              RowHeight="32"
-                                              ColumnHeaderHeight="54"
+                                              FontSize="14"
+                                              RowHeight="38"
+                                              ColumnHeaderHeight="58"
                                               GridLinesVisibility="All"
                                               HorizontalGridLinesBrush="{StaticResource GridLineBrush}"
                                               VerticalGridLinesBrush="{StaticResource GridLineBrush}"
@@ -1135,7 +1203,7 @@
                                                 BorderBrush="{StaticResource LocalizationBorderBrush}"
                                                 BorderThickness="0,2,0,0"
                                                 Padding="12,10"
-                                                MaxHeight="260"
+                                                MaxHeight="280"
                                                 Visibility="{Binding SelectedRecordHasTexts, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid>
                                                 <Grid.RowDefinitions>
@@ -1149,7 +1217,7 @@
                                                             CornerRadius="5"
                                                             Padding="6,2"
                                                             Margin="0,0,8,0">
-                                                        <TextBlock Text="RU" Foreground="{StaticResource LocalizationAccentBrush}" FontSize="9" FontWeight="Bold" />
+                                                        <TextBlock Text="RU" Foreground="{StaticResource LocalizationAccentBrush}" FontSize="10" FontWeight="Bold" />
                                                     </Border>
                                                     <TextBlock Text="Русские названия и описания"
                                                                Foreground="{StaticResource LocalizationTextBrush}"
@@ -1166,16 +1234,17 @@
                                                           SelectionMode="Extended"
                                                           SelectionUnit="CellOrRowHeader"
                                                           ClipboardCopyMode="ExcludeHeader"
-                                                          RowHeight="34"
-                                                          ColumnHeaderHeight="34"
+                                                          FontSize="14"
+                                                          RowHeight="42"
+                                                          ColumnHeaderHeight="42"
                                                           GridLinesVisibility="Horizontal"
                                                           HorizontalGridLinesBrush="{StaticResource LocalizationBorderBrush}"
                                                           VerticalGridLinesBrush="Transparent">
                                                     <DataGrid.Columns>
-                                                        <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="94" IsReadOnly="True" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="220" IsReadOnly="True" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="220" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="280" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="94" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="220" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="220" ElementStyle="{StaticResource LocalizationGridCellText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="280" ElementStyle="{StaticResource LocalizationGridDescriptionText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                                     </DataGrid.Columns>
                                                 </DataGrid>
                                             </Grid>
@@ -1191,13 +1260,13 @@
                                     <TextBlock Text="{Binding SelectedRecord.Path, TargetNullValue=Выберите клетки · Ctrl+C — копировать · Ctrl+V — вставить}"
                                                Foreground="{StaticResource SubtleTextBrush}"
                                                FontFamily="Cascadia Mono, Consolas"
-                                               FontSize="10"
+                                               FontSize="11"
                                                TextTrimming="CharacterEllipsis"
                                                VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1"
                                                Text="Shift/Ctrl — выделить клетки · Ctrl+C/V — обмен с Excel · F2 — изменить · Enter — применить"
                                                Foreground="{StaticResource MutedTextBrush}"
-                                               FontSize="10"
+                                               FontSize="11"
                                                VerticalAlignment="Center" />
                                 </Grid>
                             </Grid>
