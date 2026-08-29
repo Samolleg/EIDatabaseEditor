@@ -6,46 +6,46 @@
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
         <ResourceDictionary>
-            <!-- Neutral foundation: less flat than pure gray, with semantic accents per data source. -->
-            <Color x:Key="WindowColor">#17191C</Color>
-            <Color x:Key="SidebarColor">#111315</Color>
-            <Color x:Key="SurfaceColor">#22262B</Color>
-            <Color x:Key="SurfaceHoverColor">#2A3036</Color>
-            <Color x:Key="SurfacePressedColor">#323A42</Color>
-            <Color x:Key="BorderColor">#343A43</Color>
-            <Color x:Key="StrongBorderColor">#46515E</Color>
-            <Color x:Key="GridLineColor">#2B3037</Color>
-            <Color x:Key="RowAlternateColor">#1B1E22</Color>
-            <Color x:Key="RowHoverColor">#252B31</Color>
-            <Color x:Key="RowSelectedColor">#193B35</Color>
-            <Color x:Key="TextColor">#F2F4F7</Color>
-            <Color x:Key="MutedTextColor">#B0B7C3</Color>
-            <Color x:Key="SubtleTextColor">#7F8997</Color>
+            <!-- Graphite foundation with restrained bronze/green accents derived from the application icon. -->
+            <Color x:Key="WindowColor">#131513</Color>
+            <Color x:Key="SidebarColor">#0E100F</Color>
+            <Color x:Key="SurfaceColor">#1B1E1C</Color>
+            <Color x:Key="SurfaceHoverColor">#232824</Color>
+            <Color x:Key="SurfacePressedColor">#2B312D</Color>
+            <Color x:Key="BorderColor">#303632</Color>
+            <Color x:Key="StrongBorderColor">#465048</Color>
+            <Color x:Key="GridLineColor">#292E2A</Color>
+            <Color x:Key="RowAlternateColor">#171917</Color>
+            <Color x:Key="RowHoverColor">#202521</Color>
+            <Color x:Key="RowSelectedColor">#233A2C</Color>
+            <Color x:Key="TextColor">#EEF1EC</Color>
+            <Color x:Key="MutedTextColor">#AAB2AA</Color>
+            <Color x:Key="SubtleTextColor">#778078</Color>
 
             <!-- Actions and change state. -->
-            <Color x:Key="AccentColor">#20B894</Color>
-            <Color x:Key="AccentHoverColor">#27C9A3</Color>
-            <Color x:Key="SpreadsheetSelectionColor">#205C50</Color>
-            <Color x:Key="ModifiedSurfaceColor">#16372F</Color>
+            <Color x:Key="AccentColor">#39B86E</Color>
+            <Color x:Key="AccentHoverColor">#4BC77D</Color>
+            <Color x:Key="SpreadsheetSelectionColor">#28543A</Color>
+            <Color x:Key="ModifiedSurfaceColor">#203B29</Color>
             <Color x:Key="DangerColor">#FF7B86</Color>
             <Color x:Key="DangerSurfaceColor">#3A2025</Color>
             <Color x:Key="WarningColor">#F2C96D</Color>
             <Color x:Key="WarningSurfaceColor">#342B1B</Color>
 
-            <!-- Data source colors: blue = database.res, violet = texts.res, amber = raw/technical. -->
-            <Color x:Key="DatabaseAccentColor">#68A7FF</Color>
-            <Color x:Key="DatabaseTextColor">#D5E7FF</Color>
-            <Color x:Key="DatabaseSurfaceColor">#192534</Color>
-            <Color x:Key="DatabaseHeaderColor">#1D2B3B</Color>
-            <Color x:Key="DatabaseBorderColor">#345171</Color>
-            <Color x:Key="LocalizationAccentColor">#B99BFF</Color>
-            <Color x:Key="LocalizationTextColor">#E5DCFF</Color>
-            <Color x:Key="LocalizationSurfaceColor">#241E31</Color>
-            <Color x:Key="LocalizationHeaderColor">#2B223A</Color>
-            <Color x:Key="LocalizationBorderColor">#57447A</Color>
-            <Color x:Key="TechnicalAccentColor">#E5B567</Color>
-            <Color x:Key="TechnicalSurfaceColor">#2B261C</Color>
-            <Color x:Key="TechnicalHeaderColor">#332B1E</Color>
+            <!-- Data source colors are intentionally subtle: sage = database, bronze = texts, amber = raw. -->
+            <Color x:Key="DatabaseAccentColor">#AFC1B3</Color>
+            <Color x:Key="DatabaseTextColor">#DDE5DE</Color>
+            <Color x:Key="DatabaseSurfaceColor">#1A201C</Color>
+            <Color x:Key="DatabaseHeaderColor">#202721</Color>
+            <Color x:Key="DatabaseBorderColor">#3A4A3D</Color>
+            <Color x:Key="LocalizationAccentColor">#C9A66A</Color>
+            <Color x:Key="LocalizationTextColor">#E9DFC9</Color>
+            <Color x:Key="LocalizationSurfaceColor">#201D18</Color>
+            <Color x:Key="LocalizationHeaderColor">#28231B</Color>
+            <Color x:Key="LocalizationBorderColor">#57482F</Color>
+            <Color x:Key="TechnicalAccentColor">#D7B56A</Color>
+            <Color x:Key="TechnicalSurfaceColor">#242017</Color>
+            <Color x:Key="TechnicalHeaderColor">#2B251A</Color>
 
             <SolidColorBrush x:Key="WindowBrush" Color="{StaticResource WindowColor}" />
             <SolidColorBrush x:Key="SidebarBrush" Color="{StaticResource SidebarColor}" />

@@ -20,7 +20,7 @@ public partial class App : Application
         var baseMessage = args.Exception.GetBaseException().Message;
         MessageBox.Show(
             $"{baseMessage}\n\nПодробности записаны в:\n{logPath}",
-            "EI Database Studio — ошибка запуска",
+            "Редактор БД от Атамана — ошибка запуска",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         args.Handled = true;
@@ -33,7 +33,7 @@ public partial class App : Application
         {
             var root = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "EI Database Studio",
+                "Редактор БД от Атамана",
                 "logs");
             Directory.CreateDirectory(root);
             var path = Path.Combine(root, $"startup-{DateTime.Now:yyyyMMdd-HHmmss}.log");

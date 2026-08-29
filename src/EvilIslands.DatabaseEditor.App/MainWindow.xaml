@@ -5,7 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
-        Title="EI Database Studio — Preview"
+        Title="Редактор БД от Атамана — Preview"
+        Icon="/EvilIslands.DatabaseEditor;component/Assets/AppIcon.ico"
         Width="1440"
         Height="900"
         MinWidth="1180"
@@ -99,10 +100,10 @@
         <Style x:Key="DatabaseIdentityColumnHeaderStyle"
                TargetType="DataGridColumnHeader"
                BasedOn="{StaticResource SpreadsheetColumnHeaderStyle}">
-            <Setter Property="Background" Value="#223751" />
+            <Setter Property="Background" Value="{StaticResource DatabaseHeaderBrush}" />
             <Setter Property="Foreground" Value="{StaticResource DatabaseAccentBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource DatabaseAccentBrush}" />
-            <Setter Property="BorderThickness" Value="2,0,1,2" />
+            <Setter Property="BorderBrush" Value="{StaticResource DatabaseBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1,0,1,2" />
         </Style>
 
         <Style x:Key="TechnicalColumnHeaderStyle"
@@ -241,14 +242,17 @@
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="15,0,0,0">
-                        <Border Width="28" Height="28" CornerRadius="8" Background="{StaticResource AccentBrush}">
-                            <TextBlock Text="EI" FontWeight="Bold" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" />
+                        <Border Width="30" Height="30" CornerRadius="8" Background="#0A0C0A" ClipToBounds="True">
+                            <Image x:Name="BrandIcon"
+                                   Source="/EvilIslands.DatabaseEditor;component/Assets/AppIcon.png"
+                                   Stretch="UniformToFill"
+                                   SnapsToDevicePixels="True" />
                         </Border>
-                        <TextBlock Text="Database Studio" Margin="10,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+                        <TextBlock Text="Редактор БД от Атамана" Margin="10,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0">
-                        <TextBlock Text="EI Database Studio" FontWeight="SemiBold" />
+                        <TextBlock Text="Редактор БД от Атамана" FontWeight="SemiBold" />
                         <TextBlock Text="  —  Preview" Foreground="{StaticResource MutedTextBrush}" />
                         <Border Margin="14,0,0,0" Padding="9,4" CornerRadius="7" Background="#17362F"
                                 BorderBrush="#285D50" BorderThickness="1"
@@ -904,7 +908,7 @@
                                                 CornerRadius="7"
                                                 Padding="8,4"
                                                 Margin="0,0,6,0"
-                                                ToolTip="Синие столбцы — поля database.res">
+                                                ToolTip="Столбцы database.res">
                                             <TextBlock Text="DB" Foreground="{StaticResource DatabaseAccentBrush}" FontSize="10" FontWeight="Bold" />
                                         </Border>
                                         <Border Background="{StaticResource LocalizationSurfaceBrush}"
@@ -913,7 +917,7 @@
                                                 CornerRadius="7"
                                                 Padding="8,4"
                                                 Margin="0,0,10,0"
-                                                ToolTip="Фиолетовые столбцы — связанные названия и описания texts.res"
+                                                ToolTip="Русские названия и описания texts.res"
                                                 Visibility="{Binding HasTextsDocument, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <TextBlock Text="RU" Foreground="{StaticResource LocalizationAccentBrush}" FontSize="10" FontWeight="Bold" />
                                         </Border>
@@ -970,6 +974,7 @@
                                               SelectionUnit="CellOrRowHeader"
                                               ClipboardCopyMode="None"
                                               CanUserSortColumns="True"
+                                              CanUserReorderColumns="False"
                                               CurrentCellChanged="RecordsGrid_CurrentCellChanged"
                                               SelectedCellsChanged="RecordsGrid_SelectedCellsChanged"
                                               BeginningEdit="RecordsGrid_BeginningEdit"

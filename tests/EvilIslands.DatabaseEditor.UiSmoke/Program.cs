@@ -43,6 +43,7 @@ internal static class Program
             };
             application.InitializeComponent();
             var window = new MainWindow(preferences);
+            VerifyBranding(window);
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
             VerifySpreadsheetClipboardText();
@@ -94,6 +95,17 @@ internal static class Program
 
     }
 
+    private static void VerifyBranding(MainWindow window)
+    {
+        if (window.Title != "Редактор БД от Атамана — Preview" ||
+            window.Icon is null ||
+            window.FindName("BrandIcon") is not Image { Source: not null })
+        {
+            throw new InvalidOperationException(
+                "Окно должно использовать название и иконку «Редактор БД от Атамана».");
+        }
+    }
+
     private static void VerifySemanticPalette(Application application, MainWindow window)
     {
         var databaseAccent = (SolidColorBrush)application.Resources["DatabaseAccentBrush"];
@@ -114,6 +126,14 @@ internal static class Program
                 "Database, texts, technical, modified и error состояния должны иметь разные семантические цвета.");
         }
 
+        var databaseSurface = (SolidColorBrush)application.Resources["DatabaseSurfaceBrush"];
+        var localizationSurface = (SolidColorBrush)application.Resources["LocalizationSurfaceBrush"];
+        if (ColorSpread(databaseSurface.Color) > 14 || ColorSpread(localizationSurface.Color) > 14)
+        {
+            throw new InvalidOperationException(
+                "Фоны database.res и texts.res должны оставаться приглушёнными, без яркой синей или фиолетовой заливки.");
+        }
+
         VerifyBackgroundSetter(
             (Style)window.Resources["DatabaseIdentityColumnHeaderStyle"],
             (SolidColorBrush)application.Resources["DatabaseHeaderBrush"],
@@ -127,6 +147,10 @@ internal static class Program
             (Style)window.Resources["TechnicalColumnHeaderStyle"],
             (SolidColorBrush)application.Resources["TechnicalHeaderBrush"],
             "TechnicalColumnHeaderStyle");
+
+        static int ColorSpread(Color color) =>
+            Math.Max(color.R, Math.Max(color.G, color.B)) -
+            Math.Min(color.R, Math.Min(color.G, color.B));
     }
 
     private static void VerifyBackgroundSetter(
@@ -165,7 +189,7 @@ internal static class Program
 
         if (grid.AutoGenerateColumns || grid.IsReadOnly ||
             !grid.EnableRowVirtualization || !grid.EnableColumnVirtualization ||
-            !grid.CanUserResizeColumns ||
+            !grid.CanUserResizeColumns || grid.CanUserReorderColumns ||
             grid.SelectionUnit != DataGridSelectionUnit.CellOrRowHeader ||
             grid.SelectionMode != DataGridSelectionMode.Extended ||
             grid.ClipboardCopyMode != DataGridClipboardCopyMode.None ||
@@ -192,6 +216,24 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Номер строки должен быть выровнен по центру по горизонтали и вертикали.");
+        }
+    }
+
+    private static void VerifyFrozenIdentityColumns(DataGrid grid, bool hasTextsDocument)
+    {
+        DataGridColumn[] ordered = grid.Columns
+            .OrderBy(column => column.DisplayIndex)
+            .ToArray();
+        int expectedFrozenCount = hasTextsDocument ? 2 : 1;
+        if (grid.FrozenColumnCount != expectedFrozenCount ||
+            ordered[0].Header is not SpreadsheetColumnViewModel { IsNameField: true } ||
+            (hasTextsDocument && !Equals(ordered[1].Header, "Название RU")) ||
+            ordered.Take(expectedFrozenCount).Any(column => Equals(column.Header, "#") ||
+                                                           Equals(column.Header, "Ключ texts.res") ||
+                                                           Equals(column.Header, "Описание RU")))
+        {
+            throw new InvalidOperationException(
+                "При горизонтальной прокрутке закреплены только «Имя» и, при подключённом texts.res, «Название RU».");
         }
     }
 
@@ -543,11 +585,13 @@ internal static class Program
         });
         if (window.FindName("RecordsGrid") is not DataGrid recordsGrid ||
             recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 4 : 1) ||
-            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 4 : 2))
+            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 2 : 1))
         {
             throw new InvalidOperationException(
-                "DataGrid должен по умолчанию показать понятные значения без исходных raw-дубликатов и заморозить начало строки.");
+                "DataGrid должен по умолчанию показать понятные значения без исходных raw-дубликатов и закрепить только имя и русское название.");
         }
+
+        VerifyFrozenIdentityColumns(recordsGrid, viewModel.HasTextsDocument);
 
         DataGridColumn prototypeNameGridColumn = recordsGrid.Columns.Single(column =>
             column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
@@ -933,13 +977,14 @@ internal static class Program
         ];
         if (recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
                 (viewModel.HasTextsDocument ? 4 : 1) ||
-            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 4 : 2) ||
+            recordsGrid.FrozenColumnCount != (viewModel.HasTextsDocument ? 2 : 1) ||
             !viewModel.VisibleSpreadsheetColumns.Select(column => column.Title)
                 .SequenceEqual(readableMaterialHeaders, StringComparer.Ordinal))
         {
             throw new InvalidOperationException(
                 "DataGrid Материалов должен скрыть два агрегированных исходных поля и оставить их понятные коэффициенты и биты.");
         }
+        VerifyFrozenIdentityColumns(recordsGrid, viewModel.HasTextsDocument);
 
         var materialGridColumns = recordsGrid.Columns
             .Where(column => column.Header is SpreadsheetColumnViewModel)

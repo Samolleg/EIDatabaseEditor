@@ -87,7 +87,7 @@ try {
     }
 
     $manifest = [ordered]@{
-        product = 'EI Database Studio'
+        product = 'Редактор БД от Атамана'
         version = $version
         sourceCommit = $gitHead
         createdAt = (Get-Date).ToString('o')

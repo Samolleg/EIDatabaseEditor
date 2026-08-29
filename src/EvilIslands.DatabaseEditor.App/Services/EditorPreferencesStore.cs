@@ -11,10 +11,34 @@ internal sealed class EditorPreferencesStore
 
     public EditorPreferencesStore(string? settingsPath = null)
     {
-        _settingsPath = settingsPath ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "EI Database Studio",
-            "settings.json");
+        _settingsPath = settingsPath ?? ResolveDefaultSettingsPath();
+    }
+
+    private static string ResolveDefaultSettingsPath()
+    {
+        string localApplicationData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string settingsPath = Path.Combine(localApplicationData, "Редактор БД от Атамана", "settings.json");
+        string legacySettingsPath = Path.Combine(localApplicationData, "EI Database Studio", "settings.json");
+        if (File.Exists(settingsPath) || !File.Exists(legacySettingsPath))
+        {
+            return settingsPath;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)!);
+            File.Copy(legacySettingsPath, settingsPath, overwrite: false);
+        }
+        catch (IOException)
+        {
+            // A failed preference migration must not prevent application startup.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // A failed preference migration must not prevent application startup.
+        }
+
+        return settingsPath;
     }
 
     public string? GetLastDatabaseDirectory()

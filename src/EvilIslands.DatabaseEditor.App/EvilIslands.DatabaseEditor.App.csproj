@@ -5,7 +5,10 @@
     <OutputType>WinExe</OutputType>
     <AssemblyName>EvilIslands.DatabaseEditor</AssemblyName>
     <RootNamespace>EvilIslands.DatabaseEditor.App</RootNamespace>
-    <ApplicationIcon />
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <Product>Редактор БД от Атамана</Product>
+    <AssemblyTitle>Редактор БД от Атамана</AssemblyTitle>
+    <Description>Редактор database.res и texts.res для «Проклятых Земель»</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\EvilIslands.DatabaseEditor.Core\EvilIslands.DatabaseEditor.Core.csproj"
@@ -13,5 +16,9 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="EvilIslands.DatabaseEditor.UiSmoke" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
+    <Resource Include="Assets\AppIcon.png" />
   </ItemGroup>
 </Project>

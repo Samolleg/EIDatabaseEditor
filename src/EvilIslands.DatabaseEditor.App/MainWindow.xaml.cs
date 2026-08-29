@@ -161,6 +161,7 @@ public partial class MainWindow : Window
         }
 
         PersistCurrentColumnWidths();
+        RecordsGrid.FrozenColumnCount = 0;
         const int fixedColumnCount = 1;
         while (RecordsGrid.Columns.Count > fixedColumnCount)
         {
@@ -174,7 +175,6 @@ public partial class MainWindow : Window
         if (_spreadsheetViewModel?.SelectedTable is null)
         {
             _columnLayoutTableKey = null;
-            RecordsGrid.FrozenColumnCount = Math.Min(fixedColumnCount, RecordsGrid.Columns.Count);
             return;
         }
 
@@ -187,6 +187,7 @@ public partial class MainWindow : Window
         var editingStyle = (Style)FindResource("SpreadsheetCellEditor");
         int nameFieldId = _spreadsheetViewModel.SelectedTable.Records.FirstOrDefault()?.NameFieldId ?? -1;
         var localizationColumnsAdded = false;
+        DataGridColumn? nameColumn = null;
         foreach (var descriptor in _spreadsheetViewModel.VisibleSpreadsheetColumns)
         {
             var bindingPath = descriptor.Projection is null
@@ -230,6 +231,11 @@ public partial class MainWindow : Window
             column.CanUserSort = descriptor.IsSortable;
             RecordsGrid.Columns.Add(column);
             _spreadsheetColumns.Add(column, descriptor);
+            if (descriptor.Projection is null && descriptor.FieldId == nameFieldId)
+            {
+                nameColumn = column;
+            }
+
             if (!localizationColumnsAdded &&
                 descriptor.Projection is null &&
                 descriptor.FieldId == nameFieldId &&
@@ -246,9 +252,7 @@ public partial class MainWindow : Window
         }
 
         _columnLayoutTableKey = tableKey;
-        RecordsGrid.FrozenColumnCount = Math.Min(
-            _localizationTitleColumn is null ? 2 : 4,
-            RecordsGrid.Columns.Count);
+        ApplyFrozenColumnLayout(nameColumn);
         UpdateSpreadsheetColumnReadOnlyStates();
     }
 
@@ -317,6 +321,30 @@ public partial class MainWindow : Window
         RecordsGrid.Columns.Add(_localizationKeyColumn);
         RecordsGrid.Columns.Add(_localizationTitleColumn);
         RecordsGrid.Columns.Add(_localizationDescriptionColumn);
+    }
+
+    private void ApplyFrozenColumnLayout(DataGridColumn? nameColumn)
+    {
+        var frozenColumns = new List<DataGridColumn>(2);
+        if (nameColumn is not null)
+        {
+            frozenColumns.Add(nameColumn);
+        }
+
+        if (_localizationTitleColumn is not null)
+        {
+            frozenColumns.Add(_localizationTitleColumn);
+        }
+
+        DataGridColumn[] orderedColumns = frozenColumns
+            .Concat(RecordsGrid.Columns.Cast<DataGridColumn>().Where(column => !frozenColumns.Contains(column)))
+            .ToArray();
+        for (var displayIndex = 0; displayIndex < orderedColumns.Length; displayIndex++)
+        {
+            orderedColumns[displayIndex].DisplayIndex = displayIndex;
+        }
+
+        RecordsGrid.FrozenColumnCount = Math.Min(frozenColumns.Count, RecordsGrid.Columns.Count);
     }
 
     private double GetRememberedColumnWidth(
@@ -436,7 +464,7 @@ public partial class MainWindow : Window
         }
         else if (descriptor.Projection is not null)
         {
-            style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(28, 32, 36))));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("SurfaceBrush")));
         }
 
         if (!descriptor.IsEditable)
@@ -1038,7 +1066,7 @@ public partial class MainWindow : Window
             ShowSafetyDialog(
                 "Перезапись запрещена",
                 "Файл назначения уже существует.",
-                "EI Database Studio создаёт только новые файлы. Выберите другое имя.");
+                "Редактор БД от Атамана создаёт только новые файлы. Выберите другое имя.");
             return;
         }
 
@@ -1122,7 +1150,7 @@ public partial class MainWindow : Window
     private static string GetStagingDirectory()
     {
         var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-        var staging = Path.Combine(documents, "EI Database Studio", "staging");
+        var staging = Path.Combine(documents, "Редактор БД от Атамана", "staging");
         try
         {
             Directory.CreateDirectory(staging);

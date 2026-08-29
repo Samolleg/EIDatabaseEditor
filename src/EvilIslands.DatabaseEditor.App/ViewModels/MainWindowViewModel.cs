@@ -236,7 +236,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         WorkspaceSection.Texts => "Русские тексты",
         WorkspaceSection.Changes => "Изменения",
         WorkspaceSection.Validation => "Проверка целостности",
-        _ => "EI Database Studio",
+        _ => "Редактор БД от Атамана",
     };
 
     public string PageSubtitle => CurrentSection switch

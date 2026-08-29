@@ -33,7 +33,7 @@
 
             <Border Grid.Row="0" Background="{StaticResource SidebarBrush}" CornerRadius="12,12,0,0" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid>
-                    <TextBlock Text="EI Database Studio — Preview" Margin="16,0" VerticalAlignment="Center" FontWeight="SemiBold" />
+                    <TextBlock Text="Редактор БД от Атамана — Preview" Margin="16,0" VerticalAlignment="Center" FontWeight="SemiBold" />
                     <Button HorizontalAlignment="Right"
                             Width="44"
                             Height="44"
