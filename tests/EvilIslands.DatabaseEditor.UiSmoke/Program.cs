@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
@@ -517,7 +518,37 @@ internal static class Program
 
             LocalizationEntryViewModel textProbe = material.RelatedTexts.First(text => !text.IsNew);
             string originalTitle = textProbe.Title;
+            var recordsViewNotifications = (INotifyCollectionChanged)viewModel.RecordsView;
+            var textsViewNotifications = (INotifyCollectionChanged)viewModel.TextsView;
+            var recordsViewResetCount = 0;
+            var textsViewResetCount = 0;
+            NotifyCollectionChangedEventHandler recordsViewChanged = (_, eventArgs) =>
+            {
+                if (eventArgs.Action == NotifyCollectionChangedAction.Reset)
+                {
+                    recordsViewResetCount++;
+                }
+            };
+            NotifyCollectionChangedEventHandler textsViewChanged = (_, eventArgs) =>
+            {
+                if (eventArgs.Action == NotifyCollectionChangedAction.Reset)
+                {
+                    textsViewResetCount++;
+                }
+            };
+            recordsViewNotifications.CollectionChanged += recordsViewChanged;
+            textsViewNotifications.CollectionChanged += textsViewChanged;
             textProbe.Title = originalTitle + " тест";
+            recordsViewNotifications.CollectionChanged -= recordsViewChanged;
+            textsViewNotifications.CollectionChanged -= textsViewChanged;
+            if (recordsViewResetCount != 0 || textsViewResetCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Изменение одной клетки texts.res без активного поиска не должно синхронно " +
+                    "перестраивать полные таблицы database.res и texts.res. " +
+                    $"recordsReset={recordsViewResetCount}; textsReset={textsViewResetCount}");
+            }
+
             if (!viewModel.HasChanges || !textProbe.IsModified || !viewModel.UndoCommand.CanExecute(null))
             {
                 throw new InvalidOperationException("Изменение русского названия должно попадать в общий журнал и Undo.");
@@ -527,6 +558,36 @@ internal static class Program
             if (textProbe.Title != originalTitle || textProbe.IsModified || viewModel.HasChanges)
             {
                 throw new InvalidOperationException("Общий Undo должен полностью вернуть изменение texts.res.");
+            }
+
+            viewModel.TextsSearchText = textProbe.ResourceName;
+            textsViewResetCount = 0;
+            textsViewNotifications.CollectionChanged += textsViewChanged;
+            textProbe.Title = originalTitle + " фильтр";
+            if (textsViewResetCount != 0 || !viewModel.HasPendingTextsViewRefresh)
+            {
+                throw new InvalidOperationException(
+                    "При активном поиске обновление каталога texts.res должно откладываться " +
+                    "до завершения фиксации клетки, а не выполняться внутри setter. " +
+                    $"textsReset={textsViewResetCount}; pending={viewModel.HasPendingTextsViewRefresh}");
+            }
+
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            textsViewNotifications.CollectionChanged -= textsViewChanged;
+            if (textsViewResetCount != 1 || viewModel.HasPendingTextsViewRefresh)
+            {
+                throw new InvalidOperationException(
+                    "Отложенное обновление отфильтрованного texts.res должно выполниться ровно один раз. " +
+                    $"textsReset={textsViewResetCount}; pending={viewModel.HasPendingTextsViewRefresh}");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            viewModel.TextsSearchText = string.Empty;
+            if (textProbe.Title != originalTitle || textProbe.IsModified || viewModel.HasChanges)
+            {
+                throw new InvalidOperationException(
+                    "Undo отложенно обновлённой клетки texts.res должен полностью восстановить исходное состояние.");
             }
 
             VerifyPairedSave(sourcePath, companionTexts);
@@ -957,11 +1018,13 @@ internal static class Program
             var createMissingTextsButton = window.FindName("CreateMissingTextsButton") as Button;
             if (!ReferenceEquals(viewModel.SelectedRecord, missingLocalization) ||
                 localizationPanel?.Visibility != Visibility.Visible ||
-                localizationGrid?.Visibility != Visibility.Collapsed ||
+                localizationGrid?.Visibility != (missingLocalization.HasRelatedTexts
+                    ? Visibility.Visible
+                    : Visibility.Collapsed) ||
                 missingKeysList?.Items.Count != missingLocalization.MissingLocalizationCount ||
                 createMissingTextsButton?.IsEnabled != true ||
-                !missingLocalization.LocalizationKeyText.StartsWith("Нет ресурсов texts.res:", StringComparison.Ordinal) ||
-                !missingLocalization.LocalizationTitle.Contains("смотрите ниже", StringComparison.OrdinalIgnoreCase))
+                (missingLocalization.RelatedTextCount == 0 &&
+                 !missingLocalization.LocalizationKeyText.StartsWith("Нет ресурсов texts.res:", StringComparison.Ordinal)))
             {
                 throw new InvalidOperationException(
                     "Выбор строки с отсутствующими ресурсами texts.res должен раскрывать сами ожидаемые ключи " +

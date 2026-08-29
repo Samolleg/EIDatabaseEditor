@@ -45,6 +45,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string? _lastSavedPath;
     private bool _isApplyingSpreadsheetPaste;
     private bool _recordsViewRefreshPending;
+    private bool _textsViewRefreshPending;
     private bool _disposed;
 
     public MainWindowViewModel()
@@ -1210,8 +1211,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         _redo.Clear();
         RefreshLocalizationChanges(entry);
         RefreshLocalizationOwners(entry);
-        RecordsView.Refresh();
-        RefreshTextsFilter();
+        RefreshViewsAfterLocalizationEdit();
         StatusText = $"Изменён {entry.ResourceName} · {eventArgs.FieldName}";
         RaiseCommandStates();
     }
@@ -1562,7 +1562,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 textFrame.Entry.RestoreState(textState);
                 RefreshLocalizationChanges(textFrame.Entry);
                 RefreshLocalizationOwners(textFrame.Entry);
-                RecordsView.Refresh();
+                RefreshViewsAfterLocalizationEdit();
                 status = undo
                     ? $"Отменено: {textFrame.Entry.ResourceName}"
                     : $"Повторено: {textFrame.Entry.ResourceName}";
@@ -1638,6 +1638,41 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             _service.RefreshRelatedSounds(record);
         }
     }
+
+    private void RefreshViewsAfterLocalizationEdit()
+    {
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            RefreshRecordsViewSafely();
+        }
+
+        if (!string.IsNullOrWhiteSpace(TextsSearchText))
+        {
+            ScheduleTextsViewRefresh();
+        }
+    }
+
+    private void ScheduleTextsViewRefresh()
+    {
+        if (_textsViewRefreshPending)
+        {
+            return;
+        }
+
+        _textsViewRefreshPending = true;
+        _ = Dispatcher.CurrentDispatcher.BeginInvoke(
+            () =>
+            {
+                _textsViewRefreshPending = false;
+                if (!string.IsNullOrWhiteSpace(TextsSearchText))
+                {
+                    RefreshTextsFilter();
+                }
+            },
+            DispatcherPriority.ContextIdle);
+    }
+
+    internal bool HasPendingTextsViewRefresh => _textsViewRefreshPending;
 
     private void SetAddedRecordPresence(
         DatabaseTableViewModel table,
@@ -1807,6 +1842,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             _undo.Push(new TextEditFrame(localization, beforeTextState, afterTextState));
             _redo.Clear();
             RefreshLocalizationChanges(localization);
+            RefreshLocalizationOwners(localization);
+            RefreshViewsAfterLocalizationEdit();
             StatusText = $"Текст возвращён к исходному значению: {localization.ResourceName}";
             RaiseCommandStates();
             return;
