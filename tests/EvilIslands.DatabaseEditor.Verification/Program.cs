@@ -790,6 +790,40 @@ internal static class Program
             shops.Projections.Select(item => item.Kind).All(kind => kind == DatabaseFieldProjectionKind.Bit) &&
             shops.Projections.Select(item => item.Index).SequenceEqual(Enumerable.Range(0, 5)),
             "FloatList и BitList Материалов разворачиваются в 12 проверенных виртуальных колонок.");
+
+        DatabaseFieldProjection shop1 = shops.Projections[0];
+        DatabaseFieldProjection shop2 = shops.Projections[1];
+        DatabaseFieldState originalShops = shops.CaptureState();
+        uint originalShopMask = Convert.ToUInt32(
+            shops.Value,
+            System.Globalization.CultureInfo.InvariantCulture);
+        string toggledShop1 = (originalShopMask & 1u) == 0 ? "1" : "0";
+        bool shop1Accepted = shops.TrySetProjectedValue(shop1, toggledShop1, out string? shop1Error);
+        uint changedShopMask = Convert.ToUInt32(
+            shops.Value,
+            System.Globalization.CultureInfo.InvariantCulture);
+        log.Assert(
+            shops.CanEditProjection(shop1) &&
+            shops.CanEditProjection(shop2) &&
+            !absorption.CanEditProjection(absorption.Projections[0]),
+            "Только проверенные битовые проекции объявлены редактируемыми.");
+        log.Assert(
+            shop1Accepted &&
+            shop1Error is null &&
+            changedShopMask == (originalShopMask ^ 1u) &&
+            (changedShopMask & 2u) == (originalShopMask & 2u),
+            "Редактирование Shop 1 меняет ровно один бит и сохраняет соседний Shop 2.");
+        bool invalidShopAccepted = shops.TrySetProjectedValue(shop1, "2", out string? invalidShopError);
+        log.Assert(
+            !invalidShopAccepted &&
+            !string.IsNullOrWhiteSpace(invalidShopError) &&
+            Convert.ToUInt32(shops.Value, System.Globalization.CultureInfo.InvariantCulture) == changedShopMask,
+            "Битовая проекция отклоняет значения вне 0/1, не меняя маску.");
+        shops.RestoreState(originalShops);
+        log.Assert(
+            Convert.ToUInt32(shops.Value, System.Globalization.CultureInfo.InvariantCulture) == originalShopMask &&
+            !shops.IsModified,
+            "После проверки исходная shop-маска восстановлена без следов изменения.");
         log.Assert(
             materials.Records.All(record =>
                 RequireField(record, 11).Length == 28 &&

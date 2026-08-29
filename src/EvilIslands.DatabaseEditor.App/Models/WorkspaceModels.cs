@@ -110,9 +110,17 @@ internal sealed class DatabaseGroupViewModel : ObservableObject
 
     public string StatusText => SupportState switch
     {
-        DatabaseSupportState.Editable => "Известные поля",
+        DatabaseSupportState.Editable => "Схема распознана",
         DatabaseSupportState.ReadOnly => "Только просмотр",
         _ => "Недоступно",
+    };
+
+    public string StatusToolTip => SupportState switch
+    {
+        DatabaseSupportState.Editable =>
+            "Структура базы распознана: её физические поля можно редактировать и безопасно сохранять.",
+        DatabaseSupportState.ReadOnly => "Структура доступна для просмотра, но запись пока не поддерживается.",
+        _ => "Эта база не разобрана редактором.",
     };
 
     public bool IsExpanded
@@ -211,9 +219,17 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
     public string StatusText => SupportState switch
     {
-        DatabaseSupportState.Editable => "Известные поля",
+        DatabaseSupportState.Editable => "Схема распознана",
         DatabaseSupportState.ReadOnly => "Только просмотр",
         _ => "Недоступно",
+    };
+
+    public string StatusToolTip => SupportState switch
+    {
+        DatabaseSupportState.Editable =>
+            "Структура таблицы распознана: её физические поля можно редактировать и безопасно сохранять.",
+        DatabaseSupportState.ReadOnly => "Таблица доступна для просмотра, но запись пока не поддерживается.",
+        _ => "Эта таблица не разобрана редактором.",
     };
 
     public bool IsSelected
@@ -299,7 +315,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                     new SpreadsheetColumnAccumulator(
                         field,
                         projection,
-                        tableIsEditable && projection is null && field.IsEditable));
+                        tableIsEditable &&
+                        (projection is null ? field.IsEditable : field.CanEditProjection(projection))));
                 return;
             }
 
@@ -351,7 +368,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                                   string.Equals(Key, BuildKey(field, projection), StringComparison.Ordinal) &&
                                   string.Equals(Title, GetDisplayTitle(field, projection), StringComparison.Ordinal) &&
                                   string.Equals(Kind, GetDisplayKind(field.Kind, projection), StringComparison.Ordinal);
-            IsEditable = IsEditable && projection is null && tableIsEditable && field.IsEditable && metadataMatches;
+            IsEditable = IsEditable && tableIsEditable && IsColumnEditable(field, projection) && metadataMatches;
         }
 
         public SpreadsheetColumnViewModel ToViewModel(bool isNameField) =>
@@ -388,6 +405,9 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
         private static bool IsRawEditorKind(string kind) =>
             kind is "Hex" or "Nested" or "StructuredList" or "PackedStructure";
+
+        private static bool IsColumnEditable(DatabaseField field, DatabaseFieldProjection? projection) =>
+            projection is null ? field.IsEditable : field.CanEditProjection(projection);
     }
 }
 
@@ -1136,6 +1156,52 @@ internal sealed class RecordFieldViewModel : ObservableObject
     {
         object? value = _field.GetProjectedValue(projection);
         return value is null ? SpreadsheetProjectionValue.UnavailableText : FormatValue(value);
+    }
+
+    public bool CanEditProjection(DatabaseFieldProjection projection) =>
+        CanEdit && _field.CanEditProjection(projection);
+
+    public bool TrySetProjectedText(
+        DatabaseFieldProjection projection,
+        string value,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(projection);
+        error = null;
+        if (!CanEditProjection(projection))
+        {
+            error = "Эта расшифрованная ячейка доступна только для чтения.";
+            ErrorMessage = error;
+            return false;
+        }
+
+        DatabaseFieldState beforeState = _field.CaptureState();
+        try
+        {
+            if (!_field.TrySetProjectedValue(projection, value, out error))
+            {
+                ErrorMessage = error ?? "Значение не принято.";
+                return false;
+            }
+        }
+        catch (Exception exception)
+        {
+            error = exception.Message;
+            ErrorMessage = error;
+            return false;
+        }
+
+        ErrorMessage = null;
+        SetProperty(ref _editorText, _field.EditorText, nameof(EditorText));
+        OnPropertyChanged(nameof(IsModified));
+        OnPropertyChanged(nameof(ProjectionSource));
+        DatabaseFieldState afterState = _field.CaptureState();
+        if (!beforeState.IsEquivalentTo(afterState))
+        {
+            ValueCommitted?.Invoke(this, new FieldValueCommittedEventArgs(beforeState, afterState));
+        }
+
+        return true;
     }
 
     public RecordFieldViewModel ProjectionSource => this;

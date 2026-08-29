@@ -201,26 +201,35 @@ public partial class MainWindow : Window
         DataGridColumn? nameColumn = null;
         foreach (var descriptor in _spreadsheetViewModel.VisibleSpreadsheetColumns)
         {
-            var bindingPath = descriptor.Projection is null
-                ? $"Cells[{descriptor.FieldId}].EditorText"
-                : $"Cells[{descriptor.FieldId}].ProjectionSource";
-            var binding = new Binding(bindingPath)
+            Style columnElementStyle = CreateSpreadsheetElementStyle(descriptor, elementStyle);
+            Style columnEditingStyle = CreateSpreadsheetEditingStyle(descriptor, editingStyle);
+            DataGridColumn column;
+            if (descriptor.Projection is not null && descriptor.IsEditable)
             {
-                Mode = descriptor.Projection is null ? BindingMode.TwoWay : BindingMode.OneWay,
-                UpdateSourceTrigger = UpdateSourceTrigger.LostFocus,
-            };
-            if (descriptor.Projection is not null)
-            {
-                binding.Converter = ProjectionConverter;
-                binding.ConverterParameter = descriptor.Projection;
+                column = new DataGridTemplateColumn
+                {
+                    SortMemberPath = descriptor.Identity,
+                    CellTemplate = CreateSpreadsheetTextTemplate(
+                        typeof(TextBlock),
+                        TextBlock.TextProperty,
+                        CreateSpreadsheetBinding(descriptor),
+                        columnElementStyle),
+                    CellEditingTemplate = CreateSpreadsheetTextTemplate(
+                        typeof(TextBox),
+                        TextBox.TextProperty,
+                        CreateSpreadsheetBinding(descriptor),
+                        columnEditingStyle),
+                };
             }
-
-            DataGridColumn column = new DataGridTextColumn
+            else
             {
-                Binding = binding,
-                ElementStyle = CreateSpreadsheetElementStyle(descriptor, elementStyle),
-                EditingElementStyle = CreateSpreadsheetEditingStyle(descriptor, editingStyle),
-            };
+                column = new DataGridTextColumn
+                {
+                    Binding = CreateSpreadsheetBinding(descriptor),
+                    ElementStyle = columnElementStyle,
+                    EditingElementStyle = columnEditingStyle,
+                };
+            }
 
             column.Header = descriptor;
             column.HeaderTemplate = headerTemplate;
@@ -266,6 +275,37 @@ public partial class MainWindow : Window
         ApplyFrozenColumnLayout(nameColumn);
         UpdateSpreadsheetColumnReadOnlyStates();
         RefreshFormulaBar();
+    }
+
+    private static Binding CreateSpreadsheetBinding(SpreadsheetColumnViewModel descriptor)
+    {
+        var bindingPath = descriptor.Projection is null
+            ? $"Cells[{descriptor.FieldId}].EditorText"
+            : $"Cells[{descriptor.FieldId}].ProjectionSource";
+        var binding = new Binding(bindingPath)
+        {
+            Mode = descriptor.Projection is null ? BindingMode.TwoWay : BindingMode.OneWay,
+            UpdateSourceTrigger = UpdateSourceTrigger.LostFocus,
+        };
+        if (descriptor.Projection is not null)
+        {
+            binding.Converter = ProjectionConverter;
+            binding.ConverterParameter = descriptor.Projection;
+        }
+
+        return binding;
+    }
+
+    private static DataTemplate CreateSpreadsheetTextTemplate(
+        Type elementType,
+        DependencyProperty textProperty,
+        Binding binding,
+        Style style)
+    {
+        var factory = new FrameworkElementFactory(elementType);
+        factory.SetBinding(textProperty, binding);
+        factory.SetValue(FrameworkElement.StyleProperty, style);
+        return new DataTemplate { VisualTree = factory };
     }
 
     private void AddLocalizationColumns(Style elementStyle, Style editingStyle, string tableKey)
@@ -633,7 +673,51 @@ public partial class MainWindow : Window
 
     private void RecordsGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
     {
+        if (e.EditAction == DataGridEditAction.Commit &&
+            e.Row.Item is RecordRowViewModel record &&
+            _spreadsheetColumns.TryGetValue(e.Column, out SpreadsheetColumnViewModel? descriptor) &&
+            descriptor.Projection is not null &&
+            descriptor.IsEditable)
+        {
+            string? error = null;
+            TextBox? editor = e.EditingElement as TextBox ?? FindVisualDescendant<TextBox>(e.EditingElement);
+            RecordFieldViewModel? field = record.GetCell(descriptor.FieldId);
+            if (editor is null || field is null ||
+                !field.TrySetProjectedText(descriptor.Projection, editor.Text, out error))
+            {
+                e.Cancel = true;
+                (_spreadsheetViewModel ?? _viewModel).ReportSpreadsheetError(
+                    error ?? "Значение расшифрованной ячейки не принято.");
+            }
+        }
+
         Dispatcher.BeginInvoke(RefreshFormulaBar, DispatcherPriority.DataBind);
+    }
+
+    private static T? FindVisualDescendant<T>(DependencyObject? parent)
+        where T : DependencyObject
+    {
+        if (parent is null)
+        {
+            return null;
+        }
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            T? nested = FindVisualDescendant<T>(child);
+            if (nested is not null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private void SelectSpreadsheetRecord(object? candidate)
@@ -708,12 +792,17 @@ public partial class MainWindow : Window
 
             if (descriptor.Projection is not null)
             {
+                Action<string>? projectedWriteValue = descriptor.IsEditable && field.CanEditProjection(descriptor.Projection)
+                    ? value => field.TrySetProjectedText(descriptor.Projection, value, out _)
+                    : null;
                 context = new FormulaCellContext(
                     record,
                     column,
                     address,
                     descriptor.Title,
-                    () => field.GetProjectedText(descriptor.Projection));
+                    () => field.GetProjectedText(descriptor.Projection),
+                    projectedWriteValue,
+                    () => field.ErrorMessage);
                 return true;
             }
 
@@ -1120,7 +1209,8 @@ public partial class MainWindow : Window
                 fillCells.Add(new SpreadsheetPasteCell(
                     (RecordRowViewModel)selected.Item,
                     descriptor.FieldId,
-                    singleValue));
+                    singleValue,
+                    descriptor.Projection));
             }
 
             cells = fillCells;
@@ -1151,7 +1241,8 @@ public partial class MainWindow : Window
                 result.Add(new SpreadsheetPasteCell(
                     rows[anchorRow + rowOffset],
                     descriptor.FieldId,
-                    value));
+                    value,
+                    descriptor.Projection));
             }
         }
 
@@ -1165,10 +1256,9 @@ public partial class MainWindow : Window
         out string? error)
     {
         if (!_spreadsheetColumns.TryGetValue(column, out descriptor!) ||
-            !descriptor.IsEditable ||
-            descriptor.Projection is not null)
+            !descriptor.IsEditable)
         {
-            error = "Вставка возможна только в редактируемые физические поля; служебные и расшифрованные колонки доступны только для копирования.";
+            error = "Вставка возможна только в редактируемые ячейки; служебные и вычисляемые колонки доступны только для копирования.";
             return false;
         }
 

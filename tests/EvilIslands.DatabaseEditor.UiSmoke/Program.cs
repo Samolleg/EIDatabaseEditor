@@ -409,10 +409,11 @@ internal static class Program
                 .Any(column => !column.IsEditable) ||
             tables.SelectMany(table => table.Columns)
                 .Where(column => column.Projection is not null)
-                .Any(column => column.IsEditable))
+                .Any(column => column.IsEditable !=
+                    (column.Projection!.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit)))
         {
             throw new InvalidOperationException(
-                "Все 26 таблиц и их физические поля должны редактироваться; расшифрованные проекции остаются представлением исходного поля.");
+                "Все 26 таблиц и их физические поля должны редактироваться; битовые проекции редактируются как ячейки 0/1, остальные расшифровки остаются только для чтения.");
         }
 
         if (records.Any(record => record.AreFieldsMaterialized))
@@ -697,7 +698,8 @@ internal static class Program
             !viewModel.UndoCommand.CanExecute(null))
         {
             throw new InvalidOperationException(
-                "Ручной ввод Base Race должен изменить точное значение, журнал и Undo.");
+                $"Ручной ввод Base Race должен изменить точное значение, журнал и Undo. " +
+                $"value={referenceCell.EditorText}; expected={replacementReference}; modified={referenceCell.IsModified}; changes={viewModel.ChangeCount}; busy={viewModel.IsBusy}; undo={viewModel.UndoCommand.CanExecute(null)}; status={viewModel.StatusText}; notification={viewModel.NotificationMessage}");
         }
 
         viewModel.UndoCommand.Execute(null);
@@ -802,15 +804,23 @@ internal static class Program
         if (materials.Columns.Count != 26 ||
             !materials.IsEditable ||
             !materials.CanAppendRecords ||
+            materials.StatusText != "Схема распознана" ||
+            !materials.StatusToolTip.Contains("можно редактировать", StringComparison.OrdinalIgnoreCase) ||
             !materials.Columns.Where(column => column.Projection is null && column.IsEditable)
                 .Select(column => column.Title)
                 .SequenceEqual(editableMaterialHeaders, StringComparer.Ordinal) ||
-            materials.Columns.Where(column => column.Projection is not null)
+            materials.Columns.Count(column =>
+                column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit &&
+                column.IsEditable) != 5 ||
+            materials.Columns.Where(column =>
+                    column.Projection is not null &&
+                    column.Projection.Kind != EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit)
                 .Any(column => column.IsEditable))
         {
             throw new InvalidOperationException(
-                "Материалы должны иметь 14 редактируемых физических столбцов; " +
-                "семь коэффициентов поглощения и пять shop-битов остаются синхронными проекциями исходных полей.");
+                "Материалы должны иметь 14 редактируемых физических столбцов, " +
+                $"пять редактируемых shop-битов и нередактируемые расшифровки; статус таблицы — «Схема распознана». " +
+                $"columns={materials.Columns.Count}; status={materials.StatusText}; physicalEditable={materials.Columns.Count(column => column.Projection is null && column.IsEditable)}; bitEditable={materials.Columns.Count(column => column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit && column.IsEditable)}; otherProjectionEditable={materials.Columns.Count(column => column.Projection is not null && column.Projection.Kind != EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit && column.IsEditable)}");
         }
 
         var rawColumns = tables
@@ -1015,7 +1025,8 @@ internal static class Program
             }))
         {
             throw new InvalidOperationException(
-                "Материалы должны использовать компактные типозависимые ширины, сохраняя resize и сортировку.");
+                $"Материалы должны использовать компактные типозависимые ширины, сохраняя resize и сортировку. " +
+                $"preferred={preferredMaterialWidth}; actual={materialGridColumns.Sum(column => column.Width.Value)}; mismatches={materialGridColumns.Count(column => { var descriptor = (SpreadsheetColumnViewModel)column.Header; return column.MinWidth != descriptor.Layout.MinimumWidth || column.MaxWidth != descriptor.Layout.MaximumWidth || column.CanUserSort != descriptor.IsSortable; })}");
         }
 
         var nameLayout = materials.Columns.Single(column => column.IsNameField).Layout;
@@ -1255,6 +1266,37 @@ internal static class Program
                 "Добавление материала должно создать новую последнюю строку, выбрать её и записать одну операцию в журнал/Undo.");
         }
 
+        int textCountBeforeAutomaticCreation = viewModel.TextResources.Count;
+        if (viewModel.HasTextsDocument)
+        {
+            RecordFieldViewModel identityField = addedMaterial.GetCell(addedMaterial.IdentityFieldId)
+                ?? throw new InvalidOperationException("Новый материал не содержит поле уникального ключа.");
+            string clonedIdentity = identityField.EditorText;
+            identityField.EditorText = $"codex_ui_material_{Guid.NewGuid():N}";
+            if (addedMaterial.RelatedTextCount != 2 ||
+                !addedMaterial.CanEditPrimaryLocalization ||
+                addedMaterial.RelatedTexts.Any(entry => !entry.IsNew) ||
+                viewModel.TextResources.Count != textCountBeforeAutomaticCreation + 2 ||
+                viewModel.ChangeCount != 3)
+            {
+                throw new InvalidOperationException(
+                    "После ввода уникального ключа нового материала должны автоматически появиться MATERIAL и MATSHORT в texts.res.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (identityField.EditorText != clonedIdentity ||
+                addedMaterial.RelatedTextCount != 2 ||
+                addedMaterial.RelatedTexts.Any(entry => entry.IsNew) ||
+                viewModel.TextResources.Count != textCountBeforeAutomaticCreation ||
+                viewModel.ChangeCount != 1 ||
+                materials.RecordCount != originalMaterialCount + 1)
+            {
+                throw new InvalidOperationException(
+                    $"Один Undo должен атомарно убрать автоматические texts.res и вернуть ключ клона, но оставить саму новую строку. " +
+                    $"identity={identityField.EditorText}; expected={clonedIdentity}; related={addedMaterial.RelatedTextCount}; texts={viewModel.TextResources.Count}/{textCountBeforeAutomaticCreation}; changes={viewModel.ChangeCount}; rows={materials.RecordCount}/{originalMaterialCount + 1}; notification={viewModel.NotificationMessage}");
+            }
+        }
+
         viewModel.UndoCommand.Execute(null);
         if (materials.RecordCount != originalMaterialCount ||
             viewModel.CurrentTableRecordCount != originalMaterialCount ||
@@ -1267,6 +1309,73 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Undo добавления материала должен удалить только новую строку и полностью очистить состояние изменений.");
+        }
+
+        if (viewModel.HasTextsDocument)
+        {
+            DatabaseTableViewModel modifiers = tables.Single(table => table.Key == "spells.modifiers");
+            int originalModifierCount = modifiers.RecordCount;
+            int originalTextCount = viewModel.TextResources.Count;
+            viewModel.SelectTableCommand.Execute(modifiers);
+            viewModel.SelectedRecord = modifiers.Records[^1];
+            viewModel.AppendRecordCommand.Execute(null);
+            RecordRowViewModel addedModifier = modifiers.Records[^1];
+            if (addedModifier.Fields.Any(field => !field.CanEdit))
+            {
+                throw new InvalidOperationException(
+                    "У клона модификатора каждое физическое поле должно сразу редактироваться.");
+            }
+
+            RecordFieldViewModel modifierCode = addedModifier.GetCell(addedModifier.IdentityFieldId)
+                ?? throw new InvalidOperationException("Новый модификатор не содержит поле технического кода.");
+            string clonedModifierCode = modifierCode.EditorText;
+            HashSet<string> existingModifierCodes = modifiers.Records
+                .Where(record => !ReferenceEquals(record, addedModifier))
+                .Select(record => record.IdentityValue)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            string uniqueModifierCode = Enumerable.Range(0, 1000)
+                .Select(index => $"z{index:000}")
+                .First(code => !existingModifierCodes.Contains(code));
+            modifierCode.EditorText = uniqueModifierCode;
+            LocalizationEntryViewModel modifierText = addedModifier.RelatedTexts.SingleOrDefault()
+                ?? throw new InvalidOperationException(
+                    $"После уникального кода новый модификатор должен автоматически получить запись texts.res. " +
+                    $"identity={addedModifier.IdentityValue}; expected=[{string.Join(", ", addedModifier.ExpectedTextKeys)}]; " +
+                    $"related={addedModifier.RelatedTextCount}; texts={viewModel.TextResources.Count}/{originalTextCount}; " +
+                    $"field={modifierCode.EditorText}; canEdit={modifierCode.CanEdit}; isEditable={modifierCode.IsEditable}; " +
+                    $"recordEdit={addedModifier.IsEditMode}; fieldError={modifierCode.ErrorMessage}; " +
+                    $"changes={viewModel.ChangeCount}; notification={viewModel.NotificationMessage}; status={viewModel.StatusText}");
+            if (!modifierText.ResourceName.Equals($"MODIFIER {uniqueModifierCode}", StringComparison.OrdinalIgnoreCase) ||
+                !modifierText.IsNew ||
+                !addedModifier.CanEditPrimaryLocalization ||
+                viewModel.TextResources.Count != originalTextCount + 1 ||
+                viewModel.ChangeCount != 2)
+            {
+                throw new InvalidOperationException(
+                    $"Клон модификатора должен автоматически создать редактируемый MODIFIER в texts.res и одну общую операцию Undo. " +
+                    $"resource={modifierText.ResourceName}; new={modifierText.IsNew}; editable={addedModifier.CanEditPrimaryLocalization}; " +
+                    $"texts={viewModel.TextResources.Count}/{originalTextCount}; changes={viewModel.ChangeCount}; " +
+                    $"expected=[{string.Join(", ", addedModifier.ExpectedTextKeys)}]; status={viewModel.StatusText}");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (modifierCode.EditorText != clonedModifierCode ||
+                viewModel.TextResources.Count != originalTextCount ||
+                viewModel.ChangeCount != 1 ||
+                modifiers.RecordCount != originalModifierCount + 1)
+            {
+                throw new InvalidOperationException(
+                    "Undo кода нового модификатора должен одновременно убрать автоматически созданный MODIFIER texts.res.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (modifiers.RecordCount != originalModifierCount ||
+                viewModel.HasChanges ||
+                viewModel.ChangeCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Второй Undo должен удалить клон модификатора и вернуть полностью чистое состояние.");
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(screenshotPath))
@@ -1720,16 +1829,62 @@ internal static class Program
 
         SpreadsheetColumnViewModel projectedColumn = materials.Columns.Single(column => column.Title == "Магазин 1");
         DataGridColumn projectedGridColumn = recordsGrid.Columns.Single(column => ReferenceEquals(column.Header, projectedColumn));
+        RecordFieldViewModel projectedField = record.GetCell(projectedColumn.FieldId)
+            ?? throw new InvalidOperationException("Не найдено исходное поле shop-битов.");
+        string originalProjectedValue = projectedField.GetProjectedText(projectedColumn.Projection!);
+        string originalProjectedRaw = projectedField.EditorText;
+        string changedProjectedValue = originalProjectedValue == "1" ? "0" : "1";
         recordsGrid.CurrentCell = new DataGridCellInfo(record, projectedGridColumn);
         recordsGrid.SelectedCells.Clear();
         recordsGrid.SelectedCells.Add(new DataGridCellInfo(record, projectedGridColumn));
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-        if (!editorBox.IsReadOnly || applyButton.IsEnabled ||
-            window.TryApplyFormulaValue("1", out string? readOnlyError) ||
-            readOnlyError?.Contains("только для чтения", StringComparison.OrdinalIgnoreCase) is not true)
+        string? projectedError = null;
+        if (!projectedColumn.IsEditable || projectedGridColumn.IsReadOnly || editorBox.IsReadOnly || !applyButton.IsEnabled ||
+            !window.TryApplyFormulaValue(changedProjectedValue, out projectedError) ||
+            projectedError is not null ||
+            projectedField.GetProjectedText(projectedColumn.Projection!) != changedProjectedValue ||
+            projectedField.EditorText == originalProjectedRaw ||
+            viewModel.ChangeCount != 1)
         {
             throw new InvalidOperationException(
-                "Расшифрованная проекция должна отображаться в строке формул, но оставаться только для чтения.");
+                $"Shop-бит должен редактироваться как обычная Excel-ячейка и синхронизировать raw-маску: {projectedError}; " +
+                $"descriptorEditable={projectedColumn.IsEditable}; gridReadOnly={projectedGridColumn.IsReadOnly}; mode={viewModel.IsEditMode}; busy={viewModel.IsBusy}; tableEditable={viewModel.IsCurrentTableEditable}; fieldEditable={projectedField.CanEditProjection(projectedColumn.Projection!)}; formulaReadOnly={editorBox.IsReadOnly}; apply={applyButton.IsEnabled}; projected={projectedField.GetProjectedText(projectedColumn.Projection!)}; expected={changedProjectedValue}; rawChanged={projectedField.EditorText != originalProjectedRaw}; changes={viewModel.ChangeCount}; status={viewModel.StatusText}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (projectedField.GetProjectedText(projectedColumn.Projection!) != originalProjectedValue ||
+            projectedField.EditorText != originalProjectedRaw ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Undo должен одновременно восстановить shop-бит и его исходную raw-маску.");
+        }
+
+        recordsGrid.CurrentCell = new DataGridCellInfo(record, projectedGridColumn);
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(record, projectedGridColumn));
+        IReadOnlyList<IReadOnlyList<string>> projectedPasteMatrix =
+            SpreadsheetClipboardText.Parse(changedProjectedValue);
+        if (!window.TryBuildPasteCells(
+                projectedPasteMatrix,
+                out IReadOnlyList<SpreadsheetPasteCell> projectedPasteCells,
+                out projectedError) ||
+            !viewModel.TryPasteSpreadsheetCells(projectedPasteCells, out int projectedPasteCount, out projectedError) ||
+            projectedPasteCount != 1 ||
+            projectedField.GetProjectedText(projectedColumn.Projection!) != changedProjectedValue)
+        {
+            throw new InvalidOperationException(
+                $"Ctrl+V должен вставлять 0/1 непосредственно в выбранную shop-ячейку: {projectedError}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        if (projectedField.GetProjectedText(projectedColumn.Projection!) != originalProjectedValue ||
+            projectedField.EditorText != originalProjectedRaw ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Один Undo должен полностью отменять вставку в shop-ячейку.");
         }
 
         viewModel.SelectTableCommand.Execute(prototypes);

@@ -284,6 +284,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(PageSubtitle));
             OnPropertyChanged(nameof(BreadcrumbText));
             OnPropertyChanged(nameof(CurrentTableStatusText));
+            OnPropertyChanged(nameof(CurrentTableStatusToolTip));
             OnPropertyChanged(nameof(CurrentTableRecordCount));
             OnPropertyChanged(nameof(IsCurrentTableReadOnly));
             OnPropertyChanged(nameof(IsCurrentTableEditable));
@@ -304,6 +305,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     };
 
     public string CurrentTableStatusText => SelectedTable?.StatusText ?? "—";
+
+    public string CurrentTableStatusToolTip =>
+        SelectedTable?.StatusToolTip ?? "Откройте таблицу, чтобы увидеть состояние её схемы.";
 
     public int CurrentTableRecordCount => SelectedTable?.RecordCount ?? 0;
 
@@ -946,24 +950,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         try
         {
             IReadOnlyList<LocalizationEntryViewModel> added = _service.AddMissingTexts(record);
-            foreach (LocalizationEntryViewModel entry in added)
-            {
-                entry.ValueCommitted += OnLocalizationValueCommitted;
-                if (!TextResources.Contains(entry))
-                {
-                    TextResources.Add(entry);
-                }
-                AddTextInsertionChange(entry);
-            }
+            RegisterAddedTexts(added);
 
             _undo.Push(new TextPresenceBatchEditFrame(added, BeforePresent: false, AfterPresent: true));
             _redo.Clear();
-            OnPropertyChanged(nameof(SelectedRecordHasTexts));
-            OnPropertyChanged(nameof(SelectedRecordTextCount));
-            OnPropertyChanged(nameof(HasChanges));
-            RefreshTextsFilter();
-            RefreshAllCounts();
-            NotifyWorkspaceProperties();
             StatusText = $"Добавлено записей texts.res: {added.Count:N0}. Заполните русские названия и описания.";
             RaiseCommandStates();
         }
@@ -1044,12 +1034,101 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         var field = eventArgs.Field;
-        _undo.Push(new FieldEditFrame(record, field, eventArgs.BeforeState, eventArgs.AfterState));
+        var fieldFrame = new FieldEditFrame(record, field, eventArgs.BeforeState, eventArgs.AfterState);
+        _undo.Push(fieldFrame);
         _redo.Clear();
         RefreshChangedField(record, field);
+        IReadOnlyList<LocalizationEntryViewModel> automaticTexts = [];
+        string? automaticTextError = null;
+        try
+        {
+            automaticTexts = TryCreateMissingTextsForAddedRecord(record);
+            RegisterAddedTexts(automaticTexts);
+        }
+        catch (Exception exception)
+        {
+            automaticTextError = UnwrapMessage(exception);
+        }
+
+        if (automaticTexts.Count > 0)
+        {
+            WorkspaceEditFrame current = _undo.Pop();
+            _undo.Push(new CompositeEditFrame(
+                [
+                    current,
+                    new TextPresenceBatchEditFrame(automaticTexts, BeforePresent: false, AfterPresent: true),
+                ],
+                $"Отменены ключ и автотексты: {record.DisplayName}",
+                $"Повторены ключ и автотексты: {record.DisplayName}"));
+        }
+
         RefreshValidationDeferred();
-        StatusText = $"Изменено: {record.DisplayName} · {field.DisplayName}";
+        StatusText = automaticTexts.Count == 0
+            ? $"Изменено: {record.DisplayName} · {field.DisplayName}"
+            : $"Изменён ключ и создано записей texts.res: {automaticTexts.Count:N0}.";
+        if (automaticTextError is not null)
+        {
+            ShowError($"Поле изменено, но автотексты не созданы: {automaticTextError}");
+        }
         RaiseCommandStates();
+    }
+
+    private IReadOnlyList<LocalizationEntryViewModel> TryCreateMissingTextsForAddedRecord(
+        RecordRowViewModel record)
+    {
+        if (!record.IsAdded || !HasTextsDocument || record.ExpectedTextKeys.Count == 0 ||
+            record.ExpectedTextKeys.Any(key => string.IsNullOrWhiteSpace(key) || char.IsWhiteSpace(key[^1])))
+        {
+            return [];
+        }
+
+        DatabaseTableViewModel? table = Databases
+            .SelectMany(database => database.Tables)
+            .FirstOrDefault(candidate => candidate.Key == record.TableKey);
+        string identity = record.IdentityValue.Trim();
+        if (table is null || identity.Length == 0 || table.Records.Any(candidate =>
+                !ReferenceEquals(candidate, record) &&
+                candidate.IdentityValue.Trim().Equals(identity, StringComparison.OrdinalIgnoreCase)))
+        {
+            return [];
+        }
+
+        var relatedNames = record.RelatedTexts
+            .Select(entry => entry.ResourceName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (record.ExpectedTextKeys.All(relatedNames.Contains))
+        {
+            return [];
+        }
+
+        return _service.AddMissingTexts(record);
+    }
+
+    private void RegisterAddedTexts(IReadOnlyList<LocalizationEntryViewModel> added)
+    {
+        if (added.Count == 0)
+        {
+            return;
+        }
+
+        foreach (LocalizationEntryViewModel entry in added)
+        {
+            entry.ValueCommitted -= OnLocalizationValueCommitted;
+            entry.ValueCommitted += OnLocalizationValueCommitted;
+            if (!TextResources.Contains(entry))
+            {
+                TextResources.Add(entry);
+            }
+
+            AddTextInsertionChange(entry);
+        }
+
+        OnPropertyChanged(nameof(SelectedRecordHasTexts));
+        OnPropertyChanged(nameof(SelectedRecordTextCount));
+        OnPropertyChanged(nameof(HasChanges));
+        RefreshTextsFilter();
+        RefreshAllCounts();
+        NotifyWorkspaceProperties();
     }
 
     private void OnLocalizationValueCommitted(object? sender, LocalizationValueCommittedEventArgs eventArgs)
@@ -1090,12 +1169,26 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        var seen = new HashSet<(RecordRowViewModel Record, int FieldId)>();
-        var pending = new List<(RecordRowViewModel Record, RecordFieldViewModel Field, string Value, DatabaseFieldState BeforeState)>();
+        var seen = new HashSet<(
+            RecordRowViewModel Record,
+            int FieldId,
+            DatabaseFieldProjectionKind? ProjectionKind,
+            int ProjectionIndex)>();
+        var pending = new List<(
+            RecordRowViewModel Record,
+            RecordFieldViewModel Field,
+            DatabaseFieldProjection? Projection,
+            string Value,
+            DatabaseFieldState BeforeState)>();
         foreach (SpreadsheetPasteCell cell in cells)
         {
+            var identity = (
+                cell.Record,
+                cell.FieldId,
+                cell.Projection?.Kind,
+                cell.Projection?.Index ?? -1);
             if (!SelectedTable.Records.Any(record => ReferenceEquals(record, cell.Record)) ||
-                !seen.Add((cell.Record, cell.FieldId)))
+                !seen.Add(identity))
             {
                 error = "Диапазон вставки содержит неизвестную или повторяющуюся ячейку.";
                 ShowError(error);
@@ -1103,14 +1196,17 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             RecordFieldViewModel? field = cell.Record.GetCell(cell.FieldId);
-            if (field is null || !field.CanEdit)
+            bool canEdit = field is not null && (cell.Projection is null
+                ? field.CanEdit
+                : field.CanEditProjection(cell.Projection));
+            if (!canEdit)
             {
                 error = $"Ячейка «{cell.Record.DisplayName} · поле {cell.FieldId}» доступна только для чтения.";
                 ShowError(error);
                 return false;
             }
 
-            pending.Add((cell.Record, field, cell.Value, field.CaptureState()));
+            pending.Add((cell.Record, field!, cell.Projection, cell.Value, field!.CaptureState()));
         }
 
         var edits = new List<FieldEditFrame>(pending.Count);
@@ -1119,11 +1215,23 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             foreach (var item in pending)
             {
-                item.Field.EditorText = item.Value;
-                if (item.Field.HasError)
+                bool accepted;
+                string? editError = null;
+                if (item.Projection is null)
+                {
+                    item.Field.EditorText = item.Value;
+                    accepted = !item.Field.HasError;
+                    editError = item.Field.ErrorMessage;
+                }
+                else
+                {
+                    accepted = item.Field.TrySetProjectedText(item.Projection, item.Value, out editError);
+                }
+
+                if (!accepted)
                 {
                     throw new InvalidOperationException(
-                        $"{item.Record.DisplayName} · {item.Field.DisplayName}: {item.Field.ErrorMessage}");
+                        $"{item.Record.DisplayName} · {item.Field.DisplayName}: {editError ?? item.Field.ErrorMessage}");
                 }
 
                 DatabaseFieldState afterState = item.Field.CaptureState();
@@ -1156,12 +1264,52 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             return true;
         }
 
-        _undo.Push(edits.Count == 1 ? edits[0] : new FieldBatchEditFrame(edits.ToArray()));
-        _redo.Clear();
         RefreshChangedFields(edits.Select(edit => (edit.Record, edit.Field)));
+        var automaticTexts = new List<LocalizationEntryViewModel>();
+        try
+        {
+            foreach (RecordRowViewModel record in edits.Select(edit => edit.Record).Distinct())
+            {
+                automaticTexts.AddRange(TryCreateMissingTextsForAddedRecord(record));
+            }
+
+            RegisterAddedTexts(automaticTexts);
+        }
+        catch (Exception exception)
+        {
+            foreach (LocalizationEntryViewModel entry in automaticTexts.AsEnumerable().Reverse())
+            {
+                SetAddedTextPresence(entry, shouldBePresent: false);
+            }
+
+            foreach (var item in pending.AsEnumerable().Reverse())
+            {
+                item.Field.RestoreState(item.BeforeState);
+            }
+
+            RefreshChangedFields(pending.Select(item => (item.Record, item.Field)));
+            error = $"Вставка отменена без частичных изменений: {UnwrapMessage(exception)}";
+            ShowError(error);
+            return false;
+        }
+
+        WorkspaceEditFrame fieldFrame = edits.Count == 1 ? edits[0] : new FieldBatchEditFrame(edits.ToArray());
+        WorkspaceEditFrame pasteFrame = automaticTexts.Count == 0
+            ? fieldFrame
+            : new CompositeEditFrame(
+                [
+                    fieldFrame,
+                    new TextPresenceBatchEditFrame(automaticTexts, BeforePresent: false, AfterPresent: true),
+                ],
+                $"Отменена вставка и автотексты: {edits.Count:N0} ячеек.",
+                $"Повторена вставка и автотексты: {edits.Count:N0} ячеек.");
+        _undo.Push(pasteFrame);
+        _redo.Clear();
         RefreshValidationDeferred();
         changedCellCount = edits.Count;
-        StatusText = $"Вставлено из буфера: {changedCellCount:N0} ячеек.";
+        StatusText = automaticTexts.Count == 0
+            ? $"Вставлено из буфера: {changedCellCount:N0} ячеек."
+            : $"Вставлено ячеек: {changedCellCount:N0}; создано записей texts.res: {automaticTexts.Count:N0}.";
         RaiseCommandStates();
         return true;
     }
@@ -1255,6 +1403,31 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         error = null;
         switch (frame)
         {
+            case CompositeEditFrame compositeFrame:
+                WorkspaceEditFrame[] orderedFrames = undo
+                    ? compositeFrame.Frames.Reverse().ToArray()
+                    : compositeFrame.Frames.ToArray();
+                var appliedFrames = new List<WorkspaceEditFrame>(orderedFrames.Length);
+                foreach (WorkspaceEditFrame child in orderedFrames)
+                {
+                    if (TryApplyEditFrame(child, undo, out _, out error))
+                    {
+                        appliedFrames.Add(child);
+                        continue;
+                    }
+
+                    foreach (WorkspaceEditFrame applied in appliedFrames.AsEnumerable().Reverse())
+                    {
+                        TryApplyEditFrame(applied, !undo, out _, out _);
+                    }
+
+                    error ??= "Не удалось атомарно восстановить связанные изменения database.res и texts.res.";
+                    return false;
+                }
+
+                status = undo ? compositeFrame.UndoStatus : compositeFrame.RedoStatus;
+                return true;
+
             case FieldEditFrame fieldFrame:
                 DatabaseFieldState state = undo ? fieldFrame.BeforeState : fieldFrame.AfterState;
                 if (!fieldFrame.Field.RestoreState(state))
@@ -1638,6 +1811,20 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasChanges));
         (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        RefreshRecordsViewSafely();
+    }
+
+    private void RefreshRecordsViewSafely()
+    {
+        if (RecordsView is IEditableCollectionView editableView &&
+            (editableView.IsAddingNew || editableView.IsEditingItem))
+        {
+            Application.Current?.Dispatcher.BeginInvoke(
+                RefreshRecordsViewSafely,
+                DispatcherPriority.DataBind);
+            return;
+        }
+
         RecordsView.Refresh();
     }
 
@@ -1946,6 +2133,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         IReadOnlyList<LocalizationEntryViewModel> Entries,
         bool BeforePresent,
         bool AfterPresent) : WorkspaceEditFrame;
+
+    private sealed record CompositeEditFrame(
+        IReadOnlyList<WorkspaceEditFrame> Frames,
+        string UndoStatus,
+        string RedoStatus) : WorkspaceEditFrame;
 }
 
 internal sealed class RecordFocusRequestedEventArgs(

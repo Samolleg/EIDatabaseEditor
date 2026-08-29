@@ -363,6 +363,63 @@ public sealed class DatabaseField
         }
     }
 
+    public bool CanEditProjection(DatabaseFieldProjection projection)
+    {
+        ArgumentNullException.ThrowIfNull(projection);
+        lock (_editSync)
+        {
+            return IsEditable &&
+                   projection.Kind == DatabaseFieldProjectionKind.Bit &&
+                   projection.Index is >= 0 and < 32 &&
+                   _schema.Kind == DatabaseValueKind.UInt32 &&
+                   _schema.Projections.Contains(projection) &&
+                   Payload.Length == sizeof(uint);
+        }
+    }
+
+    public bool TrySetProjectedValue(
+        DatabaseFieldProjection projection,
+        string value,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(projection);
+        lock (_editSync)
+        {
+            error = null;
+            if (!CanEditProjection(projection))
+            {
+                error = "Эта расшифрованная ячейка доступна только для чтения.";
+                return false;
+            }
+
+            string normalized = value.Trim();
+            bool enabled;
+            if (normalized is "1" || normalized.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                normalized.Equals("да", StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = true;
+            }
+            else if (normalized is "0" || normalized.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                     normalized.Equals("нет", StringComparison.OrdinalIgnoreCase))
+            {
+                enabled = false;
+            }
+            else
+            {
+                error = "Для битовой ячейки введите 0 или 1.";
+                return false;
+            }
+
+            byte[] encoded = Payload.ToArray();
+            uint mask = BinaryPrimitives.ReadUInt32LittleEndian(encoded);
+            uint bit = 1u << projection.Index;
+            mask = enabled ? mask | bit : mask & ~bit;
+            BinaryPrimitives.WriteUInt32LittleEndian(encoded, mask);
+            _editedPayload = encoded.AsSpan().SequenceEqual(OriginalPayload) ? null : encoded;
+            return true;
+        }
+    }
+
     public bool TryGetStringListValues(out IReadOnlyList<string> values)
     {
         lock (_editSync)

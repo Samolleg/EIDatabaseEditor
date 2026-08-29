@@ -115,4 +115,5 @@ internal static class SpreadsheetClipboardText
 internal sealed record SpreadsheetPasteCell(
     RecordRowViewModel Record,
     int FieldId,
-    string Value);
+    string Value,
+    EvilIslands.DatabaseEditor.Core.DatabaseFieldProjection? Projection = null);

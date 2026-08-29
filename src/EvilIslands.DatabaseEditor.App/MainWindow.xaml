@@ -474,7 +474,9 @@
                                                             <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
                                                                 <TextBlock Text="{Binding ResourceName}" FontSize="11" Foreground="{StaticResource SubtleTextBrush}" />
                                                                 <TextBlock Text="  ·  " FontSize="11" Foreground="{StaticResource SubtleTextBrush}" />
-                                                                <TextBlock Text="{Binding StatusText}" FontSize="11">
+                                                                <TextBlock Text="{Binding StatusText}"
+                                                                           ToolTip="{Binding StatusToolTip}"
+                                                                           FontSize="11">
                                                                     <TextBlock.Style>
                                                                         <Style TargetType="TextBlock">
                                                                             <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
@@ -1040,7 +1042,9 @@
                                                     </Style.Triggers>
                                                 </Style>
                                             </Border.Style>
-                                            <TextBlock Text="{Binding CurrentTableStatusText}" FontSize="11">
+                                            <TextBlock Text="{Binding CurrentTableStatusText}"
+                                                       ToolTip="{Binding CurrentTableStatusToolTip}"
+                                                       FontSize="11">
                                                 <TextBlock.Style>
                                                     <Style TargetType="TextBlock">
                                                         <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
