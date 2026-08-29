@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
@@ -1484,7 +1485,7 @@ internal static class Program
             editorBox.Text != originalPrice ||
             editorBox.IsReadOnly ||
             !applyButton.IsEnabled ||
-            editorBox.ToolTip?.ToString()?.Contains("Цена", StringComparison.Ordinal) is not true)
+            AutomationProperties.GetHelpText(editorBox).Contains("Цена", StringComparison.Ordinal) is not true)
         {
             throw new InvalidOperationException(
                 "Строка формул должна показать адрес, полное значение и разрешить редактирование физической ячейки.");
@@ -1548,6 +1549,49 @@ internal static class Program
             {
                 throw new InvalidOperationException(
                     "Undo должен вернуть изменение texts.res, сделанное через строку формул.");
+            }
+
+            RecordRowViewModel recordWithSeveralTexts = materials.Records.First(candidate =>
+                candidate.RelatedTextCount > 1 && candidate.CanEditPrimaryLocalization);
+            DataGridColumn descriptionColumn = recordsGrid.Columns.Single(column => Equals(column.Header, "Описание RU"));
+            string originalDescription = recordWithSeveralTexts.LocalizationDescription;
+            recordsGrid.CurrentCell = new DataGridCellInfo(recordWithSeveralTexts, descriptionColumn);
+            recordsGrid.SelectedCells.Clear();
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(recordWithSeveralTexts, descriptionColumn));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            window.Activate();
+            if (editorBox.IsReadOnly || !window.TryFocusFormulaEditor(selectAll: true) ||
+                !editorBox.IsKeyboardFocusWithin)
+            {
+                throw new InvalidOperationException(
+                    "Щелчок/F2 по строке формул должен передавать ей реальный клавиатурный фокус для редактируемого Описания RU.");
+            }
+
+            string changedDescription = originalDescription + " fx-focus";
+            editorBox.SelectedText = changedDescription;
+            if (editorBox.Text != changedDescription)
+            {
+                throw new InvalidOperationException(
+                    "Текстовое поле строки формул должно принимать пользовательский ввод после получения фокуса.");
+            }
+
+            applyButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (recordWithSeveralTexts.LocalizationDescription != changedDescription || viewModel.ChangeCount != 1)
+            {
+                var formulaErrorText = (TextBlock)window.FindName("FormulaErrorText");
+                throw new InvalidOperationException(
+                    "Кнопка применения строки формул должна записывать выбранное Описание RU через общий журнал изменений. " +
+                    $"Поле=«{editorBox.Text}», модель=«{recordWithSeveralTexts.LocalizationDescription}», " +
+                    $"изменений={viewModel.ChangeCount}, ошибка=«{formulaErrorText.Text}».");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (recordWithSeveralTexts.LocalizationDescription != originalDescription || viewModel.ChangeCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Undo должен вернуть ввод из сфокусированной строки формул для Описания RU.");
             }
         }
 

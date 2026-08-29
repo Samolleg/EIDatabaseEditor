@@ -70,6 +70,41 @@
             <Setter Property="FontSize" Value="15" />
         </Style>
 
+        <Style x:Key="FormulaTextBox" TargetType="TextBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="CaretBrush" Value="{StaticResource TextBrush}" />
+            <Setter Property="SelectionBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="FormulaInputBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="FormulaInputBorder" Property="Background" Value="#1D2723" />
+                            </Trigger>
+                            <Trigger Property="IsReadOnly" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+                                <Setter Property="CaretBrush" Value="Transparent" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <DataTemplate x:Key="SpreadsheetColumnHeaderTemplate">
             <StackPanel Margin="0,3"
                         ToolTip="{Binding HeaderToolTip}"
@@ -854,7 +889,7 @@
                                   Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Records}">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="10" />
+                                    <RowDefinition Height="0" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="10" />
                                     <RowDefinition Height="*" />
@@ -956,61 +991,73 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <Border Grid.Row="2"
-                                        Background="{StaticResource SurfaceBrush}"
+                                <Border x:Name="FormulaBarBorder"
+                                        Grid.Row="2"
+                                        Background="{StaticResource WindowBrush}"
                                         BorderBrush="{StaticResource StrongBorderBrush}"
-                                        BorderThickness="1"
-                                        CornerRadius="8"
-                                        Padding="6">
+                                        BorderThickness="1,1,1,0"
+                                        CornerRadius="7,7,0,0"
+                                        Padding="0">
                                     <Grid>
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="82" />
-                                            <ColumnDefinition Width="40" />
+                                            <ColumnDefinition Width="76" />
+                                            <ColumnDefinition Width="34" />
                                             <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="30" />
+                                            <ColumnDefinition Width="30" />
                                         </Grid.ColumnDefinitions>
                                         <TextBox x:Name="FormulaAddressBox"
                                                  Grid.Column="0"
-                                                 Style="{StaticResource DarkTextBox}"
-                                                 Height="34"
-                                                 Padding="9,5"
+                                                 Style="{StaticResource FormulaTextBox}"
+                                                 Height="32"
+                                                 Padding="6,4"
                                                  IsReadOnly="True"
+                                                 Focusable="False"
+                                                 IsTabStop="False"
                                                  HorizontalContentAlignment="Center"
                                                  FontFamily="Cascadia Mono, Consolas"
                                                  FontWeight="SemiBold"
                                                  ToolTip="Адрес текущей ячейки в видимой таблице" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="fx"
-                                                   Foreground="{StaticResource AccentBrush}"
-                                                   FontFamily="Georgia"
-                                                   FontStyle="Italic"
-                                                   FontSize="15"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"
-                                                   ToolTip="Полное значение выбранной ячейки" />
+                                        <Border Grid.Column="1"
+                                                BorderBrush="{StaticResource StrongBorderBrush}"
+                                                BorderThickness="1,0"
+                                                Background="#181B1A">
+                                            <TextBlock Text="fx"
+                                                       Foreground="{StaticResource AccentBrush}"
+                                                       FontFamily="Georgia"
+                                                       FontStyle="Italic"
+                                                       FontSize="14"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
                                         <TextBox x:Name="FormulaEditorBox"
                                                  Grid.Column="2"
-                                                 Style="{StaticResource DarkTextBox}"
-                                                 Height="34"
-                                                 Padding="10,5"
+                                                 Style="{StaticResource FormulaTextBox}"
+                                                 Height="32"
+                                                 Padding="9,4"
                                                  AcceptsReturn="True"
                                                  TextWrapping="NoWrap"
                                                  HorizontalScrollBarVisibility="Auto"
                                                  VerticalScrollBarVisibility="Auto"
+                                                 Cursor="IBeam"
+                                                 IsTabStop="True"
+                                                 PreviewMouseLeftButtonDown="FormulaEditorBox_PreviewMouseLeftButtonDown"
                                                  PreviewKeyDown="FormulaEditorBox_PreviewKeyDown"
-                                                 ToolTip="Enter — применить · Esc — отменить · Alt+Enter — перенос строки" />
+                                                 AutomationProperties.HelpText="Редактирование полного значения выбранной ячейки. Enter — применить, Esc — отменить." />
                                         <Button x:Name="FormulaCancelButton"
                                                 Grid.Column="3"
                                                 Style="{StaticResource SmallIconButton}"
                                                 Content="×"
-                                                Width="34"
-                                                Height="34"
-                                                Margin="6,0,0,0"
+                                                Width="30"
+                                                Height="32"
+                                                Margin="0"
+                                                Background="Transparent"
+                                                BorderBrush="{StaticResource StrongBorderBrush}"
+                                                BorderThickness="1,0,0,0"
                                                 Click="FormulaCancelButton_Click"
                                                 ToolTip="Отменить ввод (Esc)" />
                                         <Button x:Name="FormulaApplyButton"
@@ -1018,9 +1065,12 @@
                                                 Style="{StaticResource SmallIconButton}"
                                                 Content="✓"
                                                 Foreground="{StaticResource AccentBrush}"
-                                                Width="34"
-                                                Height="34"
-                                                Margin="4,0,0,0"
+                                                Width="30"
+                                                Height="32"
+                                                Margin="0"
+                                                Background="Transparent"
+                                                BorderBrush="{StaticResource StrongBorderBrush}"
+                                                BorderThickness="1,0,0,0"
                                                 Click="FormulaApplyButton_Click"
                                                 ToolTip="Применить значение (Enter)" />
                                         <TextBlock x:Name="FormulaErrorText"
@@ -1035,7 +1085,7 @@
                                     </Grid>
                                 </Border>
 
-                                <Border Grid.Row="4" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
+                                <Border x:Name="RecordsTableBorder" Grid.Row="4" CornerRadius="0,0,10,10" ClipToBounds="True" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
                                     <Grid>
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="*" />

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
@@ -169,6 +170,7 @@ public partial class MainWindow : Window
         }
 
         PersistCurrentColumnWidths();
+        ClearFormulaBar();
         RecordsGrid.FrozenColumnCount = 0;
         const int fixedColumnCount = 1;
         while (RecordsGrid.Columns.Count > fixedColumnCount)
@@ -623,18 +625,34 @@ public partial class MainWindow : Window
 
         if (!TryCreateFormulaCellContext(out FormulaCellContext context))
         {
-            ClearFormulaBar();
+            // Moving keyboard focus from the grid into the formula editor can make WPF
+            // temporarily invalidate DataGrid.CurrentCell. Excel keeps the last active
+            // cell in this situation, and so must we; otherwise the editor becomes
+            // read-only between the mouse-down and the button/Enter command.
+            if (_formulaCellContext is null)
+            {
+                ClearFormulaBar();
+            }
+
             return;
         }
 
+        bool keepPendingInput = FormulaEditorBox.IsKeyboardFocusWithin &&
+                                _formulaCellContext is not null &&
+                                ReferenceEquals(_formulaCellContext.Item, context.Item) &&
+                                ReferenceEquals(_formulaCellContext.Column, context.Column);
+        string pendingInput = FormulaEditorBox.Text;
         _formulaCellContext = context;
         FormulaAddressBox.Text = context.Address;
         FormulaAddressBox.ToolTip = $"{context.Address} · {context.Label}";
-        FormulaEditorBox.Text = context.ReadValue();
+        FormulaEditorBox.Text = keepPendingInput ? pendingInput : context.ReadValue();
         FormulaEditorBox.IsReadOnly = !context.IsEditable;
-        FormulaEditorBox.ToolTip = context.IsEditable
-            ? $"{context.Label}\nEnter — применить · Esc — отменить · Alt+Enter — перенос строки"
-            : $"{context.Label}\nВычисляемое или служебное поле доступно только для чтения.";
+        FormulaEditorBox.ToolTip = null;
+        AutomationProperties.SetHelpText(
+            FormulaEditorBox,
+            context.IsEditable
+                ? $"{context.Label}. Enter — применить, Esc — отменить, Alt+Enter — перенос строки."
+                : $"{context.Label}. Вычисляемое или служебное поле доступно только для чтения.");
         FormulaApplyButton.IsEnabled = context.IsEditable;
         FormulaCancelButton.IsEnabled = context.IsEditable;
         SetFormulaError(null);
@@ -786,7 +804,8 @@ public partial class MainWindow : Window
         FormulaAddressBox.ToolTip = "Адрес текущей ячейки в видимой таблице";
         FormulaEditorBox.Text = string.Empty;
         FormulaEditorBox.IsReadOnly = true;
-        FormulaEditorBox.ToolTip = "Выберите ячейку таблицы.";
+        FormulaEditorBox.ToolTip = null;
+        AutomationProperties.SetHelpText(FormulaEditorBox, "Выберите ячейку таблицы.");
         FormulaApplyButton.IsEnabled = false;
         FormulaCancelButton.IsEnabled = false;
         SetFormulaError(null);
@@ -807,6 +826,44 @@ public partial class MainWindow : Window
             ApplyFormulaEdit();
             e.Handled = true;
         }
+    }
+
+    private void FormulaEditorBox_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not TextBox editor || editor.IsReadOnly || editor.IsKeyboardFocusWithin)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (!TryFocusFormulaEditor(selectAll: false))
+        {
+            return;
+        }
+
+        int characterIndex = editor.GetCharacterIndexFromPoint(e.GetPosition(editor), snapToText: true);
+        editor.CaretIndex = characterIndex >= 0 ? characterIndex : editor.Text.Length;
+    }
+
+    internal bool TryFocusFormulaEditor(bool selectAll)
+    {
+        if (_formulaCellContext is null)
+        {
+            RefreshFormulaBar();
+        }
+
+        if (_formulaCellContext?.IsEditable is not true || FormulaEditorBox.IsReadOnly)
+        {
+            return false;
+        }
+
+        bool focused = FormulaEditorBox.Focus();
+        if (focused && selectAll)
+        {
+            FormulaEditorBox.SelectAll();
+        }
+
+        return focused && FormulaEditorBox.IsKeyboardFocusWithin;
     }
 
     private void FormulaCancelButton_Click(object sender, RoutedEventArgs e) => CancelFormulaEdit();
@@ -846,14 +903,6 @@ public partial class MainWindow : Window
         if (context?.WriteValue is null)
         {
             error = "Выбранная ячейка доступна только для чтения.";
-            return false;
-        }
-
-        if (!ReferenceEquals(RecordsGrid.CurrentCell.Item, context.Item) ||
-            !ReferenceEquals(RecordsGrid.CurrentCell.Column, context.Column))
-        {
-            error = "Выбранная ячейка изменилась; повторите ввод для текущей ячейки.";
-            RefreshFormulaBar();
             return false;
         }
 
@@ -1473,6 +1522,15 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.F2 &&
+            _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
+            !FormulaEditorBox.IsKeyboardFocusWithin &&
+            TryFocusFormulaEditor(selectAll: true))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers != ModifierKeys.Control || e.Key is not (Key.Z or Key.Y) ||
             Keyboard.FocusedElement is TextBox)
         {
