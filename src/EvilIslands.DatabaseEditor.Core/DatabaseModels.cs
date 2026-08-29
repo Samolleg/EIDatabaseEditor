@@ -363,11 +363,40 @@ public sealed class DatabaseField
         }
     }
 
-    internal bool TryGetStringListValues(out IReadOnlyList<string> values)
+    public bool TryGetStringListValues(out IReadOnlyList<string> values)
     {
         lock (_editSync)
         {
             return DatabaseValueCodec.TryDecodeStringListValues(_schema, Payload, out values);
+        }
+    }
+
+    public bool TrySetStringListValues(
+        IReadOnlyList<string> values,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        lock (_editSync)
+        {
+            error = null;
+            if (!IsEditable)
+            {
+                error = "Это поле пока доступно только для чтения.";
+                return false;
+            }
+
+            if (!DatabaseValueCodec.TryEncodeStringListValues(
+                    _schema,
+                    values,
+                    OriginalPayload,
+                    out byte[] encoded,
+                    out error))
+            {
+                return false;
+            }
+
+            _editedPayload = encoded.AsSpan().SequenceEqual(OriginalPayload) ? null : encoded;
+            return true;
         }
     }
 
@@ -908,6 +937,44 @@ internal static class DatabaseValueCodec
         out byte[] encoded,
         out string? error)
     {
+        string[] tokens = SplitStringListText(text);
+        return TryEncodeStringListValues(
+            tokens,
+            original,
+            fixedElementSize,
+            out encoded,
+            out error);
+    }
+
+    public static bool TryEncodeStringListValues(
+        FieldSchema schema,
+        IReadOnlyList<string> values,
+        ReadOnlySpan<byte> original,
+        out byte[] encoded,
+        out string? error)
+    {
+        if (schema.Kind is not (DatabaseValueKind.StringList or DatabaseValueKind.FixedStringList))
+        {
+            encoded = [];
+            error = "Поле не является строковым списком.";
+            return false;
+        }
+
+        return TryEncodeStringListValues(
+            values,
+            original,
+            schema.Kind == DatabaseValueKind.FixedStringList ? schema.FixedElementSize : null,
+            out encoded,
+            out error);
+    }
+
+    private static bool TryEncodeStringListValues(
+        IReadOnlyList<string> values,
+        ReadOnlySpan<byte> original,
+        int? fixedElementSize,
+        out byte[] encoded,
+        out string? error)
+    {
         IReadOnlyList<ChunkSlice> originalChunks = ChunkCodec.ReadList(
             original,
             0,
@@ -920,11 +987,18 @@ internal static class DatabaseValueCodec
             return false;
         }
 
-        string[] tokens = SplitStringListText(text);
         using var output = new MemoryStream();
-        for (int index = 0; index < tokens.Length; index++)
+        for (int index = 0; index < values.Count; index++)
         {
-            byte[] bytes = Windows1251.GetBytes(tokens[index]);
+            string value = values[index] ?? string.Empty;
+            if (value.Length == 0)
+            {
+                encoded = [];
+                error = $"Элемент {index + 1}: пустые строки в списке не поддерживаются.";
+                return false;
+            }
+
+            byte[] bytes = Windows1251.GetBytes(value);
             ChunkSlice? template = originalChunks.Count == 0
                 ? null
                 : originalChunks[Math.Min(index, originalChunks.Count - 1)];
@@ -1011,10 +1085,87 @@ internal static class DatabaseValueCodec
             ? []
             : text.Split([',', ';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-    private static string[] SplitStringListText(string text) =>
-        string.IsNullOrWhiteSpace(text)
-            ? []
-            : text.Split([';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    private static string[] SplitStringListText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return [];
+        }
+
+        if (!HasBalancedEmbeddedDelimiters(text))
+        {
+            return text.Split(
+                [';', '\r', '\n'],
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        var values = new List<string>();
+        var token = new StringBuilder();
+        var delimiters = new Stack<char>();
+        foreach (char character in text)
+        {
+            bool isTopLevelSeparator = delimiters.Count == 0 &&
+                character is ';' or '\r' or '\n';
+            if (isTopLevelSeparator)
+            {
+                AddStringListToken(values, token);
+                continue;
+            }
+
+            token.Append(character);
+            UpdateEmbeddedDelimiterStack(delimiters, character);
+        }
+
+        AddStringListToken(values, token);
+        return values.ToArray();
+    }
+
+    private static bool HasBalancedEmbeddedDelimiters(string text)
+    {
+        var delimiters = new Stack<char>();
+        foreach (char character in text)
+        {
+            if (!UpdateEmbeddedDelimiterStack(delimiters, character))
+            {
+                return false;
+            }
+        }
+
+        return delimiters.Count == 0;
+    }
+
+    private static bool UpdateEmbeddedDelimiterStack(Stack<char> delimiters, char character)
+    {
+        if (character is '[' or '{')
+        {
+            delimiters.Push(character);
+            return true;
+        }
+
+        if (character is not (']' or '}'))
+        {
+            return true;
+        }
+
+        char expected = character == ']' ? '[' : '{';
+        if (delimiters.Count == 0 || delimiters.Peek() != expected)
+        {
+            return false;
+        }
+
+        delimiters.Pop();
+        return true;
+    }
+
+    private static void AddStringListToken(ICollection<string> values, StringBuilder token)
+    {
+        string value = token.ToString().Trim();
+        token.Clear();
+        if (value.Length > 0)
+        {
+            values.Add(value);
+        }
+    }
 
     private static bool TryEncodeHex(string text, out byte[] encoded, out string? error)
     {

@@ -3,7 +3,9 @@ namespace EvilIslands.DatabaseEditor.Verification;
 internal sealed record VerificationOptions(
     IReadOnlyList<string> SourcePaths,
     bool RequireSources,
-    bool ShowHelp)
+    bool ShowHelp,
+    string? RepairSourcePath,
+    string? RepairReferencePath)
 {
     private static readonly string[] DefaultSourcePaths =
     [
@@ -18,6 +20,8 @@ internal sealed record VerificationOptions(
         List<string> sources = [];
         var requireSources = false;
         var showHelp = false;
+        string? repairSourcePath = null;
+        string? repairReferencePath = null;
 
         for (var index = 0; index < args.Length; index++)
         {
@@ -36,6 +40,24 @@ internal sealed record VerificationOptions(
                     requireSources = true;
                     break;
 
+                case "--repair-source":
+                    if (++index >= args.Length || string.IsNullOrWhiteSpace(args[index]))
+                    {
+                        throw new ArgumentException("Параметр --repair-source требует путь к повреждённому database.res.");
+                    }
+
+                    repairSourcePath = Path.GetFullPath(args[index]);
+                    break;
+
+                case "--repair-reference":
+                    if (++index >= args.Length || string.IsNullOrWhiteSpace(args[index]))
+                    {
+                        throw new ArgumentException("Параметр --repair-reference требует путь к чистой опорной базе.");
+                    }
+
+                    repairReferencePath = Path.GetFullPath(args[index]);
+                    break;
+
                 case "--help":
                 case "-h":
                 case "/?":
@@ -47,7 +69,20 @@ internal sealed record VerificationOptions(
             }
         }
 
-        if (sources.Count == 0)
+        bool repairRequested = repairSourcePath is not null || repairReferencePath is not null;
+        if (repairRequested && (repairSourcePath is null || repairReferencePath is null))
+        {
+            throw new ArgumentException(
+                "Режим восстановления требует одновременно --repair-source и --repair-reference.");
+        }
+
+        if (repairRequested && sources.Count > 0)
+        {
+            throw new ArgumentException(
+                "Режим восстановления нельзя объединять с обычными параметрами --source.");
+        }
+
+        if (sources.Count == 0 && !repairRequested)
         {
             sources.AddRange(DefaultSourcePaths.Select(Path.GetFullPath));
         }
@@ -56,6 +91,11 @@ internal sealed record VerificationOptions(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        return new VerificationOptions(distinctSources, requireSources, showHelp);
+        return new VerificationOptions(
+            distinctSources,
+            requireSources,
+            showHelp,
+            repairSourcePath,
+            repairReferencePath);
     }
 }

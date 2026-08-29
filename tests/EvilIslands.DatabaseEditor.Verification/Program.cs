@@ -29,6 +29,14 @@ internal static class Program
             return 0;
         }
 
+        if (options.RepairSourcePath is not null && options.RepairReferencePath is not null)
+        {
+            return await RepairEditorSplitStringListsAsync(
+                options.RepairSourcePath,
+                options.RepairReferencePath,
+                log).ConfigureAwait(false);
+        }
+
         string[] existingSources = options.SourcePaths.Where(File.Exists).ToArray();
         foreach (string missingSource in options.SourcePaths.Except(existingSources, StringComparer.OrdinalIgnoreCase))
         {
@@ -68,6 +76,82 @@ internal static class Program
             }
         }
 
+        log.PrintSummary();
+        return log.Failures.Count == 0 ? 0 : 1;
+    }
+
+    private static async Task<int> RepairEditorSplitStringListsAsync(
+        string sourcePath,
+        string referencePath,
+        VerificationLog log)
+    {
+        if (!File.Exists(sourcePath) || !File.Exists(referencePath))
+        {
+            log.Fail(
+                $"Для восстановления нужны оба существующих файла: source={sourcePath}; reference={referencePath}.");
+            log.PrintSummary();
+            return 1;
+        }
+
+        SafeStagingArea staging = SafeStagingArea.Create();
+        log.Info($"Восстановленная копия создаётся только здесь: {staging.RootPath}");
+        FileSnapshot sourceBefore = await FileSnapshot.CaptureAsync(sourcePath).ConfigureAwait(false);
+        FileSnapshot referenceBefore = await FileSnapshot.CaptureAsync(referencePath).ConfigureAwait(false);
+        DatabaseDocument source = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        DatabaseDocument reference = await DatabaseDocument.OpenAsync(referencePath).ConfigureAwait(false);
+
+        IReadOnlyList<EditorSplitStringListRepairResult> candidates =
+            EditorSplitStringListRepair.FindCandidates(source, reference);
+        if (candidates.Count == 0)
+        {
+            log.Fail("Не найдено ни одного доказуемо разделённого StringList-поля; файл не создавался.");
+            log.PrintSummary();
+            return 1;
+        }
+
+        foreach (EditorSplitStringListRepairResult candidate in candidates)
+        {
+            log.Info(
+                $"Кандидат: {candidate.TableKey}[{candidate.RecordIndex}] " +
+                $"«{candidate.RecordName}»/field-{candidate.FieldId} «{candidate.FieldName}»: " +
+                $"{candidate.OriginalElementCount} -> {candidate.RepairedElementCount} элементов, " +
+                $"склеек: {candidate.JoinedFragmentGroups}.");
+        }
+
+        IReadOnlyList<EditorSplitStringListRepairResult> repaired =
+            EditorSplitStringListRepair.Repair(source, reference);
+        log.Assert(
+            repaired.SequenceEqual(candidates),
+            "Набор применённых исправлений совпадает с предварительно найденными кандидатами.");
+
+        string outputPath = staging.GetNewOutputPath(
+            $"{Path.GetFileNameWithoutExtension(sourcePath)}.repaired-{Guid.NewGuid():N}.res");
+        staging.AssertOutputPath(outputPath, [sourcePath, referencePath]);
+        SaveResult saved = await source.SaveAsAsync(outputPath).ConfigureAwait(false);
+        log.Assert(
+            saved.ReopenedSuccessfully && File.Exists(outputPath),
+            "Восстановленная копия записана в staging и повторно открыта Core.");
+
+        DatabaseDocument reopened = await DatabaseDocument.OpenAsync(outputPath).ConfigureAwait(false);
+        AssertResourceIdentity(
+            ResArchiveDocument.Open(sourcePath),
+            ResArchiveDocument.Open(outputPath),
+            changedResourceName: "units.udb",
+            log);
+        ValidationDiagnostic[] blocking = reopened.Validate()
+            .Where(diagnostic => diagnostic.IsBlocking)
+            .ToArray();
+        log.Assert(blocking.Length == 0, "Восстановленная копия не содержит блокирующих ошибок.");
+        log.Assert(
+            EditorSplitStringListRepair.FindCandidates(reopened, reference).Count == 0,
+            "После повторного открытия доказуемо разделённых StringList-полей не осталось.");
+
+        FileSnapshot sourceAfter = await FileSnapshot.CaptureAsync(sourcePath).ConfigureAwait(false);
+        FileSnapshot referenceAfter = await FileSnapshot.CaptureAsync(referencePath).ConfigureAwait(false);
+        log.Assert(sourceBefore.ContentEquals(sourceAfter), "Повреждённый источник не изменён режимом восстановления.");
+        log.Assert(referenceBefore.ContentEquals(referenceAfter), "Опорная база не изменена режимом восстановления.");
+        log.Info($"REPAIRED_OUTPUT={outputPath}");
+        log.Info($"REPAIRED_SHA256={saved.Sha256}");
         log.PrintSummary();
         return log.Failures.Count == 0 ? 0 : 1;
     }
@@ -155,6 +239,7 @@ internal static class Program
                 allSourcePaths,
                 staging,
                 log).ConfigureAwait(false);
+            await VerifyNestedStringListDelimiterSafetyAsync(sourcePath, log).ConfigureAwait(false);
 
             CoreDocumentAdapter editedDocument = await log.MeasureAsync(
                 "Повторное открытие для тестового изменения",
@@ -312,6 +397,100 @@ internal static class Program
         log.Assert(
             sourceBefore.ContentEquals(sourceAfter),
             "SHA-256 исходного texts.res не изменился после текстовых проверок.");
+    }
+
+    private static async Task VerifyNestedStringListDelimiterSafetyAsync(
+        string sourcePath,
+        VerificationLog log)
+    {
+        DatabaseDocument editable = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        DatabaseDocument reference = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+
+        DatabaseTable? table = null;
+        DatabaseRecord? record = null;
+        DatabaseField? field = null;
+        IReadOnlyList<string>? originalValues = null;
+        string? nestedValue = null;
+        foreach (DatabaseTable candidateTable in editable.Databases.SelectMany(group => group.Tables))
+        {
+            foreach (DatabaseRecord candidateRecord in candidateTable.Records)
+            {
+                foreach (DatabaseField candidateField in candidateRecord.Fields)
+                {
+                    if (!candidateField.TryGetStringListValues(out IReadOnlyList<string> values))
+                    {
+                        continue;
+                    }
+
+                    string? value = values.FirstOrDefault(item =>
+                        item.Contains(';') &&
+                        item.Contains('{') &&
+                        item.Contains('}') &&
+                        item.Contains('[') &&
+                        item.Contains(']'));
+                    if (value is null)
+                    {
+                        continue;
+                    }
+
+                    table = candidateTable;
+                    record = candidateRecord;
+                    field = candidateField;
+                    originalValues = values;
+                    nestedValue = value;
+                    break;
+                }
+
+                if (field is not null)
+                {
+                    break;
+                }
+            }
+
+            if (field is not null)
+            {
+                break;
+            }
+        }
+
+        if (table is null || record is null || field is null || originalValues is null || nestedValue is null)
+        {
+            log.Skip("В источнике нет StringList с вложенной магией для проверки разделителей.");
+            return;
+        }
+
+        DatabaseFieldState originalState = field.CaptureState();
+        bool noOpAccepted = field.TrySetValue(field.EditorText, out string? noOpError);
+        log.Assert(noOpAccepted, $"StringList принимает собственный EditorText: {noOpError ?? "OK"}.");
+        log.Assert(
+            originalState.IsEquivalentTo(field.CaptureState()),
+            "Повторное применение StringList с рунами не меняет границы TLV-элементов.");
+
+        int nestedIndex = originalValues.ToList().IndexOf(nestedValue);
+        string[] fragments = nestedValue.Split(';', StringSplitOptions.None);
+        var splitValues = new List<string>(originalValues.Count + fragments.Length - 1);
+        splitValues.AddRange(originalValues.Take(nestedIndex));
+        splitValues.AddRange(fragments);
+        splitValues.AddRange(originalValues.Skip(nestedIndex + 1));
+        log.Assert(
+            field.TrySetStringListValues(splitValues, out string? splitError),
+            $"Тестовое разделение StringList выполнено только в памяти: {splitError ?? "OK"}.");
+
+        IReadOnlyList<EditorSplitStringListRepairResult> candidates =
+            EditorSplitStringListRepair.FindCandidates(editable, reference);
+        log.Assert(
+            candidates.Any(candidate =>
+                candidate.TableKey == table.Key &&
+                candidate.RecordIndex == record.RecordIndex &&
+                candidate.FieldId == field.Id),
+            "Доказуемо разделённое редактором поле обнаруживается по чистому документу.");
+
+        IReadOnlyList<EditorSplitStringListRepairResult> repaired =
+            EditorSplitStringListRepair.Repair(editable, reference);
+        log.Assert(repaired.Count == candidates.Count, "Все найденные StringList-кандидаты восстановлены в памяти.");
+        log.Assert(
+            originalState.IsEquivalentTo(field.CaptureState()),
+            "Восстановление возвращает точные исходные TLV-границы и payload StringList.");
     }
 
     private static void AssertCoreValidation(
@@ -1360,6 +1539,8 @@ internal static class Program
             "Параметры:\n" +
             "  --source <path>     Проверить указанный RES; параметр можно повторять.\n" +
             "  --require-sources   Вернуть ошибку, если ни один источник не найден.\n" +
+            "  --repair-source <path>     Восстановить доказуемо разделённые StringList в TEMP-копии.\n" +
+            "  --repair-reference <path>  Указать чистую опорную базу для режима восстановления.\n" +
             "  --help, -h          Показать эту справку.");
     }
 }
