@@ -80,6 +80,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         AttachTextsCommand = new RelayCommand(
             () => AttachTextsRequested?.Invoke(this, EventArgs.Empty),
             () => HasDocument && !HasChanges && !IsBusy);
+        AttachSoundsCommand = new RelayCommand(
+            () => AttachSoundsRequested?.Invoke(this, EventArgs.Empty),
+            () => HasDocument && !HasChanges && !IsBusy);
         SaveCommand = new RelayCommand(
             () => SaveRequested?.Invoke(this, EventArgs.Empty),
             () => HasDocument && !IsBusy);
@@ -116,6 +119,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public event EventHandler? AttachTextsRequested;
 
+    public event EventHandler? AttachSoundsRequested;
+
     public event EventHandler? SaveRequested;
 
     public event EventHandler? SaveCopyRequested;
@@ -145,6 +150,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand OpenCommand { get; }
 
     public ICommand AttachTextsCommand { get; }
+
+    public ICommand AttachSoundsCommand { get; }
 
     public ICommand SaveCommand { get; }
 
@@ -294,6 +301,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsCurrentTableReadOnly));
             OnPropertyChanged(nameof(IsCurrentTableEditable));
             OnPropertyChanged(nameof(IsCurrentTableAddable));
+            OnPropertyChanged(nameof(CurrentTableSupportsSounds));
             OnPropertyChanged(nameof(VisibleSpreadsheetColumns));
             OnPropertyChanged(nameof(SpreadsheetColumnCountText));
             OnPropertyChanged(nameof(ColumnModeButtonText));
@@ -335,6 +343,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(HasSelectedRecord));
                 OnPropertyChanged(nameof(SelectedRecordHasTexts));
                 OnPropertyChanged(nameof(SelectedRecordTextCount));
+                OnPropertyChanged(nameof(SelectedRecordHasSoundReferences));
+                OnPropertyChanged(nameof(SelectedRecordSoundCount));
                 (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (AddMissingTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
@@ -347,7 +357,14 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public int SelectedRecordTextCount => SelectedRecord?.RelatedTextCount ?? 0;
 
+    public bool SelectedRecordHasSoundReferences => SelectedRecord?.HasSoundReferences is true;
+
+    public int SelectedRecordSoundCount => SelectedRecord?.ResolvedSoundCount ?? 0;
+
     public bool IsCurrentTableAddable => SelectedTable?.CanAppendRecords is true;
+
+    public bool CurrentTableSupportsSounds => SelectedTable?.Key is
+        "acks.answers" or "acks.cries" or "acks.others" or "quests.briefings";
 
     public IReadOnlyList<SpreadsheetColumnViewModel> VisibleSpreadsheetColumns
     {
@@ -382,7 +399,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public string SpreadsheetColumnCountText => SelectedTable is null
         ? "0 столбцов"
         : $"{VisibleSpreadsheetColumns.Count:N0}/{SelectedTable.Columns.Count:N0} полей" +
-          (HasTextsDocument ? " · +3 RU" : string.Empty);
+          (HasTextsDocument ? " · +3 RU" : string.Empty) +
+          (HasSoundArchives && CurrentTableSupportsSounds ? " · +2 звук" : string.Empty);
 
     public string ColumnModeButtonText => ShowAllColumns ? "Понятные поля" : "Технические поля";
 
@@ -544,6 +562,20 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ? $"✓ {TextsFileName} · {TextResourceCount:N0}"
         : "＋ Подключить texts.res…";
 
+    public bool HasSoundArchives => (_workspace?.SoundArchives.Count ?? 0) > 0;
+
+    public int SoundArchiveCount => _workspace?.SoundArchives.Count ?? 0;
+
+    public int SoundResourceCount => _workspace?.SoundResourceCount ?? 0;
+
+    public string SoundArchivePaths => HasSoundArchives
+        ? string.Join(Environment.NewLine, _workspace!.SoundArchives.Select(archive => archive.SourcePath))
+        : "Подключите speech.res, sfx.res или другой RES со звуками.";
+
+    public string AttachSoundsButtonText => HasSoundArchives
+        ? $"♪ Звук · {SoundArchiveCount:N0} RES · {SoundResourceCount:N0} файлов"
+        : "♪ Подключить звуковые RES…";
+
     public int ResourceCount => Resources.Count;
 
     public int DatabaseCount => Databases.Count;
@@ -632,6 +664,36 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         catch (Exception exception)
         {
             ShowError($"Не удалось подключить texts.res: {UnwrapMessage(exception)}");
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyText = string.Empty;
+        }
+    }
+
+    public async Task AttachSoundPathsAsync(IReadOnlyList<string> paths)
+    {
+        if (_workspace is null || HasChanges || IsBusy || paths.Count == 0)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        BusyText = "Чтение каталогов звуковых RES…";
+        NotificationMessage = null;
+        try
+        {
+            WorkspaceSnapshot workspace = await _service.AttachSoundsAsync(paths, CancellationToken.None);
+            ApplyWorkspace(workspace);
+            NotificationIsError = false;
+            NotificationMessage =
+                $"Подключено звуковых RES: {workspace.SoundArchives.Count:N0}; найдено WAV/MP3/OGG: {workspace.SoundResourceCount:N0}.";
+            StatusText = "Связи реплик и брифингов со звуком обновлены.";
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Не удалось подключить звуковой RES: {UnwrapMessage(exception)}");
         }
         finally
         {
@@ -1572,6 +1634,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                      .Where(record => record.RelatedTexts.Contains(entry)))
         {
             record.RefreshLocalizationState();
+            _service.RefreshRelatedSounds(record);
         }
     }
 
@@ -1780,6 +1843,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             record.RefreshState();
             _service.RefreshRelatedTexts(record);
+            _service.RefreshRelatedSounds(record);
             if (record.IsAdded)
             {
                 string key = GetRecordInsertionChangeKey(record);
@@ -1995,6 +2059,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(TextResourceCount));
         OnPropertyChanged(nameof(TextsStatusText));
         OnPropertyChanged(nameof(AttachTextsButtonText));
+        OnPropertyChanged(nameof(HasSoundArchives));
+        OnPropertyChanged(nameof(SoundArchiveCount));
+        OnPropertyChanged(nameof(SoundResourceCount));
+        OnPropertyChanged(nameof(SoundArchivePaths));
+        OnPropertyChanged(nameof(AttachSoundsButtonText));
         OnPropertyChanged(nameof(HasChanges));
     }
 
@@ -2020,6 +2089,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         (OpenCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (AttachTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (AttachSoundsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (ToggleColumnModeCommand as RelayCommand)?.RaiseCanExecuteChanged();

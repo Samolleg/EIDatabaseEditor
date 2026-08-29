@@ -28,6 +28,8 @@ public partial class MainWindow : Window
     private const string LocalizationKeyColumnIdentity = "texts:key";
     private const string LocalizationTitleColumnIdentity = "texts:title";
     private const string LocalizationDescriptionColumnIdentity = "texts:description";
+    private const string SoundSummaryColumnIdentity = "sound:summary";
+    private const string SoundPathColumnIdentity = "sound:path";
     private static readonly IValueConverter ProjectionConverter = new SpreadsheetProjectionConverter();
     private readonly MainWindowViewModel _viewModel;
     private readonly EditorPreferencesStore _preferences;
@@ -35,6 +37,8 @@ public partial class MainWindow : Window
     private DataGridColumn? _localizationKeyColumn;
     private DataGridColumn? _localizationTitleColumn;
     private DataGridColumn? _localizationDescriptionColumn;
+    private DataGridColumn? _soundSummaryColumn;
+    private DataGridColumn? _soundPathColumn;
     private FormulaCellContext? _formulaCellContext;
     private MainWindowViewModel? _spreadsheetViewModel;
     private HwndSource? _windowSource;
@@ -65,6 +69,7 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
         _viewModel.OpenFileRequested += ViewModel_OpenFileRequested;
         _viewModel.AttachTextsRequested += ViewModel_AttachTextsRequested;
+        _viewModel.AttachSoundsRequested += ViewModel_AttachSoundsRequested;
         _viewModel.SaveRequested += ViewModel_SaveRequested;
         _viewModel.SaveCopyRequested += ViewModel_SaveCopyRequested;
         _viewModel.SearchFocusRequested += ViewModel_SearchFocusRequested;
@@ -140,6 +145,27 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ViewModel_AttachSoundsRequested(object? sender, EventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Подключить RES со звуковыми файлами",
+            Filter = "Звуковые RES (*.res)|*.res|Все файлы (*.*)|*.*",
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Multiselect = true,
+            RestoreDirectory = true,
+            InitialDirectory = _viewModel.HasDocument
+                ? _viewModel.SourceDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+
+        if (dialog.ShowDialog(this) is true)
+        {
+            await _viewModel.AttachSoundPathsAsync(dialog.FileNames);
+        }
+    }
+
     private void SpreadsheetViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(MainWindowViewModel.SelectedTable) or
@@ -159,6 +185,14 @@ public partial class MainWindow : Window
         if (e.PropertyName is nameof(MainWindowViewModel.ChangeCount) or nameof(MainWindowViewModel.HasChanges))
         {
             Dispatcher.BeginInvoke(RefreshFormulaBar, DispatcherPriority.DataBind);
+            return;
+        }
+
+        if (e.PropertyName == nameof(MainWindowViewModel.SelectedRecord))
+        {
+            Dispatcher.BeginInvoke(
+                () => FindVisualDescendant<ScrollViewer>(SoundLinksGrid)?.ScrollToLeftEnd(),
+                DispatcherPriority.DataBind);
         }
     }
 
@@ -182,6 +216,8 @@ public partial class MainWindow : Window
         _localizationKeyColumn = null;
         _localizationTitleColumn = null;
         _localizationDescriptionColumn = null;
+        _soundSummaryColumn = null;
+        _soundPathColumn = null;
         if (_spreadsheetViewModel?.SelectedTable is null)
         {
             _columnLayoutTableKey = null;
@@ -269,6 +305,11 @@ public partial class MainWindow : Window
         if (!localizationColumnsAdded && _spreadsheetViewModel.HasTextsDocument)
         {
             AddLocalizationColumns(elementStyle, editingStyle, tableKey);
+        }
+
+        if (_spreadsheetViewModel.HasSoundArchives && _spreadsheetViewModel.CurrentTableSupportsSounds)
+        {
+            AddSoundColumns(elementStyle, tableKey);
         }
 
         _columnLayoutTableKey = tableKey;
@@ -399,6 +440,47 @@ public partial class MainWindow : Window
         RecordsGrid.FrozenColumnCount = Math.Min(frozenColumns.Count, RecordsGrid.Columns.Count);
     }
 
+    private void AddSoundColumns(Style elementStyle, string tableKey)
+    {
+        var soundHeaderStyle = (Style)FindResource("SoundColumnHeaderStyle");
+        _soundSummaryColumn = new DataGridTextColumn
+        {
+            Header = "Аудио",
+            Binding = new Binding(nameof(RecordRowViewModel.SoundSummary)),
+            ElementStyle = elementStyle,
+            HeaderStyle = soundHeaderStyle,
+            CellStyle = CreateSoundCellStyle(nameof(RecordRowViewModel.SoundSummary)),
+            IsReadOnly = true,
+            MinWidth = 110,
+            MaxWidth = 240,
+            Width = new DataGridLength(GetRememberedColumnWidth(
+                tableKey,
+                SoundSummaryColumnIdentity,
+                150,
+                110,
+                240)),
+        };
+        _soundPathColumn = new DataGridTextColumn
+        {
+            Header = "Файл в звуковом RES",
+            Binding = new Binding(nameof(RecordRowViewModel.PrimarySoundPath)),
+            ElementStyle = elementStyle,
+            HeaderStyle = soundHeaderStyle,
+            CellStyle = CreateSoundCellStyle(nameof(RecordRowViewModel.PrimarySoundPath)),
+            IsReadOnly = true,
+            MinWidth = 210,
+            MaxWidth = 680,
+            Width = new DataGridLength(GetRememberedColumnWidth(
+                tableKey,
+                SoundPathColumnIdentity,
+                360,
+                210,
+                680)),
+        };
+        RecordsGrid.Columns.Add(_soundSummaryColumn);
+        RecordsGrid.Columns.Add(_soundPathColumn);
+    }
+
     private double GetRememberedColumnWidth(
         string tableKey,
         string columnIdentity,
@@ -426,6 +508,8 @@ public partial class MainWindow : Window
         AddWidth(LocalizationKeyColumnIdentity, _localizationKeyColumn);
         AddWidth(LocalizationTitleColumnIdentity, _localizationTitleColumn);
         AddWidth(LocalizationDescriptionColumnIdentity, _localizationDescriptionColumn);
+        AddWidth(SoundSummaryColumnIdentity, _soundSummaryColumn);
+        AddWidth(SoundPathColumnIdentity, _soundPathColumn);
         if (widths.Count > 0)
         {
             _preferences.RememberColumnWidths(_columnLayoutTableKey, widths);
@@ -491,6 +575,26 @@ public partial class MainWindow : Window
         selectedTrigger.Setters.Add(new Setter(Control.BorderBrushProperty, FindResource("AccentBrush")));
         selectedTrigger.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
         style.Triggers.Add(selectedTrigger);
+        return style;
+    }
+
+    private Style CreateSoundCellStyle(string toolTipProperty)
+    {
+        var baseStyle = (Style)Application.Current.FindResource(typeof(DataGridCell));
+        var style = new Style(typeof(DataGridCell), baseStyle);
+        style.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("SoundSurfaceBrush")));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("SoundTextBrush")));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 0, 8, 0)));
+        style.Setters.Add(new Setter(ToolTipService.ToolTipProperty, new Binding(toolTipProperty)));
+
+        var missingTrigger = new DataTrigger
+        {
+            Binding = new Binding(nameof(RecordRowViewModel.HasMissingSounds)),
+            Value = true,
+        };
+        missingTrigger.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("WarningSurfaceBrush")));
+        missingTrigger.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("WarningBrush")));
+        style.Triggers.Add(missingTrigger);
         return style;
     }
 
@@ -1843,6 +1947,7 @@ public partial class MainWindow : Window
 
         _viewModel.OpenFileRequested -= ViewModel_OpenFileRequested;
         _viewModel.AttachTextsRequested -= ViewModel_AttachTextsRequested;
+        _viewModel.AttachSoundsRequested -= ViewModel_AttachSoundsRequested;
         _viewModel.SaveRequested -= ViewModel_SaveRequested;
         _viewModel.SaveCopyRequested -= ViewModel_SaveCopyRequested;
         _viewModel.SearchFocusRequested -= ViewModel_SearchFocusRequested;

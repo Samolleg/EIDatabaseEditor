@@ -447,6 +447,18 @@ internal static class Program
             throw new InvalidOperationException("Поля записей не должны материализоваться при открытии рабочей области.");
         }
 
+        string sourceDirectory = Path.GetDirectoryName(sourcePath)!;
+        string[] companionSounds = ["JmvSFX.res", "sfx.res", "speech.res", "atamannala.res"];
+        int existingCompanionSounds = companionSounds.Count(name => File.Exists(Path.Combine(sourceDirectory, name)));
+        if (existingCompanionSounds > 0 &&
+            (!viewModel.HasSoundArchives ||
+             viewModel.SoundArchiveCount != existingCompanionSounds ||
+             viewModel.SoundResourceCount == 0))
+        {
+            throw new InvalidOperationException(
+                "Соседние sfx/speech RES должны автоматически подключаться облегчённым каталогом звуков.");
+        }
+
         string companionTexts = Path.Combine(Path.GetDirectoryName(sourcePath)!, "texts.res");
         if (File.Exists(companionTexts))
         {
@@ -948,10 +960,58 @@ internal static class Program
             !viewModel.VisibleSpreadsheetColumns.Any(column =>
                 column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue) ||
             recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
-                (viewModel.HasTextsDocument ? 4 : 1))
+                (viewModel.HasTextsDocument ? 4 : 1) +
+                (viewModel.HasSoundArchives ? 2 : 0))
         {
             throw new InvalidOperationException(
                 "acks.db/Ответы и команды должен по умолчанию показывать File/параметры без соседних raw-hex столбцов.");
+        }
+
+        if (viewModel.HasSoundArchives)
+        {
+            RecordRowViewModel ackWithSound = acks.Records.FirstOrDefault(record => record.HasResolvedSounds)
+                ?? throw new InvalidOperationException("Хотя бы одна запись acks.db должна разрешаться в WAV из sfx.res.");
+            viewModel.SelectedRecord = ackWithSound;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            Border? soundPanel = window.FindName("SoundPanel") as Border;
+            DataGrid? soundLinksGrid = window.FindName("SoundLinksGrid") as DataGrid;
+            if (soundPanel?.Visibility != Visibility.Visible ||
+                soundLinksGrid?.Items.Count != ackWithSound.RelatedSounds.Count ||
+                !ackWithSound.RelatedSounds.Any(sound =>
+                    sound.IsResolved &&
+                    sound.ResourceName.StartsWith("Acks\\", StringComparison.OrdinalIgnoreCase)) ||
+                !recordsGrid.Columns.Any(column => Equals(column.Header, "Аудио")) ||
+                !recordsGrid.Columns.Any(column => Equals(column.Header, "Файл в звуковом RES")))
+            {
+                throw new InvalidOperationException(
+                    "Таблица реплик должна показывать связанные WAV и подробную нижнюю панель звуковых RES.");
+            }
+
+            DatabaseTableViewModel briefings = tables.Single(table => table.Key == "quests.briefings");
+            RecordRowViewModel briefingWithSound = briefings.Records.FirstOrDefault(record =>
+                record.RelatedSounds.Any(sound =>
+                    sound.IsResolved &&
+                    sound.Format.Equals("MP3", StringComparison.OrdinalIgnoreCase) &&
+                    sound.HasTranscript))
+                ?? throw new InvalidOperationException(
+                    "Хотя бы один Брифинг должен связываться с MP3 и текстом #phrase из texts.res.");
+            viewModel.SelectTableCommand.Execute(briefings);
+            viewModel.SelectedRecord = briefingWithSound;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (!briefingWithSound.RelatedSounds.Any(sound =>
+                    sound.IsResolved &&
+                    sound.ResourceName.Contains("\\Briefing\\", StringComparison.OrdinalIgnoreCase) &&
+                    sound.HasTranscript &&
+                    sound.Source.StartsWith("Реплика ", StringComparison.Ordinal)) ||
+                soundLinksGrid?.Items.Count != briefingWithSound.RelatedSounds.Count ||
+                !soundLinksGrid.Columns.Any(column => Equals(column.Header, "Текст реплики из texts.res")))
+            {
+                throw new InvalidOperationException(
+                    "Строка Брифинга должна показывать MP3, персонажа и конкретный русский текст #phrase.");
+            }
+
+            viewModel.SelectTableCommand.Execute(acks);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         }
 
         viewModel.ToggleColumnModeCommand.Execute(null);
@@ -1443,35 +1503,48 @@ internal static class Program
 
         if (!string.IsNullOrWhiteSpace(screenshotPath))
         {
-            viewModel.SelectTableCommand.Execute(materials);
-            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-            RecordRowViewModel? multilineRecord = viewModel.HasTextsDocument
-                ? materials.Records.FirstOrDefault(record =>
-                    record.DisplayName.Equals("lizard blue", StringComparison.OrdinalIgnoreCase))
-                : null;
-            if (multilineRecord is not null)
+            DatabaseTableViewModel? previewBriefings = tables.FirstOrDefault(table =>
+                table.Key.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase));
+            RecordRowViewModel? previewSoundRecord = previewBriefings?.Records.FirstOrDefault(record =>
+                record.RelatedSounds.Any(sound => sound.IsResolved && sound.HasTranscript));
+            if (previewBriefings is not null && previewSoundRecord is not null)
             {
-                DataGridColumn descriptionColumn = recordsGrid.Columns.Single(column =>
-                    Equals(column.Header, "Описание RU"));
-                recordsGrid.CurrentCell = new DataGridCellInfo(multilineRecord, descriptionColumn);
-                recordsGrid.SelectedCells.Clear();
-                recordsGrid.SelectedCells.Add(new DataGridCellInfo(multilineRecord, descriptionColumn));
-                recordsGrid.ScrollIntoView(multilineRecord, descriptionColumn);
+                viewModel.SelectTableCommand.Execute(previewBriefings);
+                viewModel.SelectedRecord = previewSoundRecord;
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
             }
             else
             {
-                viewModel.SelectTableCommand.Execute(prototypes);
+                viewModel.SelectTableCommand.Execute(materials);
                 window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-                SpreadsheetColumnViewModel longValueColumn = prototypes.Columns.Single(column =>
-                    column.FieldId == 29 && column.Projection is null);
-                RecordRowViewModel longValueRecord = prototypes.Records.First(record =>
-                    (record.GetCell(longValueColumn.FieldId)?.EditorText.Length ?? 0) > 80);
-                DataGridColumn longValueGridColumn = recordsGrid.Columns.Single(column =>
-                    ReferenceEquals(column.Header, longValueColumn));
-                recordsGrid.CurrentCell = new DataGridCellInfo(longValueRecord, longValueGridColumn);
-                recordsGrid.SelectedCells.Clear();
-                recordsGrid.SelectedCells.Add(new DataGridCellInfo(longValueRecord, longValueGridColumn));
-                recordsGrid.ScrollIntoView(longValueRecord, longValueGridColumn);
+                RecordRowViewModel? multilineRecord = viewModel.HasTextsDocument
+                    ? materials.Records.FirstOrDefault(record =>
+                        record.DisplayName.Equals("lizard blue", StringComparison.OrdinalIgnoreCase))
+                    : null;
+                if (multilineRecord is not null)
+                {
+                    DataGridColumn descriptionColumn = recordsGrid.Columns.Single(column =>
+                        Equals(column.Header, "Описание RU"));
+                    recordsGrid.CurrentCell = new DataGridCellInfo(multilineRecord, descriptionColumn);
+                    recordsGrid.SelectedCells.Clear();
+                    recordsGrid.SelectedCells.Add(new DataGridCellInfo(multilineRecord, descriptionColumn));
+                    recordsGrid.ScrollIntoView(multilineRecord, descriptionColumn);
+                }
+                else
+                {
+                    viewModel.SelectTableCommand.Execute(prototypes);
+                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                    SpreadsheetColumnViewModel longValueColumn = prototypes.Columns.Single(column =>
+                        column.FieldId == 29 && column.Projection is null);
+                    RecordRowViewModel longValueRecord = prototypes.Records.First(record =>
+                        (record.GetCell(longValueColumn.FieldId)?.EditorText.Length ?? 0) > 80);
+                    DataGridColumn longValueGridColumn = recordsGrid.Columns.Single(column =>
+                        ReferenceEquals(column.Header, longValueColumn));
+                    recordsGrid.CurrentCell = new DataGridCellInfo(longValueRecord, longValueGridColumn);
+                    recordsGrid.SelectedCells.Clear();
+                    recordsGrid.SelectedCells.Add(new DataGridCellInfo(longValueRecord, longValueGridColumn));
+                    recordsGrid.ScrollIntoView(longValueRecord, longValueGridColumn);
+                }
             }
 
             window.UpdateLayout();
@@ -1507,6 +1580,22 @@ internal static class Program
             var service = new CoreDatabaseWorkspaceService();
             WorkspaceSnapshot workspace = service.OpenAsync(databasePath, CancellationToken.None)
                 .GetAwaiter().GetResult();
+            string sourceDirectory = Path.GetDirectoryName(databaseSource)!;
+            string[] soundPaths = new[] { "JmvSFX.res", "sfx.res", "speech.res", "atamannala.res" }
+                .Select(name => Path.Combine(sourceDirectory, name))
+                .Where(File.Exists)
+                .ToArray();
+            if (soundPaths.Length > 0)
+            {
+                workspace = service.AttachSoundsAsync(soundPaths, CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                if (workspace.SoundArchives.Count != soundPaths.Length || workspace.SoundResourceCount == 0)
+                {
+                    throw new InvalidOperationException(
+                        "Ручное подключение звуковых RES к staging-паре должно построить непустой каталог.");
+                }
+            }
+
             DatabaseTableViewModel materials = workspace.Databases
                 .SelectMany(group => group.Tables)
                 .Single(table => table.Key == "items.materials");
@@ -1524,9 +1613,11 @@ internal static class Program
             SaveCurrentResult saved = service.SaveCurrentAsync(false, CancellationToken.None)
                 .GetAwaiter().GetResult();
             if (!File.Exists(saved.BackupPath) || !File.Exists(saved.TextsBackupPath) ||
-                saved.Workspace.TextsPath is null)
+                saved.Workspace.TextsPath is null ||
+                saved.Workspace.SoundArchives.Count != soundPaths.Length)
             {
-                throw new InvalidOperationException("Парное сохранение должно создать проверенные бэкапы обоих RES.");
+                throw new InvalidOperationException(
+                    "Парное сохранение должно создать проверенные бэкапы обоих RES и сохранить ручное подключение звука.");
             }
 
             RecordRowViewModel reopenedMaterial = saved.Workspace.Databases
@@ -2131,6 +2222,11 @@ internal static class Program
         public Task<WorkspaceSnapshot> AttachTextsAsync(string path, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<WorkspaceSnapshot> AttachSoundsAsync(
+            IReadOnlyList<string> paths,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         private static WorkspaceSnapshot CreateWorkspace(string path)
         {
             var table = new DatabaseTableViewModel(
@@ -2183,6 +2279,10 @@ internal static class Program
             throw new NotSupportedException();
 
         public void RefreshRelatedTexts(RecordRowViewModel record)
+        {
+        }
+
+        public void RefreshRelatedSounds(RecordRowViewModel record)
         {
         }
 

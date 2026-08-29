@@ -428,6 +428,17 @@ public sealed class DatabaseField
         }
     }
 
+    internal IReadOnlyList<StructuredListStringValue> GetStructuredListStringValues(int nestedFieldId)
+    {
+        lock (_editSync)
+        {
+            return DatabaseValueCodec.DecodeStructuredListStringValues(
+                _schema,
+                Payload,
+                nestedFieldId);
+        }
+    }
+
     public bool TrySetStringListValues(
         IReadOnlyList<string> values,
         out string? error)
@@ -521,6 +532,8 @@ public sealed class DatabaseField
     private ReadOnlySpan<byte> OriginalPayload =>
         _resourceData.AsSpan(_payloadOffset, _payloadLength);
 }
+
+internal sealed record StructuredListStringValue(int ItemIndex, string Value);
 
 public enum DatabaseFieldProjectionKind
 {
@@ -707,6 +720,71 @@ internal static class DatabaseValueCodec
         catch (Exception exception) when (exception is DecoderFallbackException or DatabaseFormatException or ArgumentException)
         {
             return false;
+        }
+    }
+
+    internal static IReadOnlyList<StructuredListStringValue> DecodeStructuredListStringValues(
+        FieldSchema schema,
+        ReadOnlySpan<byte> payload,
+        int nestedFieldId)
+    {
+        if (schema.Kind != DatabaseValueKind.StructuredList || nestedFieldId is < 0 or > byte.MaxValue)
+        {
+            return [];
+        }
+
+        try
+        {
+            IReadOnlyList<ChunkSlice> items = ChunkCodec.ReadList(payload, 0, payload.Length, "structured-list");
+            var values = new List<StructuredListStringValue>();
+            var itemIndex = 0;
+            foreach (ChunkSlice item in items)
+            {
+                if (item.Id != 1)
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> itemPayload = payload.Slice(item.DataOffset, item.DataLength);
+                IReadOnlyList<ChunkSlice> fields = ChunkCodec.ReadList(
+                    itemPayload,
+                    0,
+                    itemPayload.Length,
+                    "structured-list-item");
+                int matchIndex = -1;
+                for (var fieldIndex = 0; fieldIndex < fields.Count; fieldIndex++)
+                {
+                    if (fields[fieldIndex].Id == (byte)nestedFieldId)
+                    {
+                        matchIndex = fieldIndex;
+                        break;
+                    }
+                }
+
+                if (matchIndex >= 0)
+                {
+                    ChunkSlice match = fields[matchIndex];
+                    FieldSchema fieldSchema = schema.NestedFields is not null &&
+                                              schema.NestedFields.TryGetValue((byte)nestedFieldId, out FieldSchema? known)
+                        ? known
+                        : new FieldSchema(DatabaseValueKind.Hex, $"Field {nestedFieldId}", false);
+                    object value = DecodeValue(
+                        fieldSchema,
+                        itemPayload.Slice(match.DataOffset, match.DataLength));
+                    if (value is string text)
+                    {
+                        values.Add(new(itemIndex, text));
+                    }
+                }
+
+                itemIndex++;
+            }
+
+            return values;
+        }
+        catch (Exception exception) when (exception is DecoderFallbackException or DatabaseFormatException or ArgumentException)
+        {
+            return [];
         }
     }
 

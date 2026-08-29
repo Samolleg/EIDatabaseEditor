@@ -221,6 +221,51 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="SoundColumnHeaderStyle"
+               TargetType="DataGridColumnHeader"
+               BasedOn="{StaticResource {x:Type DataGridColumnHeader}}">
+            <Setter Property="Background" Value="{StaticResource SoundHeaderBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource SoundTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource SoundBorderBrush}" />
+            <Setter Property="BorderThickness" Value="0,0,1,2" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="SoundEntryCellStyle"
+               TargetType="DataGridCell"
+               BasedOn="{StaticResource {x:Type DataGridCell}}">
+            <Setter Property="Background" Value="{StaticResource SoundSurfaceBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource SoundTextBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsResolved}" Value="False">
+                    <Setter Property="Background" Value="{StaticResource WarningSurfaceBrush}" />
+                    <Setter Property="Foreground" Value="{StaticResource WarningBrush}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsPreferred}" Value="False">
+                    <Setter Property="Opacity" Value="0.65" />
+                </DataTrigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="{StaticResource SpreadsheetSelectionBrush}" />
+                    <Setter Property="Foreground" Value="White" />
+                    <Setter Property="BorderBrush" Value="{StaticResource SoundAccentBrush}" />
+                    <Setter Property="BorderThickness" Value="1" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="SoundGridCellText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource SoundTextBrush}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="Padding" Value="2,0" />
+            <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <Setter Property="ToolTipService.ShowDuration" Value="12000" />
+        </Style>
+
         <Style x:Key="LocalizationGridCellText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource LocalizationTextBrush}" />
             <Setter Property="FontSize" Value="14" />
@@ -410,6 +455,12 @@
                                     Command="{Binding AttachTextsCommand}"
                                     Content="{Binding AttachTextsButtonText}"
                                     ToolTip="{Binding TextsPath}"
+                                    Margin="0,8,0,0"
+                                    Padding="12,8" />
+                            <Button Style="{StaticResource RoundedButton}"
+                                    Command="{Binding AttachSoundsCommand}"
+                                    Content="{Binding AttachSoundsButtonText}"
+                                    ToolTip="{Binding SoundArchivePaths}"
                                     Margin="0,8,0,0"
                                     Padding="12,8" />
                         </StackPanel>
@@ -1202,8 +1253,8 @@
                                             </DataGridTemplateColumn>
                                         </DataGrid.Columns>
                                     </DataGrid>
+                                        <StackPanel Grid.Row="1">
                                         <Border x:Name="LocalizationPanel"
-                                                Grid.Row="1"
                                                 Background="{StaticResource LocalizationSurfaceBrush}"
                                                 BorderBrush="{StaticResource LocalizationBorderBrush}"
                                                 BorderThickness="0,2,0,0"
@@ -1254,6 +1305,63 @@
                                                 </DataGrid>
                                             </Grid>
                                         </Border>
+                                        <Border x:Name="SoundPanel"
+                                                Background="{StaticResource SoundSurfaceBrush}"
+                                                BorderBrush="{StaticResource SoundBorderBrush}"
+                                                BorderThickness="0,2,0,0"
+                                                Padding="12,10"
+                                                MaxHeight="230"
+                                                Visibility="{Binding SelectedRecord.HasSoundReferences, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="*" />
+                                                </Grid.RowDefinitions>
+                                                <StackPanel Orientation="Horizontal" Margin="2,0,0,8">
+                                                    <Border Background="{StaticResource SoundHeaderBrush}"
+                                                            BorderBrush="{StaticResource SoundBorderBrush}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="5"
+                                                            Padding="7,2"
+                                                            Margin="0,0,8,0">
+                                                        <TextBlock Text="♪" Foreground="{StaticResource SoundAccentBrush}" FontSize="12" FontWeight="Bold" />
+                                                    </Border>
+                                                    <TextBlock Text="Связанные звуковые файлы"
+                                                               Foreground="{StaticResource SoundTextBrush}"
+                                                               FontWeight="SemiBold" />
+                                                    <TextBlock Text="{Binding SelectedRecord.ResolvedSoundCount, StringFormat={} · {0:N0} найдено}"
+                                                               Foreground="{StaticResource MutedTextBrush}" />
+                                                </StackPanel>
+                                                <DataGrid x:Name="SoundLinksGrid"
+                                                          Grid.Row="1"
+                                                          ItemsSource="{Binding SelectedRecord.RelatedSounds}"
+                                                          AutoGenerateColumns="False"
+                                                          IsReadOnly="True"
+                                                          CanUserAddRows="False"
+                                                          CanUserDeleteRows="False"
+                                                          SelectionMode="Extended"
+                                                          SelectionUnit="CellOrRowHeader"
+                                                          ClipboardCopyMode="ExcludeHeader"
+                                                          FrozenColumnCount="2"
+                                                          FontSize="13"
+                                                          RowHeight="36"
+                                                          ColumnHeaderHeight="38"
+                                                          GridLinesVisibility="Horizontal"
+                                                          HorizontalGridLinesBrush="{StaticResource SoundBorderBrush}"
+                                                          VerticalGridLinesBrush="Transparent">
+                                                    <DataGrid.Columns>
+                                                        <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" Width="100" MinWidth="90" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Связь / персонаж" Binding="{Binding Source}" Width="220" MinWidth="180" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Текст реплики из texts.res" Binding="{Binding TranscriptText}" Width="*" MinWidth="360" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Файл в RES" Binding="{Binding DisplayResourceName}" Width="360" MinWidth="260" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Архив" Binding="{Binding ArchiveName}" Width="150" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Формат" Binding="{Binding Format}" Width="78" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Размер" Binding="{Binding LengthText}" Width="92" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                    </DataGrid.Columns>
+                                                </DataGrid>
+                                            </Grid>
+                                        </Border>
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
 

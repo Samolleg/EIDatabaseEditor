@@ -8,22 +8,47 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 {
     private DatabaseDocument? _document;
     private TextsDocument? _textsDocument;
+    private SoundArchiveCatalog? _soundCatalog;
     private IReadOnlyList<DatabaseGroupViewModel> _mappedDatabases = [];
     private readonly Dictionary<TextResource, LocalizationEntryViewModel> _textViewModels = [];
     private readonly Dictionary<LocalizationEntryViewModel, List<RecordRowViewModel>> _textOwners = [];
 
     public Task<WorkspaceSnapshot> OpenAsync(string path, CancellationToken cancellationToken) =>
-        OpenInternalAsync(path, explicitTextsPath: null, cancellationToken);
+        OpenInternalAsync(path, explicitTextsPath: null, explicitSoundPaths: null, cancellationToken);
 
     public Task<WorkspaceSnapshot> AttachTextsAsync(string path, CancellationToken cancellationToken)
     {
         DatabaseDocument document = RequireDocument();
-        return OpenInternalAsync(document.SourcePath, Path.GetFullPath(path), cancellationToken);
+        return OpenInternalAsync(
+            document.SourcePath,
+            Path.GetFullPath(path),
+            _soundCatalog?.Archives.Select(archive => archive.SourcePath).ToArray(),
+            cancellationToken);
+    }
+
+    public Task<WorkspaceSnapshot> AttachSoundsAsync(
+        IReadOnlyList<string> paths,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        DatabaseDocument document = RequireDocument();
+        string[] combinedPaths = (_soundCatalog?.Archives.Select(archive => archive.SourcePath) ?? [])
+            .Concat(paths)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return OpenInternalAsync(
+            document.SourcePath,
+            _textsDocument?.SourcePath,
+            combinedPaths,
+            cancellationToken);
     }
 
     private async Task<WorkspaceSnapshot> OpenInternalAsync(
         string path,
         string? explicitTextsPath,
+        IReadOnlyList<string>? explicitSoundPaths,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
@@ -48,6 +73,24 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             textsDocument = await TextsDocument.OpenAsync(textsPath, cancellationToken).ConfigureAwait(false);
         }
 
+        string[] soundPaths = (explicitSoundPaths ?? FindCompanionSoundPaths(fullPath))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        SoundArchiveCatalog? soundCatalog = soundPaths.Length == 0
+            ? null
+            : await SoundArchiveCatalog.OpenAsync(soundPaths, cancellationToken).ConfigureAwait(false);
+        if (explicitSoundPaths is not null)
+        {
+            SoundArchiveInfo? emptyArchive = soundCatalog?.Archives.FirstOrDefault(archive =>
+                explicitSoundPaths.Contains(archive.SourcePath, StringComparer.OrdinalIgnoreCase) &&
+                archive.SoundResourceCount == 0);
+            if (emptyArchive is not null)
+            {
+                throw new InvalidOperationException(
+                    $"{emptyArchive.FileName} не содержит WAV, MP3 или OGG.");
+            }
+        }
+
         var previousTextViewModels = _textViewModels.ToArray();
         var previousTextOwners = _textOwners.ToDictionary(
             pair => pair.Key,
@@ -65,6 +108,11 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             if (textsDocument is not null)
             {
                 AttachRelatedTexts(databases, textResources, cancellationToken);
+            }
+
+            if (soundCatalog is not null)
+            {
+                AttachRelatedSounds(databases, soundCatalog, cancellationToken);
             }
         }
         catch
@@ -101,10 +149,15 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             TextsSha256 = textsDocument?.Sha256,
             TextResourceCount = textResources.Count,
             TextResources = textResources,
+            SoundArchives = soundCatalog?.Archives
+                .Select(archive => new SoundArchiveViewModel(archive))
+                .ToArray() ?? [],
+            SoundResourceCount = soundCatalog?.Resources.Count ?? 0,
         };
         cancellationToken.ThrowIfCancellationRequested();
         _document = document;
         _textsDocument = textsDocument;
+        _soundCatalog = soundCatalog;
         _mappedDatabases = databases;
         return snapshot;
     }
@@ -130,6 +183,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         DatabaseRecord record = RequireDocument().AppendRecordClone(template.CoreRecord);
         var viewModel = new RecordRowViewModel(record, table.Key, table.Title, table.IsEditable);
         RefreshRelatedTexts(viewModel);
+        RefreshRelatedSounds(viewModel);
         return viewModel;
     }
 
@@ -171,6 +225,20 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         {
             AddTextOwner(entry, record);
         }
+    }
+
+    public void RefreshRelatedSounds(RecordRowViewModel record)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        if (_soundCatalog is null)
+        {
+            record.SetRelatedSounds([]);
+            return;
+        }
+
+        record.SetRelatedSounds(MapSoundLinks(
+            record,
+            DatabaseSoundLinkResolver.Resolve(record.TableKey, record.CoreRecord, _soundCatalog)));
     }
 
     public void RemoveAddedRecord(RecordRowViewModel record)
@@ -293,7 +361,14 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             true,
             document.Diagnostics,
             null);
-        var workspace = await OpenAsync(databaseResult.TargetPath, CancellationToken.None).ConfigureAwait(false);
+        string[] soundPaths = _soundCatalog?.Archives
+            .Select(archive => archive.SourcePath)
+            .ToArray() ?? [];
+        var workspace = await OpenInternalAsync(
+            databaseResult.TargetPath,
+            texts?.SourcePath,
+            soundPaths,
+            CancellationToken.None).ConfigureAwait(false);
         return new SaveCurrentResult(
             MapSaveResult(databaseResult),
             workspace,
@@ -378,6 +453,54 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                 }
             }
         }
+    }
+
+    private static void AttachRelatedSounds(
+        IReadOnlyList<DatabaseGroupViewModel> databases,
+        SoundArchiveCatalog catalog,
+        CancellationToken cancellationToken)
+    {
+        foreach (DatabaseTableViewModel table in databases.SelectMany(group => group.Tables))
+        {
+            foreach (RecordRowViewModel record in table.Records)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                record.SetRelatedSounds(MapSoundLinks(
+                    record,
+                    DatabaseSoundLinkResolver.Resolve(table.Key, record.CoreRecord, catalog)));
+            }
+        }
+    }
+
+    private static IReadOnlyList<SoundLinkViewModel> MapSoundLinks(
+        RecordRowViewModel record,
+        IReadOnlyList<DatabaseSoundLink> links)
+    {
+        if (!record.TableKey.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase))
+        {
+            return links.Select(link => new SoundLinkViewModel(link)).ToArray();
+        }
+
+        LocalizationEntryViewModel? briefingText = record.RelatedTexts.FirstOrDefault(text =>
+            text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
+        IReadOnlyDictionary<int, BriefingPhrase> phrases = BriefingTranscriptParser
+            .Parse(briefingText?.Description)
+            .GroupBy(phrase => phrase.Number)
+            .ToDictionary(group => group.Key, group => group.First());
+        return links.Select(link =>
+        {
+            if (link.Resource is not null &&
+                BriefingTranscriptParser.TryGetClipIdentity(
+                    link.Resource.ResourceName,
+                    out int phraseNumber,
+                    out string clipId) &&
+                phrases.TryGetValue(phraseNumber, out BriefingPhrase? phrase))
+            {
+                return new SoundLinkViewModel(link, phrase, clipId);
+            }
+
+            return new SoundLinkViewModel(link);
+        }).ToArray();
     }
 
     private void AddTextOwner(LocalizationEntryViewModel entry, RecordRowViewModel owner)
@@ -483,6 +606,16 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             Path.Combine(directory, "texts.res"),
         ];
         return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static string[] FindCompanionSoundPaths(string databasePath)
+    {
+        string directory = Path.GetDirectoryName(databasePath)!;
+        string[] knownNames = ["JmvSFX.res", "sfx.res", "speech.res", "atamannala.res"];
+        return knownNames
+            .Select(name => Path.Combine(directory, name))
+            .Where(File.Exists)
+            .ToArray();
     }
 
     private static string DeriveTextsCopyPath(string databaseTarget)

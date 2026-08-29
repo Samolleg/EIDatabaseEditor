@@ -226,6 +226,7 @@ internal static class Program
             log.Pass("No-op копия повторно разобрана до границ всех DB-полей.");
 
             await VerifyCompanionTextsAsync(sourcePath, staging, log).ConfigureAwait(false);
+            await VerifyCompanionSoundsAsync(sourcePath, log).ConfigureAwait(false);
 
             await VerifyRowAppendSafetyAsync(
                 sourcePath,
@@ -334,6 +335,162 @@ internal static class Program
                 sourceBefore.ContentEquals(sourceAfter),
                 "SHA-256 источника не изменился после всех операций.");
         }
+    }
+
+    private static async Task VerifyCompanionSoundsAsync(
+        string sourcePath,
+        VerificationLog log)
+    {
+        string directory = Path.GetDirectoryName(sourcePath)!;
+        string[] soundPaths =
+        [
+            Path.Combine(directory, "JmvSFX.res"),
+            Path.Combine(directory, "sfx.res"),
+            Path.Combine(directory, "speech.res"),
+            Path.Combine(directory, "atamannala.res"),
+        ];
+        soundPaths = soundPaths.Where(File.Exists).ToArray();
+        if (soundPaths.Length == 0)
+        {
+            log.Skip("Рядом с database.res нет известных звуковых RES; проверка связей звука пропущена.");
+            return;
+        }
+
+        FileSnapshot[] before = await Task.WhenAll(soundPaths.Select(path => FileSnapshot.CaptureAsync(path)))
+            .ConfigureAwait(false);
+        SoundArchiveCatalog catalog = await log.MeasureAsync(
+            "Каталог звуковых RES",
+            () => SoundArchiveCatalog.OpenAsync(soundPaths)).ConfigureAwait(false);
+        DatabaseDocument document = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        var links = document.Databases
+            .SelectMany(group => group.Tables)
+            .SelectMany(table => table.Records.SelectMany(record =>
+                DatabaseSoundLinkResolver.Resolve(table.Key, record, catalog)))
+            .ToArray();
+        DatabaseSoundLink[] direct = links
+            .Where(link => link.Kind == DatabaseSoundLinkKind.DirectResource)
+            .ToArray();
+        DatabaseSoundLink[] briefings = links
+            .Where(link => link.Kind == DatabaseSoundLinkKind.BriefingFolder)
+            .ToArray();
+        int directResolved = direct.Count(link => link.IsResolved);
+        int briefingResolved = briefings.Count(link => link.IsResolved);
+
+        log.Assert(catalog.Archives.Count == soundPaths.Length, "Все выбранные звуковые RES открыты один раз.");
+        log.Assert(catalog.Resources.Count > 0, "В подключённых RES распознаны WAV/MP3/OGG.");
+        if (catalog.Resources.Any(resource => resource.ResourceName.StartsWith("Acks\\", StringComparison.OrdinalIgnoreCase)))
+        {
+            log.Assert(direct.Length > 0, "В acks.db извлечены прямые ссылки File из вложенных реплик.");
+            log.Assert(directResolved > 0, "Прямые ссылки acks.db сопоставлены с файлами звуковых RES.");
+        }
+
+        if (catalog.Resources.Any(resource => resource.ResourceName.Contains("\\Briefing\\", StringComparison.OrdinalIgnoreCase)))
+        {
+            log.Assert(briefings.Length > 0, "Для записей Брифингов построены ожидаемые звуковые каталоги.");
+            log.Assert(briefingResolved > 0, "Ключи Брифингов сопоставлены с MP3 в speech.res.");
+        }
+
+        BriefingPhrase[] parserProbe = BriefingTranscriptParser.Parse(
+            "#phrase Hero  1\r\nПервая \r\nреплика\r\n#CAMERA 3\r\n" +
+            "#phrase Elder  2\r\nОтвет старосты").ToArray();
+        log.Assert(
+            parserProbe.Length == 2 &&
+            parserProbe[0] == new BriefingPhrase(1, "Hero", "Первая реплика") &&
+            parserProbe[1] == new BriefingPhrase(2, "Elder", "Ответ старосты"),
+            "Разметка #phrase извлекает номер, персонажа и полный текст реплики.");
+        log.Assert(
+            BriefingTranscriptParser.TryGetClipIdentity(
+                @"s\Briefing\z1\2a.mp3",
+                out int probeNumber,
+                out string probeClipId) &&
+            probeNumber == 2 && probeClipId == "2a",
+            "Имя MP3, включая буквенный вариант, сопоставляется с номером #phrase.");
+
+        string textsPath = Path.Combine(directory, "texts.res");
+        if (File.Exists(textsPath))
+        {
+            TextsDocument texts = await TextsDocument.OpenAsync(textsPath).ConfigureAwait(false);
+            DatabaseTable? briefingTable = document.Databases
+                .SelectMany(group => group.Tables)
+                .FirstOrDefault(table => table.Key.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase));
+            BriefingPhrase? mappedPhrase = null;
+            DatabaseSoundLink? mappedSound = null;
+            if (briefingTable is not null)
+            {
+                foreach (DatabaseRecord record in briefingTable.Records)
+                {
+                    string key = string.IsNullOrWhiteSpace(record.IdentityValue)
+                        ? record.Name
+                        : record.IdentityValue;
+                    if (!texts.TryGetResource($"BRIEFING {key}", out TextResource? resource) || resource is null)
+                    {
+                        continue;
+                    }
+
+                    IReadOnlyDictionary<int, BriefingPhrase> phrases = BriefingTranscriptParser
+                        .Parse(resource.Description)
+                        .GroupBy(phrase => phrase.Number)
+                        .ToDictionary(group => group.Key, group => group.First());
+                    foreach (DatabaseSoundLink link in DatabaseSoundLinkResolver.Resolve(
+                                 briefingTable.Key,
+                                 record,
+                                 catalog))
+                    {
+                        if (link.Resource is not null &&
+                            BriefingTranscriptParser.TryGetClipIdentity(
+                                link.Resource.ResourceName,
+                                out int number,
+                                out _) &&
+                            phrases.TryGetValue(number, out BriefingPhrase? phrase))
+                        {
+                            mappedPhrase = phrase;
+                            mappedSound = link;
+                            break;
+                        }
+                    }
+
+                    if (mappedPhrase is not null)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            log.Assert(
+                mappedPhrase is not null && mappedSound?.Resource is not null,
+                "MP3 Брифинга сопоставлен с конкретным персонажем и русским текстом из texts.res.");
+            if (mappedPhrase is not null && mappedSound?.Resource is not null)
+            {
+                log.Info(
+                    $"Пример текста MP3: {mappedSound.Resource.ResourceName} -> " +
+                    $"{mappedPhrase.Speaker}: {mappedPhrase.Text}");
+            }
+        }
+
+        DatabaseSoundLink? directExample = direct.FirstOrDefault(link => link.IsResolved);
+        DatabaseSoundLink? briefingExample = briefings.FirstOrDefault(link => link.IsResolved);
+        log.Info(
+            $"Звук: archives={catalog.Archives.Count}; files={catalog.Resources.Count:N0}; " +
+            $"acks={directResolved:N0}/{direct.Length:N0}; briefings={briefingResolved:N0}/{briefings.Length:N0}.");
+        if (directExample?.Resource is not null)
+        {
+            log.Info(
+                $"Пример acks.db: {directExample.Source} -> " +
+                $"{directExample.Resource.Archive.FileName}/{directExample.Resource.ResourceName}");
+        }
+
+        if (briefingExample?.Resource is not null)
+        {
+            log.Info(
+                $"Пример Брифинга: {briefingExample.Source} -> " +
+                $"{briefingExample.Resource.Archive.FileName}/{briefingExample.Resource.ResourceName}");
+        }
+
+        FileSnapshot[] after = await Task.WhenAll(soundPaths.Select(path => FileSnapshot.CaptureAsync(path)))
+            .ConfigureAwait(false);
+        log.Assert(
+            before.Zip(after).All(pair => pair.First.ContentEquals(pair.Second)),
+            "Построение каталога и связей не изменяет звуковые RES.");
     }
 
     private static async Task VerifyCompanionTextsAsync(

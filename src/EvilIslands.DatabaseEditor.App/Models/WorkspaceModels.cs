@@ -580,6 +580,7 @@ internal sealed class RecordRowViewModel : ObservableObject
     private int _diagnosticCount;
     private bool _hasBlockingDiagnostics;
     private IReadOnlyList<LocalizationEntryViewModel> _relatedTexts = [];
+    private IReadOnlyList<SoundLinkViewModel> _relatedSounds = [];
     private IReadOnlyList<string> _expectedTextKeys = [];
     private LocalizationEntryViewModel? _primaryText;
 
@@ -643,6 +644,45 @@ internal sealed class RecordRowViewModel : ObservableObject
     public bool HasRelatedTexts => RelatedTexts.Count > 0;
 
     public int RelatedTextCount => RelatedTexts.Count;
+
+    public IReadOnlyList<SoundLinkViewModel> RelatedSounds
+    {
+        get => _relatedSounds;
+        private set
+        {
+            _relatedSounds = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasSoundReferences));
+            OnPropertyChanged(nameof(HasResolvedSounds));
+            OnPropertyChanged(nameof(ResolvedSoundCount));
+            OnPropertyChanged(nameof(MissingSoundCount));
+            OnPropertyChanged(nameof(HasMissingSounds));
+            OnPropertyChanged(nameof(SoundSummary));
+            OnPropertyChanged(nameof(PrimarySoundPath));
+        }
+    }
+
+    public bool HasSoundReferences => RelatedSounds.Count > 0;
+
+    public bool HasResolvedSounds => ResolvedSoundCount > 0;
+
+    public int ResolvedSoundCount => RelatedSounds.Count(sound => sound.IsResolved && sound.IsPreferred);
+
+    public int MissingSoundCount => RelatedSounds.Count(sound => !sound.IsResolved);
+
+    public bool HasMissingSounds => MissingSoundCount > 0;
+
+    public string SoundSummary => (ResolvedSoundCount, MissingSoundCount) switch
+    {
+        (0, 0) => "—",
+        (0, _) => "Не найдено",
+        (var resolved, 0) => $"{resolved:N0} аудио",
+        (var resolved, var missing) => $"{resolved:N0} аудио · {missing:N0} нет",
+    };
+
+    public string PrimarySoundPath => RelatedSounds
+        .FirstOrDefault(sound => sound.IsResolved && sound.IsPreferred)?.ResourceName ??
+        RelatedSounds.FirstOrDefault()?.Reference ?? string.Empty;
 
     public bool CanEditPrimaryLocalization => _primaryText is not null;
 
@@ -811,6 +851,13 @@ internal sealed class RecordRowViewModel : ObservableObject
         OnPropertyChanged(nameof(SearchText));
     }
 
+    internal void SetRelatedSounds(IReadOnlyList<SoundLinkViewModel> sounds)
+    {
+        RelatedSounds = sounds;
+        SearchText = BuildSearchText();
+        OnPropertyChanged(nameof(SearchText));
+    }
+
     internal void RefreshLocalizationState()
     {
         OnPropertyChanged(nameof(LocalizationKeyText));
@@ -949,11 +996,108 @@ internal sealed class RecordRowViewModel : ObservableObject
                 .Append('\u001f').Append(text.Description);
         }
 
+        foreach (SoundLinkViewModel sound in RelatedSounds)
+        {
+            builder.Append('\u001f').Append(sound.Source)
+                .Append('\u001f').Append(sound.Reference)
+                .Append('\u001f').Append(sound.ResourceName)
+                .Append('\u001f').Append(sound.ArchiveName)
+                .Append('\u001f').Append(sound.TranscriptText);
+        }
+
         return builder.ToString();
     }
 
     private static string NormalizeDisplayName(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "Без имени" : value;
+}
+
+internal sealed class SoundArchiveViewModel
+{
+    public SoundArchiveViewModel(SoundArchiveInfo archive)
+    {
+        SourcePath = archive.SourcePath;
+        FileName = archive.FileName;
+        FileLength = archive.FileLength;
+        ArchiveEntryCount = archive.ArchiveEntryCount;
+        SoundResourceCount = archive.SoundResourceCount;
+        Priority = archive.Priority;
+    }
+
+    public int Priority { get; }
+
+    public string SourcePath { get; }
+
+    public string FileName { get; }
+
+    public long FileLength { get; }
+
+    public int ArchiveEntryCount { get; }
+
+    public int SoundResourceCount { get; }
+}
+
+internal sealed class SoundLinkViewModel
+{
+    public SoundLinkViewModel(
+        DatabaseSoundLink link,
+        BriefingPhrase? briefingPhrase = null,
+        string? clipId = null)
+    {
+        Kind = link.Kind;
+        Source = briefingPhrase is null
+            ? link.Source
+            : $"Реплика {clipId ?? briefingPhrase.Number.ToString()} · {briefingPhrase.Speaker}";
+        Reference = link.Reference;
+        IsResolved = link.IsResolved;
+        IsPreferred = link.IsPreferred;
+        ResourceName = link.Resource?.ResourceName ?? string.Empty;
+        ArchiveName = link.Resource?.Archive.FileName ?? "—";
+        ArchivePath = link.Resource?.Archive.SourcePath ?? string.Empty;
+        Format = link.Resource?.Format ?? "—";
+        Length = link.Resource?.Length;
+        TranscriptText = briefingPhrase?.Text ?? string.Empty;
+    }
+
+    public DatabaseSoundLinkKind Kind { get; }
+
+    public string KindText => Kind == DatabaseSoundLinkKind.BriefingFolder
+        ? "Брифинг"
+        : "Реплика";
+
+    public string Source { get; }
+
+    public string Reference { get; }
+
+    public string TranscriptText { get; }
+
+    public bool HasTranscript => !string.IsNullOrWhiteSpace(TranscriptText);
+
+    public bool IsResolved { get; }
+
+    public bool IsPreferred { get; }
+
+    public string ResourceName { get; }
+
+    public string DisplayResourceName => IsResolved ? ResourceName : Reference;
+
+    public string ArchiveName { get; }
+
+    public string ArchivePath { get; }
+
+    public string Format { get; }
+
+    public int? Length { get; }
+
+    public string LengthText => Length is int length
+        ? length < 1024
+            ? $"{length:N0} Б"
+            : $"{length / 1024d:N1} КиБ"
+        : "—";
+
+    public string StatusText => IsResolved
+        ? IsPreferred ? "Найден" : "Дубликат"
+        : "Не найден";
 }
 
 internal sealed class LocalizationEntryViewModel : ObservableObject
@@ -1497,6 +1641,10 @@ internal sealed class WorkspaceSnapshot
     public int TextResourceCount { get; init; }
 
     public IReadOnlyList<LocalizationEntryViewModel> TextResources { get; init; } = [];
+
+    public IReadOnlyList<SoundArchiveViewModel> SoundArchives { get; init; } = [];
+
+    public int SoundResourceCount { get; init; }
 }
 
 internal sealed record SaveCopyResult(
