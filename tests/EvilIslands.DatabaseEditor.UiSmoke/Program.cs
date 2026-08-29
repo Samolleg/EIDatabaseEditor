@@ -937,6 +937,48 @@ internal static class Program
                     $"panel={localizationPanel?.Visibility}; rows={localizationGrid?.Items.Count}; " +
                     $"expected={weaponWithVariants.RelatedTextCount}; title={weaponWithVariants.LocalizationTitle}");
             }
+
+            DatabaseTableViewModel lootItems = tables.Single(table => table.Key == "items.loot_items");
+            RecordRowViewModel missingLocalization = lootItems.Records.FirstOrDefault(record =>
+                    record.DisplayName.Equals("whitetigerhead01", StringComparison.OrdinalIgnoreCase) &&
+                    record.MissingLocalizationCount > 0)
+                ?? lootItems.Records.First(record =>
+                    record.ExpectedTextKeys.Count > 1 && record.MissingLocalizationCount > 0);
+            viewModel.SelectTableCommand.Execute(lootItems);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            DataGridColumn localizationKeyColumn = recordsGrid.Columns.Single(column =>
+                column.Header is string header && header == "Ключ texts.res");
+            recordsGrid.CurrentCell = new DataGridCellInfo(missingLocalization, localizationKeyColumn);
+            recordsGrid.SelectedCells.Clear();
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(missingLocalization, localizationKeyColumn));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+
+            var missingKeysList = window.FindName("MissingLocalizationKeysList") as ItemsControl;
+            var createMissingTextsButton = window.FindName("CreateMissingTextsButton") as Button;
+            if (!ReferenceEquals(viewModel.SelectedRecord, missingLocalization) ||
+                localizationPanel?.Visibility != Visibility.Visible ||
+                localizationGrid?.Visibility != Visibility.Collapsed ||
+                missingKeysList?.Items.Count != missingLocalization.MissingLocalizationCount ||
+                createMissingTextsButton?.IsEnabled != true ||
+                !missingLocalization.LocalizationKeyText.StartsWith("Нет ресурсов texts.res:", StringComparison.Ordinal) ||
+                !missingLocalization.LocalizationTitle.Contains("смотрите ниже", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    "Выбор строки с отсутствующими ресурсами texts.res должен раскрывать сами ожидаемые ключи " +
+                    "и явное действие их создания. " +
+                    $"selected={ReferenceEquals(viewModel.SelectedRecord, missingLocalization)}; " +
+                    $"panel={localizationPanel?.Visibility}; grid={localizationGrid?.Visibility}; " +
+                    $"missing={missingKeysList?.Items.Count}/{missingLocalization.MissingLocalizationCount}; " +
+                    $"button={createMissingTextsButton?.IsEnabled}; key={missingLocalization.LocalizationKeyText}");
+            }
+
+            if (missingLocalization.DisplayName.Equals("whitetigerhead01", StringComparison.OrdinalIgnoreCase) &&
+                !new[] { "LITEM whitetigerhead01", "INSTR whitetigerhead01" }
+                    .All(missingLocalization.MissingLocalizationKeys.Contains))
+            {
+                throw new InvalidOperationException(
+                    "Для whitetigerhead01 должны быть явно показаны отсутствующие LITEM и INSTR, а не безымянные варианты.");
+            }
         }
 
         var acks = tables.Single(table => table.Key == "acks.answers");
@@ -1503,11 +1545,27 @@ internal static class Program
 
         if (!string.IsNullOrWhiteSpace(screenshotPath))
         {
+            DatabaseTableViewModel? previewMissingTextsTable = tables.FirstOrDefault(table =>
+                table.Key.Equals("items.loot_items", StringComparison.OrdinalIgnoreCase));
+            RecordRowViewModel? previewMissingTextsRecord = previewMissingTextsTable?.Records.FirstOrDefault(record =>
+                record.DisplayName.Equals("whitetigerhead01", StringComparison.OrdinalIgnoreCase) &&
+                record.MissingLocalizationCount > 0);
             DatabaseTableViewModel? previewBriefings = tables.FirstOrDefault(table =>
                 table.Key.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase));
             RecordRowViewModel? previewSoundRecord = previewBriefings?.Records.FirstOrDefault(record =>
                 record.RelatedSounds.Any(sound => sound.IsResolved && sound.HasTranscript));
-            if (previewBriefings is not null && previewSoundRecord is not null)
+            if (previewMissingTextsTable is not null && previewMissingTextsRecord is not null)
+            {
+                viewModel.SelectTableCommand.Execute(previewMissingTextsTable);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+                DataGridColumn localizationKeyColumn = recordsGrid.Columns.Single(column =>
+                    Equals(column.Header, "Ключ texts.res"));
+                recordsGrid.CurrentCell = new DataGridCellInfo(previewMissingTextsRecord, localizationKeyColumn);
+                recordsGrid.SelectedCells.Clear();
+                recordsGrid.SelectedCells.Add(new DataGridCellInfo(previewMissingTextsRecord, localizationKeyColumn));
+                recordsGrid.ScrollIntoView(previewMissingTextsRecord, localizationKeyColumn);
+            }
+            else if (previewBriefings is not null && previewSoundRecord is not null)
             {
                 viewModel.SelectTableCommand.Execute(previewBriefings);
                 viewModel.SelectedRecord = previewSoundRecord;

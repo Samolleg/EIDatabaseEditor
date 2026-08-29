@@ -582,6 +582,7 @@ internal sealed class RecordRowViewModel : ObservableObject
     private IReadOnlyList<LocalizationEntryViewModel> _relatedTexts = [];
     private IReadOnlyList<SoundLinkViewModel> _relatedSounds = [];
     private IReadOnlyList<string> _expectedTextKeys = [];
+    private IReadOnlyList<string> _missingTextKeys = [];
     private LocalizationEntryViewModel? _primaryText;
 
     public RecordRowViewModel(
@@ -688,7 +689,17 @@ internal sealed class RecordRowViewModel : ObservableObject
 
     internal string? PrimaryLocalizationErrorMessage => _primaryText?.ErrorMessage;
 
-    public bool HasMissingLocalization => ExpectedTextKeys.Count > 0 && RelatedTexts.Count == 0;
+    public bool HasMissingLocalization => MissingLocalizationCount > 0;
+
+    public bool HasLocalizationReferences => ExpectedTextKeys.Count > 0 || RelatedTexts.Count > 0;
+
+    public IReadOnlyList<string> MissingLocalizationKeys => _missingTextKeys;
+
+    public int MissingLocalizationCount => MissingLocalizationKeys.Count;
+
+    public string LocalizationSummary => ExpectedTextKeys.Count > 0
+        ? $"Найдено: {RelatedTexts.Count:N0} из {ExpectedTextKeys.Count:N0} · отсутствует: {MissingLocalizationCount:N0}"
+        : $"Связано ресурсов: {RelatedTexts.Count:N0}";
 
     public bool HasMultipleLocalizations => RelatedTexts.Count > 1;
 
@@ -696,15 +707,20 @@ internal sealed class RecordRowViewModel : ObservableObject
 
     public string LocalizationKeyText => _primaryText?.ResourceName ?? (RelatedTexts.Count, ExpectedTextKeys.Count) switch
     {
-        (> 1, _) => $"{RelatedTexts.Count:N0} вариантов texts.res",
+        (> 1, _) => $"Связано с texts.res: {RelatedTexts.Count:N0}",
         (0, 1) => $"{ExpectedTextKeys[0]} — нет ресурса",
-        (0, > 1) => $"0 из {ExpectedTextKeys.Count:N0} вариантов",
+        (0, > 1) => $"Нет ресурсов texts.res: {ExpectedTextKeys.Count:N0}",
         _ => "—",
     };
 
     public string LocalizationTitle
     {
-        get => _primaryText?.Title ?? (RelatedTexts.Count > 1 ? $"{RelatedTexts.Count:N0} вариантов — смотрите ниже" : string.Empty);
+        get => _primaryText?.Title ?? (RelatedTexts.Count, ExpectedTextKeys.Count) switch
+        {
+            (> 1, _) => "Связанные тексты — смотрите ниже",
+            (0, > 1) => "Ожидаемые ключи — смотрите ниже",
+            _ => string.Empty,
+        };
         set
         {
             if (_primaryText is null)
@@ -838,8 +854,19 @@ internal sealed class RecordRowViewModel : ObservableObject
             _expectedTextKeys = expectedKeys;
         }
 
+        var relatedNames = texts
+            .Select(text => text.ResourceName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _missingTextKeys = _expectedTextKeys
+            .Where(key => !relatedNames.Contains(key))
+            .ToArray();
+
         _primaryText = SelectPrimaryText(texts);
         OnPropertyChanged(nameof(ExpectedTextKeys));
+        OnPropertyChanged(nameof(MissingLocalizationKeys));
+        OnPropertyChanged(nameof(MissingLocalizationCount));
+        OnPropertyChanged(nameof(HasLocalizationReferences));
+        OnPropertyChanged(nameof(LocalizationSummary));
         OnPropertyChanged(nameof(CanEditPrimaryLocalization));
         OnPropertyChanged(nameof(HasMissingLocalization));
         OnPropertyChanged(nameof(HasMultipleLocalizations));

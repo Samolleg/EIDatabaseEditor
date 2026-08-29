@@ -96,7 +96,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             () => IsEditMode && IsRecordsSection && IsCurrentTableAddable && HasSelectedRecord && !IsBusy);
         AddMissingTextsCommand = new RelayCommand(
             AddMissingTexts,
-            () => IsEditMode && IsRecordsSection && HasSelectedRecord && HasTextsDocument && !IsBusy);
+            () => IsEditMode && IsRecordsSection &&
+                  SelectedRecord?.MissingLocalizationCount > 0 && HasTextsDocument && !IsBusy);
         RefreshValidationCommand = new RelayCommand(RefreshValidation, () => HasDocument && !IsBusy);
         ClearSearchCommand = new RelayCommand(() => SearchText = string.Empty, () => !string.IsNullOrEmpty(SearchText));
         ClearResourceSearchCommand = new RelayCommand(() => ResourceSearchText = string.Empty, () => !string.IsNullOrEmpty(ResourceSearchText));

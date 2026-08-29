@@ -1260,9 +1260,10 @@
                                                 BorderThickness="0,2,0,0"
                                                 Padding="12,10"
                                                 MaxHeight="280"
-                                                Visibility="{Binding SelectedRecordHasTexts, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                Visibility="{Binding SelectedRecord.HasLocalizationReferences, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid>
                                                 <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="*" />
                                                 </Grid.RowDefinitions>
@@ -1278,11 +1279,70 @@
                                                     <TextBlock Text="Русские названия и описания"
                                                                Foreground="{StaticResource LocalizationTextBrush}"
                                                                FontWeight="SemiBold" />
-                                                    <TextBlock Text="{Binding SelectedRecordTextCount, StringFormat={} · {0:N0} ресурсов texts.res}"
+                                                    <TextBlock Text="{Binding SelectedRecord.LocalizationSummary, StringFormat={} · {0}}"
                                                                Foreground="{StaticResource MutedTextBrush}" />
                                                 </StackPanel>
+                                                <Border Grid.Row="1"
+                                                        Margin="0,0,0,8"
+                                                        Padding="10,8"
+                                                        Background="{StaticResource WarningSurfaceBrush}"
+                                                        BorderBrush="{StaticResource WarningBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="6"
+                                                        Visibility="{Binding SelectedRecord.HasMissingLocalization, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <Grid>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
+                                                        <Grid Grid.Row="0" Margin="0,0,0,6">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock VerticalAlignment="Center"
+                                                                       Foreground="{StaticResource WarningBrush}"
+                                                                       Text="Эти ключи отсутствуют в texts.res:" />
+                                                            <Button x:Name="CreateMissingTextsButton"
+                                                                    Grid.Column="1"
+                                                                    Style="{StaticResource RoundedButton}"
+                                                                    Command="{Binding AddMissingTextsCommand}"
+                                                                    Content="Создать отсутствующие тексты"
+                                                                    MinHeight="0"
+                                                                    Padding="10,4"
+                                                                    Margin="12,0,0,0" />
+                                                        </Grid>
+                                                        <ScrollViewer Grid.Row="1"
+                                                                      MaxHeight="96"
+                                                                      VerticalScrollBarVisibility="Auto"
+                                                                      HorizontalScrollBarVisibility="Disabled">
+                                                            <ItemsControl x:Name="MissingLocalizationKeysList"
+                                                                          ItemsSource="{Binding SelectedRecord.MissingLocalizationKeys}">
+                                                                <ItemsControl.ItemTemplate>
+                                                                    <DataTemplate>
+                                                                        <Grid Margin="2,2">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="*" />
+                                                                                <ColumnDefinition Width="Auto" />
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <TextBlock Text="{Binding}"
+                                                                                       Foreground="{StaticResource LocalizationTextBrush}"
+                                                                                       FontFamily="Cascadia Mono, Consolas"
+                                                                                       TextTrimming="CharacterEllipsis"
+                                                                                       ToolTip="{Binding}" />
+                                                                            <TextBlock Grid.Column="1"
+                                                                                       Text="Нет ресурса"
+                                                                                       Foreground="{StaticResource WarningBrush}"
+                                                                                       Margin="12,0,2,0" />
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ItemsControl.ItemTemplate>
+                                                            </ItemsControl>
+                                                        </ScrollViewer>
+                                                    </Grid>
+                                                </Border>
                                                 <DataGrid x:Name="LocalizationGrid"
-                                                          Grid.Row="1"
+                                                          Grid.Row="2"
                                                           ItemsSource="{Binding SelectedRecord.RelatedTexts}"
                                                           AutoGenerateColumns="False"
                                                           CanUserAddRows="False"
@@ -1295,7 +1355,8 @@
                                                           ColumnHeaderHeight="42"
                                                           GridLinesVisibility="Horizontal"
                                                           HorizontalGridLinesBrush="{StaticResource LocalizationBorderBrush}"
-                                                          VerticalGridLinesBrush="Transparent">
+                                                          VerticalGridLinesBrush="Transparent"
+                                                          Visibility="{Binding SelectedRecord.HasRelatedTexts, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <DataGrid.Columns>
                                                         <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="94" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="220" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
