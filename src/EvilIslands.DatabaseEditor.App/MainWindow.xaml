@@ -1182,6 +1182,7 @@
                                               SelectedCellsChanged="RecordsGrid_SelectedCellsChanged"
                                               BeginningEdit="RecordsGrid_BeginningEdit"
                                               CellEditEnding="RecordsGrid_CellEditEnding"
+                                              RowEditEnding="RecordsGrid_RowEditEnding"
                                               Sorting="RecordsGrid_Sorting">
                                         <DataGrid.Columns>
                                             <DataGridTemplateColumn Header="#"

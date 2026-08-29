@@ -694,6 +694,13 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(RefreshFormulaBar, DispatcherPriority.DataBind);
     }
 
+    private void RecordsGrid_RowEditEnding(object? sender, DataGridRowEditEndingEventArgs e)
+    {
+        Dispatcher.BeginInvoke(
+            () => (_spreadsheetViewModel ?? _viewModel).CompletePendingRecordsViewRefresh(),
+            DispatcherPriority.ContextIdle);
+    }
+
     private static T? FindVisualDescendant<T>(DependencyObject? parent)
         where T : DependencyObject
     {
@@ -724,6 +731,7 @@ public partial class MainWindow : Window
     {
         if (_spreadsheetViewModel is not null &&
             candidate is RecordRowViewModel record &&
+            _spreadsheetViewModel.SelectedTable?.Records.Contains(record) is true &&
             !ReferenceEquals(_spreadsheetViewModel.SelectedRecord, record))
         {
             _spreadsheetViewModel.SelectedRecord = record;

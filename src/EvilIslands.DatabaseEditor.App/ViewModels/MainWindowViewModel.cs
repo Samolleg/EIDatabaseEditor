@@ -44,6 +44,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private int _filteredTextResourceCount;
     private string? _lastSavedPath;
     private bool _isApplyingSpreadsheetPaste;
+    private bool _recordsViewRefreshPending;
     private bool _disposed;
 
     public MainWindowViewModel()
@@ -184,7 +185,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICollectionView RecordsView
     {
         get => _recordsView;
-        private set => SetProperty(ref _recordsView, value);
+        private set
+        {
+            _recordsViewRefreshPending = false;
+            SetProperty(ref _recordsView, value);
+        }
     }
 
     public ICollectionView ResourcesView
@@ -1819,13 +1824,22 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         if (RecordsView is IEditableCollectionView editableView &&
             (editableView.IsAddingNew || editableView.IsEditingItem))
         {
-            Application.Current?.Dispatcher.BeginInvoke(
-                RefreshRecordsViewSafely,
-                DispatcherPriority.DataBind);
+            _recordsViewRefreshPending = true;
             return;
         }
 
+        _recordsViewRefreshPending = false;
         RecordsView.Refresh();
+    }
+
+    internal bool HasPendingRecordsViewRefresh => _recordsViewRefreshPending;
+
+    internal void CompletePendingRecordsViewRefresh()
+    {
+        if (_recordsViewRefreshPending)
+        {
+            RefreshRecordsViewSafely();
+        }
     }
 
     private async void RefreshValidationDeferred() =>

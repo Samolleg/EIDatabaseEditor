@@ -54,7 +54,9 @@ internal static class Program
             VerifyPreferencesStore();
             if (args.Length > 0)
             {
-                VerifyRealWorkspace(window, args[0], args.Length > 1 ? args[1] : null);
+                string? screenshotPath = args.Length > 1 ? args[1] : null;
+                ValidateScreenshotPath(args[0], screenshotPath);
+                VerifyRealWorkspace(window, args[0], screenshotPath);
             }
             window.Close();
             application.Shutdown();
@@ -73,6 +75,30 @@ internal static class Program
             {
                 Directory.Delete(uiSettingsRoot, recursive: true);
             }
+        }
+    }
+
+    private static void ValidateScreenshotPath(string sourcePath, string? screenshotPath)
+    {
+        if (string.IsNullOrWhiteSpace(screenshotPath))
+        {
+            return;
+        }
+
+        string fullSourcePath = Path.GetFullPath(sourcePath);
+        string fullScreenshotPath = Path.GetFullPath(screenshotPath);
+        string companionTextsPath = Path.Combine(
+            Path.GetDirectoryName(fullSourcePath)!,
+            "texts.res");
+
+        if (!Path.GetExtension(fullScreenshotPath).Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+            fullScreenshotPath.Equals(fullSourcePath, StringComparison.OrdinalIgnoreCase) ||
+            fullScreenshotPath.Equals(companionTextsPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException(
+                "Второй аргумент UiSmoke — только путь нового снимка с расширением .png; " +
+                "указывать database.res или texts.res запрещено.",
+                nameof(screenshotPath));
         }
     }
 
@@ -1250,6 +1276,7 @@ internal static class Program
 
         viewModel.AppendRecordCommand.Execute(null);
         RecordRowViewModel addedMaterial = materials.Records[^1];
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Loaded);
         if (materials.RecordCount != originalMaterialCount + 1 ||
             viewModel.CurrentTableRecordCount != originalMaterialCount + 1 ||
             !addedMaterial.IsAdded ||
@@ -1272,12 +1299,43 @@ internal static class Program
             RecordFieldViewModel identityField = addedMaterial.GetCell(addedMaterial.IdentityFieldId)
                 ?? throw new InvalidOperationException("Новый материал не содержит поле уникального ключа.");
             string clonedIdentity = identityField.EditorText;
-            identityField.EditorText = $"codex_ui_material_{Guid.NewGuid():N}";
+            string uniqueIdentity = $"codex_ui_material_{Guid.NewGuid():N}";
+            if (viewModel.RecordsView is not IEditableCollectionView editableView ||
+                !editableView.IsEditingItem ||
+                !ReferenceEquals(recordsGrid.CurrentCell.Item, addedMaterial))
+            {
+                throw new InvalidOperationException(
+                    "После добавления DataGrid должен открыть уникальный ключ новой строки для редактирования.");
+            }
+
+            TextBox identityEditor = FindVisualChild<TextBox>(firstMaterialColumn.GetCellContent(addedMaterial))
+                ?? throw new InvalidOperationException("DataGrid не создал редактор ключа новой строки.");
+            identityEditor.Text = uniqueIdentity;
+            if (!recordsGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
+                !editableView.IsEditingItem ||
+                !viewModel.HasPendingRecordsViewRefresh)
+            {
+                throw new InvalidOperationException(
+                    "Фиксация клетки новой строки должна отложить ровно обновление представления до завершения строки.");
+            }
+
+            if (!recordsGrid.CommitEdit(DataGridEditingUnit.Row, true))
+            {
+                throw new InvalidOperationException("DataGrid не завершил редактирование добавленной строки.");
+            }
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+            if (viewModel.HasPendingRecordsViewRefresh || editableView.IsEditingItem)
+            {
+                throw new InvalidOperationException(
+                    "После завершения строки отложенное обновление должно выполниться один раз без зацикливания Dispatcher.");
+            }
+
             if (addedMaterial.RelatedTextCount != 2 ||
                 !addedMaterial.CanEditPrimaryLocalization ||
                 addedMaterial.RelatedTexts.Any(entry => !entry.IsNew) ||
                 viewModel.TextResources.Count != textCountBeforeAutomaticCreation + 2 ||
-                viewModel.ChangeCount != 3)
+                viewModel.ChangeCount != 3 ||
+                identityField.EditorText != uniqueIdentity)
             {
                 throw new InvalidOperationException(
                     "После ввода уникального ключа нового материала должны автоматически появиться MATERIAL и MATSHORT в texts.res.");
@@ -1301,14 +1359,19 @@ internal static class Program
         if (materials.RecordCount != originalMaterialCount ||
             viewModel.CurrentTableRecordCount != originalMaterialCount ||
             materials.Records.Any(record => ReferenceEquals(record, addedMaterial)) ||
-            viewModel.SelectedRecord is not null ||
+            ReferenceEquals(viewModel.SelectedRecord, addedMaterial) ||
             viewModel.HasChanges ||
             viewModel.ChangeCount != 0 ||
             viewModel.Changes.Count != 0 ||
             viewModel.UndoCommand.CanExecute(null))
         {
             throw new InvalidOperationException(
-                "Undo добавления материала должен удалить только новую строку и полностью очистить состояние изменений.");
+                $"Undo добавления материала должен удалить только новую строку и полностью очистить состояние изменений. " +
+                $"rows={materials.RecordCount}/{originalMaterialCount}; current={viewModel.CurrentTableRecordCount}; " +
+                $"present={materials.Records.Any(record => ReferenceEquals(record, addedMaterial))}; " +
+                $"selected={viewModel.SelectedRecord?.DisplayName ?? "<null>"}; changes={viewModel.ChangeCount}/{viewModel.Changes.Count}; " +
+                $"hasChanges={viewModel.HasChanges}; undo={viewModel.UndoCommand.CanExecute(null)}; " +
+                $"pendingRefresh={viewModel.HasPendingRecordsViewRefresh}; status={viewModel.StatusText}; notification={viewModel.NotificationMessage}");
         }
 
         if (viewModel.HasTextsDocument)
