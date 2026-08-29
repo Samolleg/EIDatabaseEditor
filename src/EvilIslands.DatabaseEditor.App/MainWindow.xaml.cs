@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     private DataGridColumn? _localizationKeyColumn;
     private DataGridColumn? _localizationTitleColumn;
     private DataGridColumn? _localizationDescriptionColumn;
+    private FormulaCellContext? _formulaCellContext;
     private MainWindowViewModel? _spreadsheetViewModel;
     private HwndSource? _windowSource;
     private string? _columnLayoutTableKey;
@@ -150,6 +151,13 @@ public partial class MainWindow : Window
         if (e.PropertyName is nameof(MainWindowViewModel.IsEditMode) or nameof(MainWindowViewModel.IsBusy))
         {
             UpdateSpreadsheetColumnReadOnlyStates();
+            RefreshFormulaBar();
+            return;
+        }
+
+        if (e.PropertyName is nameof(MainWindowViewModel.ChangeCount) or nameof(MainWindowViewModel.HasChanges))
+        {
+            Dispatcher.BeginInvoke(RefreshFormulaBar, DispatcherPriority.DataBind);
         }
     }
 
@@ -175,6 +183,7 @@ public partial class MainWindow : Window
         if (_spreadsheetViewModel?.SelectedTable is null)
         {
             _columnLayoutTableKey = null;
+            ClearFormulaBar();
             return;
         }
 
@@ -254,6 +263,7 @@ public partial class MainWindow : Window
         _columnLayoutTableKey = tableKey;
         ApplyFrozenColumnLayout(nameColumn);
         UpdateSpreadsheetColumnReadOnlyStates();
+        RefreshFormulaBar();
     }
 
     private void AddLocalizationColumns(Style elementStyle, Style editingStyle, string tableKey)
@@ -574,6 +584,7 @@ public partial class MainWindow : Window
     private void RecordsGrid_CurrentCellChanged(object? sender, EventArgs e)
     {
         SelectSpreadsheetRecord(RecordsGrid.CurrentCell.Item);
+        RefreshFormulaBar();
     }
 
     private void RecordsGrid_SelectedCellsChanged(object? sender, SelectedCellsChangedEventArgs e)
@@ -585,6 +596,12 @@ public partial class MainWindow : Window
         }
 
         SelectSpreadsheetRecord(candidate);
+        RefreshFormulaBar();
+    }
+
+    private void RecordsGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
+    {
+        Dispatcher.BeginInvoke(RefreshFormulaBar, DispatcherPriority.DataBind);
     }
 
     private void SelectSpreadsheetRecord(object? candidate)
@@ -595,6 +612,269 @@ public partial class MainWindow : Window
         {
             _spreadsheetViewModel.SelectedRecord = record;
         }
+    }
+
+    private void RefreshFormulaBar()
+    {
+        if (FormulaAddressBox is null || FormulaEditorBox is null)
+        {
+            return;
+        }
+
+        if (!TryCreateFormulaCellContext(out FormulaCellContext context))
+        {
+            ClearFormulaBar();
+            return;
+        }
+
+        _formulaCellContext = context;
+        FormulaAddressBox.Text = context.Address;
+        FormulaAddressBox.ToolTip = $"{context.Address} · {context.Label}";
+        FormulaEditorBox.Text = context.ReadValue();
+        FormulaEditorBox.IsReadOnly = !context.IsEditable;
+        FormulaEditorBox.ToolTip = context.IsEditable
+            ? $"{context.Label}\nEnter — применить · Esc — отменить · Alt+Enter — перенос строки"
+            : $"{context.Label}\nВычисляемое или служебное поле доступно только для чтения.";
+        FormulaApplyButton.IsEnabled = context.IsEditable;
+        FormulaCancelButton.IsEnabled = context.IsEditable;
+        SetFormulaError(null);
+    }
+
+    private bool TryCreateFormulaCellContext(out FormulaCellContext context)
+    {
+        context = null!;
+        if (RecordsGrid.CurrentCell is not { IsValid: true, Item: RecordRowViewModel record } currentCell)
+        {
+            return false;
+        }
+
+        DataGridColumn column = currentCell.Column;
+        string address = GetSpreadsheetAddress(RecordsGrid, record, column);
+        if (_spreadsheetColumns.TryGetValue(column, out SpreadsheetColumnViewModel? descriptor))
+        {
+            RecordFieldViewModel? field = record.GetCell(descriptor.FieldId);
+            if (field is null)
+            {
+                return false;
+            }
+
+            if (descriptor.Projection is not null)
+            {
+                context = new FormulaCellContext(
+                    record,
+                    column,
+                    address,
+                    descriptor.Title,
+                    () => field.GetProjectedText(descriptor.Projection));
+                return true;
+            }
+
+            Action<string>? writeValue = descriptor.IsEditable && field.CanEdit
+                ? value => field.EditorText = value
+                : null;
+            context = new FormulaCellContext(
+                record,
+                column,
+                address,
+                descriptor.Title,
+                () => field.EditorText,
+                writeValue,
+                () => field.ErrorMessage);
+            return true;
+        }
+
+        if (ReferenceEquals(column, _localizationKeyColumn))
+        {
+            context = new FormulaCellContext(
+                record,
+                column,
+                address,
+                "Ключ texts.res",
+                () => record.LocalizationKeyText);
+            return true;
+        }
+
+        if (ReferenceEquals(column, _localizationTitleColumn))
+        {
+            Action<string>? writeValue = CanEditLocalization(record)
+                ? value => record.LocalizationTitle = value
+                : null;
+            context = new FormulaCellContext(
+                record,
+                column,
+                address,
+                "Название RU",
+                () => record.LocalizationTitle,
+                writeValue,
+                () => record.PrimaryLocalizationErrorMessage);
+            return true;
+        }
+
+        if (ReferenceEquals(column, _localizationDescriptionColumn))
+        {
+            Action<string>? writeValue = CanEditLocalization(record)
+                ? value => record.LocalizationDescription = value
+                : null;
+            context = new FormulaCellContext(
+                record,
+                column,
+                address,
+                "Описание RU",
+                () => record.LocalizationDescription,
+                writeValue,
+                () => record.PrimaryLocalizationErrorMessage);
+            return true;
+        }
+
+        if (Equals(column.Header, "#"))
+        {
+            context = new FormulaCellContext(
+                record,
+                column,
+                address,
+                "Номер строки",
+                () => record.Index.ToString(CultureInfo.InvariantCulture));
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool CanEditLocalization(RecordRowViewModel record) =>
+        _spreadsheetViewModel is { IsEditMode: true, IsBusy: false, IsCurrentTableEditable: true } &&
+        record.CanEditPrimaryLocalization;
+
+    private static string GetSpreadsheetAddress(DataGrid grid, object item, DataGridColumn column)
+    {
+        DataGridColumn[] visibleColumns = grid.Columns
+            .Where(candidate => candidate.Visibility == Visibility.Visible)
+            .OrderBy(candidate => candidate.DisplayIndex)
+            .ToArray();
+        int columnIndex = Array.FindIndex(visibleColumns, candidate => ReferenceEquals(candidate, column));
+        int rowIndex = grid.Items.IndexOf(item);
+        if (columnIndex < 0 || rowIndex < 0)
+        {
+            return string.Empty;
+        }
+
+        return GetSpreadsheetColumnName(columnIndex + 1) + (rowIndex + 1).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string GetSpreadsheetColumnName(int oneBasedIndex)
+    {
+        var result = new Stack<char>();
+        int value = oneBasedIndex;
+        while (value > 0)
+        {
+            value--;
+            result.Push((char)('A' + value % 26));
+            value /= 26;
+        }
+
+        return new string(result.ToArray());
+    }
+
+    private void ClearFormulaBar()
+    {
+        _formulaCellContext = null;
+        if (FormulaAddressBox is null || FormulaEditorBox is null)
+        {
+            return;
+        }
+
+        FormulaAddressBox.Text = string.Empty;
+        FormulaAddressBox.ToolTip = "Адрес текущей ячейки в видимой таблице";
+        FormulaEditorBox.Text = string.Empty;
+        FormulaEditorBox.IsReadOnly = true;
+        FormulaEditorBox.ToolTip = "Выберите ячейку таблицы.";
+        FormulaApplyButton.IsEnabled = false;
+        FormulaCancelButton.IsEnabled = false;
+        SetFormulaError(null);
+    }
+
+    private void FormulaEditorBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            CancelFormulaEdit();
+            e.Handled = true;
+            return;
+        }
+
+        bool isEnter = e.Key == Key.Enter || (e.Key == Key.System && e.SystemKey == Key.Enter);
+        if (isEnter && (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
+        {
+            ApplyFormulaEdit();
+            e.Handled = true;
+        }
+    }
+
+    private void FormulaCancelButton_Click(object sender, RoutedEventArgs e) => CancelFormulaEdit();
+
+    private void FormulaApplyButton_Click(object sender, RoutedEventArgs e) => ApplyFormulaEdit();
+
+    private void CancelFormulaEdit()
+    {
+        if (_formulaCellContext is not null)
+        {
+            FormulaEditorBox.Text = _formulaCellContext.ReadValue();
+        }
+
+        SetFormulaError(null);
+        RecordsGrid.Focus();
+    }
+
+    private void ApplyFormulaEdit()
+    {
+        if (!TryApplyFormulaValue(FormulaEditorBox.Text, out string? error))
+        {
+            SetFormulaError(error ?? "Значение не принято.");
+            FormulaEditorBox.Focus();
+            FormulaEditorBox.SelectAll();
+            return;
+        }
+
+        SetFormulaError(null);
+        FormulaEditorBox.Text = _formulaCellContext?.ReadValue() ?? FormulaEditorBox.Text;
+        RecordsGrid.Focus();
+    }
+
+    internal bool TryApplyFormulaValue(string value, out string? error)
+    {
+        error = null;
+        FormulaCellContext? context = _formulaCellContext;
+        if (context?.WriteValue is null)
+        {
+            error = "Выбранная ячейка доступна только для чтения.";
+            return false;
+        }
+
+        if (!ReferenceEquals(RecordsGrid.CurrentCell.Item, context.Item) ||
+            !ReferenceEquals(RecordsGrid.CurrentCell.Column, context.Column))
+        {
+            error = "Выбранная ячейка изменилась; повторите ввод для текущей ячейки.";
+            RefreshFormulaBar();
+            return false;
+        }
+
+        context.WriteValue(value);
+        error = context.ReadError?.Invoke();
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            return false;
+        }
+
+        FormulaEditorBox.Text = context.ReadValue();
+        return true;
+    }
+
+    private void SetFormulaError(string? error)
+    {
+        FormulaErrorText.Text = error ?? string.Empty;
+        FormulaErrorText.Visibility = string.IsNullOrWhiteSpace(error) ? Visibility.Collapsed : Visibility.Visible;
+        FormulaEditorBox.BorderBrush = string.IsNullOrWhiteSpace(error)
+            ? (Brush)FindResource("StrongBorderBrush")
+            : (Brush)FindResource("DangerBrush");
     }
 
     private void RecordsGrid_CopyCanExecute(object sender, CanExecuteRoutedEventArgs e)
@@ -1423,6 +1703,18 @@ public partial class MainWindow : Window
         public NativeRect MonitorArea;
         public NativeRect WorkArea;
         public uint Flags;
+    }
+
+    private sealed record FormulaCellContext(
+        object Item,
+        DataGridColumn Column,
+        string Address,
+        string Label,
+        Func<string> ReadValue,
+        Action<string>? WriteValue = null,
+        Func<string?>? ReadError = null)
+    {
+        public bool IsEditable => WriteValue is not null;
     }
 
     private sealed class SpreadsheetRecordComparer(

@@ -187,6 +187,17 @@ internal static class Program
             throw new InvalidOperationException("Экран таблицы обязан содержать Excel-подобный RecordsGrid.");
         }
 
+        if (window.FindName("FormulaAddressBox") is not TextBox { IsReadOnly: true } ||
+            window.FindName("FormulaEditorBox") is not TextBox formulaEditor ||
+            !formulaEditor.AcceptsReturn ||
+            window.FindName("FormulaApplyButton") is not Button ||
+            window.FindName("FormulaCancelButton") is not Button ||
+            window.FindName("FormulaErrorText") is not TextBlock)
+        {
+            throw new InvalidOperationException(
+                "Экран основной таблицы обязан содержать строку формул с адресом, полным значением, применением и отменой.");
+        }
+
         if (grid.AutoGenerateColumns || grid.IsReadOnly ||
             !grid.EnableRowVirtualization || !grid.EnableColumnVirtualization ||
             !grid.CanUserResizeColumns || grid.CanUserReorderColumns ||
@@ -1017,6 +1028,8 @@ internal static class Program
                 "Профиль компактности должен различать имя, дробные значения и битовые колонки.");
         }
 
+        VerifyFormulaBar(window, viewModel, recordsGrid, materials);
+
         // The localization columns intentionally follow the database name column. Use two
         // adjacent physical database fields to verify rectangular Excel copy/paste semantics.
         SpreadsheetColumnViewModel materialType = materials.Columns.Single(column => column.Title == "Тип");
@@ -1445,6 +1458,112 @@ internal static class Program
         return column.Projection is null
             ? field.EditorText
             : field.GetProjectedText(column.Projection);
+    }
+
+    private static void VerifyFormulaBar(
+        MainWindow window,
+        MainWindowViewModel viewModel,
+        DataGrid recordsGrid,
+        DatabaseTableViewModel materials)
+    {
+        var addressBox = (TextBox)window.FindName("FormulaAddressBox");
+        var editorBox = (TextBox)window.FindName("FormulaEditorBox");
+        var applyButton = (Button)window.FindName("FormulaApplyButton");
+        RecordRowViewModel record = materials.Records[0];
+        SpreadsheetColumnViewModel priceColumn = materials.Columns.Single(column => column.Title == "Цена");
+        DataGridColumn priceGridColumn = recordsGrid.Columns.Single(column => ReferenceEquals(column.Header, priceColumn));
+        RecordFieldViewModel priceField = record.GetCell(priceColumn.FieldId)
+            ?? throw new InvalidOperationException("У материала отсутствует поле цены.");
+        string originalPrice = priceField.EditorText;
+
+        recordsGrid.CurrentCell = new DataGridCellInfo(record, priceGridColumn);
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(record, priceGridColumn));
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (string.IsNullOrWhiteSpace(addressBox.Text) ||
+            editorBox.Text != originalPrice ||
+            editorBox.IsReadOnly ||
+            !applyButton.IsEnabled ||
+            editorBox.ToolTip?.ToString()?.Contains("Цена", StringComparison.Ordinal) is not true)
+        {
+            throw new InvalidOperationException(
+                "Строка формул должна показать адрес, полное значение и разрешить редактирование физической ячейки.");
+        }
+
+        string replacementPrice = originalPrice == "5" ? "6" : "5";
+        if (!window.TryApplyFormulaValue(replacementPrice, out string? formulaError) ||
+            formulaError is not null ||
+            priceField.EditorText != replacementPrice ||
+            viewModel.ChangeCount != 1 ||
+            !viewModel.UndoCommand.CanExecute(null))
+        {
+            throw new InvalidOperationException(
+                $"Изменение через строку формул должно использовать общий валидатор и Undo: {formulaError}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (priceField.EditorText != originalPrice || viewModel.ChangeCount != 0 || editorBox.Text != originalPrice)
+        {
+            throw new InvalidOperationException(
+                "Undo должен полностью вернуть изменение строки формул и обновить показанное значение.");
+        }
+
+        if (window.TryApplyFormulaValue("не число", out string? invalidError) ||
+            string.IsNullOrWhiteSpace(invalidError) ||
+            priceField.EditorText != originalPrice ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Строка формул обязана отклонять неверный тип без изменения ячейки и журнала Undo.");
+        }
+
+        if (!window.TryApplyFormulaValue(originalPrice, out string? resetError) || resetError is not null)
+        {
+            throw new InvalidOperationException(
+                $"После ошибочного ввода исходное значение должно снова приниматься: {resetError}");
+        }
+
+        if (viewModel.HasTextsDocument && record.CanEditPrimaryLocalization)
+        {
+            DataGridColumn titleColumn = recordsGrid.Columns.Single(column => Equals(column.Header, "Название RU"));
+            string originalTitle = record.LocalizationTitle;
+            recordsGrid.CurrentCell = new DataGridCellInfo(record, titleColumn);
+            recordsGrid.SelectedCells.Clear();
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(record, titleColumn));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            string changedTitle = originalTitle + " fx";
+            string? titleError = null;
+            if (editorBox.Text != originalTitle || editorBox.IsReadOnly ||
+                !window.TryApplyFormulaValue(changedTitle, out titleError) ||
+                titleError is not null || record.LocalizationTitle != changedTitle || viewModel.ChangeCount != 1)
+            {
+                throw new InvalidOperationException(
+                    $"Inline-Название RU должно редактироваться той же строкой формул и попадать в общий Undo: {titleError}");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (record.LocalizationTitle != originalTitle || editorBox.Text != originalTitle || viewModel.ChangeCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Undo должен вернуть изменение texts.res, сделанное через строку формул.");
+            }
+        }
+
+        SpreadsheetColumnViewModel projectedColumn = materials.Columns.Single(column => column.Title == "Магазин 1");
+        DataGridColumn projectedGridColumn = recordsGrid.Columns.Single(column => ReferenceEquals(column.Header, projectedColumn));
+        recordsGrid.CurrentCell = new DataGridCellInfo(record, projectedGridColumn);
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(record, projectedGridColumn));
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (!editorBox.IsReadOnly || applyButton.IsEnabled ||
+            window.TryApplyFormulaValue("1", out string? readOnlyError) ||
+            readOnlyError?.Contains("только для чтения", StringComparison.OrdinalIgnoreCase) is not true)
+        {
+            throw new InvalidOperationException(
+                "Расшифрованная проекция должна отображаться в строке формул, но оставаться только для чтения.");
+        }
     }
 
     private static T? FindVisualChild<T>(DependencyObject? parent)

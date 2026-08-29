@@ -854,7 +854,9 @@
                                   Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Records}">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="10" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="10" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="34" />
                                 </Grid.RowDefinitions>
@@ -954,7 +956,86 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
+                                <Border Grid.Row="2"
+                                        Background="{StaticResource SurfaceBrush}"
+                                        BorderBrush="{StaticResource StrongBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="6">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="82" />
+                                            <ColumnDefinition Width="40" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="FormulaAddressBox"
+                                                 Grid.Column="0"
+                                                 Style="{StaticResource DarkTextBox}"
+                                                 Height="34"
+                                                 Padding="9,5"
+                                                 IsReadOnly="True"
+                                                 HorizontalContentAlignment="Center"
+                                                 FontFamily="Cascadia Mono, Consolas"
+                                                 FontWeight="SemiBold"
+                                                 ToolTip="Адрес текущей ячейки в видимой таблице" />
+                                        <TextBlock Grid.Column="1"
+                                                   Text="fx"
+                                                   Foreground="{StaticResource AccentBrush}"
+                                                   FontFamily="Georgia"
+                                                   FontStyle="Italic"
+                                                   FontSize="15"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   ToolTip="Полное значение выбранной ячейки" />
+                                        <TextBox x:Name="FormulaEditorBox"
+                                                 Grid.Column="2"
+                                                 Style="{StaticResource DarkTextBox}"
+                                                 Height="34"
+                                                 Padding="10,5"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="NoWrap"
+                                                 HorizontalScrollBarVisibility="Auto"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 PreviewKeyDown="FormulaEditorBox_PreviewKeyDown"
+                                                 ToolTip="Enter — применить · Esc — отменить · Alt+Enter — перенос строки" />
+                                        <Button x:Name="FormulaCancelButton"
+                                                Grid.Column="3"
+                                                Style="{StaticResource SmallIconButton}"
+                                                Content="×"
+                                                Width="34"
+                                                Height="34"
+                                                Margin="6,0,0,0"
+                                                Click="FormulaCancelButton_Click"
+                                                ToolTip="Отменить ввод (Esc)" />
+                                        <Button x:Name="FormulaApplyButton"
+                                                Grid.Column="4"
+                                                Style="{StaticResource SmallIconButton}"
+                                                Content="✓"
+                                                Foreground="{StaticResource AccentBrush}"
+                                                Width="34"
+                                                Height="34"
+                                                Margin="4,0,0,0"
+                                                Click="FormulaApplyButton_Click"
+                                                ToolTip="Применить значение (Enter)" />
+                                        <TextBlock x:Name="FormulaErrorText"
+                                                   Grid.Row="1"
+                                                   Grid.Column="2"
+                                                   Grid.ColumnSpan="3"
+                                                   Margin="10,5,4,0"
+                                                   Foreground="{StaticResource DangerBrush}"
+                                                   FontSize="10"
+                                                   TextWrapping="Wrap"
+                                                   Visibility="Collapsed" />
+                                    </Grid>
+                                </Border>
+
+                                <Border Grid.Row="4" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
                                     <Grid>
                                         <Grid.RowDefinitions>
                                             <RowDefinition Height="*" />
@@ -978,6 +1059,7 @@
                                               CurrentCellChanged="RecordsGrid_CurrentCellChanged"
                                               SelectedCellsChanged="RecordsGrid_SelectedCellsChanged"
                                               BeginningEdit="RecordsGrid_BeginningEdit"
+                                              CellEditEnding="RecordsGrid_CellEditEnding"
                                               Sorting="RecordsGrid_Sorting">
                                         <DataGrid.Columns>
                                             <DataGridTemplateColumn Header="#"
@@ -1051,7 +1133,7 @@
                                     </Grid>
                                 </Border>
 
-                                <Grid Grid.Row="3" Margin="2,7,2,0">
+                                <Grid Grid.Row="5" Margin="2,7,2,0">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
