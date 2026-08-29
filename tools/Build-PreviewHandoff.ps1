@@ -34,21 +34,10 @@ if (Test-Path -LiteralPath $outputPath) {
     throw "Папка handoff уже существует: $outputPath"
 }
 
-$buildOutput = Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App\bin\Release\net9.0-windows'
-$runtimeFiles = @(
-    'EvilIslands.DatabaseEditor.exe',
-    'EvilIslands.DatabaseEditor.dll',
-    'EvilIslands.DatabaseEditor.Core.dll',
-    'EvilIslands.DatabaseEditor.deps.json',
-    'EvilIslands.DatabaseEditor.runtimeconfig.json'
-)
-
-foreach ($name in $runtimeFiles) {
-    $source = Join-Path $buildOutput $name
-    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-        throw "Не найден Release runtime-файл: $source"
-    }
-}
+$runtimeIdentifier = 'win-x64'
+$runtimeFile = 'EvilIslands.DatabaseEditor.exe'
+$appProject = Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App\EvilIslands.DatabaseEditor.App.csproj'
+$nugetSource = 'https://api.nuget.org/v3/index.json'
 
 $readmeSource = Join-Path $projectRoot 'packaging\README_RU.txt'
 if (-not (Test-Path -LiteralPath $readmeSource -PathType Leaf)) {
@@ -64,18 +53,43 @@ if ($LASTEXITCODE -ne 0 -or $gitStatus.Count -ne 0) {
     throw 'Handoff создаётся только из чистого tracked Git-состояния.'
 }
 
-$expectedFileVersion = [string]$props.Project.PropertyGroup.FileVersion
-$exeInfo = (Get-Item -LiteralPath (Join-Path $buildOutput 'EvilIslands.DatabaseEditor.exe')).VersionInfo
-if ($exeInfo.FileVersion -ne $expectedFileVersion -or
-    $exeInfo.ProductVersion -ne "$version+$gitHead") {
-    throw "Release-бинарник не соответствует версии $version и Git commit $gitHead. Выполните точную Release-сборку после commit."
-}
-
-New-Item -ItemType Directory -Path $outputPath | Out-Null
+$publishRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'EvilIslands.DatabaseEditor.Publish-' + [guid]::NewGuid().ToString('N'))
+$publishPath = Join-Path $publishRoot 'publish'
+New-Item -ItemType Directory -Path $publishPath | Out-Null
 try {
-    foreach ($name in $runtimeFiles) {
-        Copy-Item -LiteralPath (Join-Path $buildOutput $name) -Destination (Join-Path $outputPath $name)
+    & dotnet publish $appProject `
+        -c Release `
+        -r $runtimeIdentifier `
+        --self-contained true `
+        --source $nugetSource `
+        --output $publishPath `
+        -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -p:EnableCompressionInSingleFile=true `
+        -p:PublishTrimmed=false `
+        -p:DebugType=none `
+        -p:DebugSymbols=false
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet publish завершился с кодом $LASTEXITCODE."
     }
+
+    $publishedFiles = @(Get-ChildItem -LiteralPath $publishPath -File)
+    if ($publishedFiles.Count -ne 1 -or $publishedFiles[0].Name -ne $runtimeFile) {
+        $actualNames = ($publishedFiles.Name | Sort-Object) -join ', '
+        throw "Single-file публикация содержит неожиданные файлы: $actualNames"
+    }
+
+    $publishedExe = Join-Path $publishPath $runtimeFile
+    $expectedFileVersion = [string]$props.Project.PropertyGroup.FileVersion
+    $exeInfo = (Get-Item -LiteralPath $publishedExe).VersionInfo
+    if ($exeInfo.FileVersion -ne $expectedFileVersion -or
+        $exeInfo.ProductVersion -ne "$version+$gitHead") {
+        throw "Release-бинарник не соответствует версии $version и Git commit $gitHead."
+    }
+
+    New-Item -ItemType Directory -Path $outputPath | Out-Null
+    Copy-Item -LiteralPath $publishedExe -Destination (Join-Path $outputPath $runtimeFile)
     Copy-Item -LiteralPath $readmeSource -Destination (Join-Path $outputPath 'README_RU.txt')
 
     $manifestFiles = foreach ($file in (Get-ChildItem -LiteralPath $outputPath -File | Sort-Object Name)) {
@@ -91,7 +105,10 @@ try {
         version = $version
         sourceCommit = $gitHead
         createdAt = (Get-Date).ToString('o')
-        framework = 'Microsoft.WindowsDesktop.App 9.0'
+        framework = '.NET 9 self-contained'
+        runtimeIdentifier = $runtimeIdentifier
+        singleFile = $true
+        distributableFile = $runtimeFile
         files = @($manifestFiles)
     }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $outputPath 'manifest.json') -Encoding utf8
@@ -103,6 +120,17 @@ catch {
         Remove-Item -LiteralPath $resolvedOutput -Recurse -Force
     }
     throw
+}
+finally {
+    $resolvedPublishRoot = [System.IO.Path]::GetFullPath($publishRoot)
+    $tempPrefix = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    if ($resolvedPublishRoot.StartsWith($tempPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+        [System.IO.Path]::GetFileName($resolvedPublishRoot).StartsWith(
+            'EvilIslands.DatabaseEditor.Publish-', [System.StringComparison]::Ordinal) -and
+        (Test-Path -LiteralPath $resolvedPublishRoot -PathType Container)) {
+        Remove-Item -LiteralPath $resolvedPublishRoot -Recurse -Force
+    }
 }
 
 Write-Output $outputPath
