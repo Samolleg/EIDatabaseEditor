@@ -1029,7 +1029,7 @@ internal static class Program
                 "Профиль компактности должен различать имя, дробные значения и битовые колонки.");
         }
 
-        VerifyFormulaBar(window, viewModel, recordsGrid, materials);
+        VerifyFormulaBar(window, viewModel, recordsGrid, materials, prototypes);
 
         // The localization columns intentionally follow the database name column. Use two
         // adjacent physical database fields to verify rectangular Excel copy/paste semantics.
@@ -1269,18 +1269,18 @@ internal static class Program
 
         if (!string.IsNullOrWhiteSpace(screenshotPath))
         {
-            if (viewModel.HasTextsDocument)
-            {
-                viewModel.SelectTableCommand.Execute(weapons);
-                window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-                RecordRowViewModel weaponWithVariants = weapons.Records.First(record => record.RelatedTextCount > 1);
-                DataGridColumn weaponNameColumn = recordsGrid.Columns.Single(column =>
-                    column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
-                recordsGrid.CurrentCell = new DataGridCellInfo(weaponWithVariants, weaponNameColumn);
-                recordsGrid.SelectedCells.Clear();
-                recordsGrid.SelectedCells.Add(new DataGridCellInfo(weaponWithVariants, weaponNameColumn));
-                recordsGrid.ScrollIntoView(weaponWithVariants, weaponNameColumn);
-            }
+            viewModel.SelectTableCommand.Execute(prototypes);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            SpreadsheetColumnViewModel longValueColumn = prototypes.Columns.Single(column =>
+                column.FieldId == 29 && column.Projection is null);
+            RecordRowViewModel longValueRecord = prototypes.Records.First(record =>
+                (record.GetCell(longValueColumn.FieldId)?.EditorText.Length ?? 0) > 80);
+            DataGridColumn longValueGridColumn = recordsGrid.Columns.Single(column =>
+                ReferenceEquals(column.Header, longValueColumn));
+            recordsGrid.CurrentCell = new DataGridCellInfo(longValueRecord, longValueGridColumn);
+            recordsGrid.SelectedCells.Clear();
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(longValueRecord, longValueGridColumn));
+            recordsGrid.ScrollIntoView(longValueRecord, longValueGridColumn);
 
             window.UpdateLayout();
             var bitmap = new RenderTargetBitmap(
@@ -1465,7 +1465,8 @@ internal static class Program
         MainWindow window,
         MainWindowViewModel viewModel,
         DataGrid recordsGrid,
-        DatabaseTableViewModel materials)
+        DatabaseTableViewModel materials,
+        DatabaseTableViewModel prototypes)
     {
         var addressBox = (TextBox)window.FindName("FormulaAddressBox");
         var editorBox = (TextBox)window.FindName("FormulaEditorBox");
@@ -1608,6 +1609,48 @@ internal static class Program
             throw new InvalidOperationException(
                 "Расшифрованная проекция должна отображаться в строке формул, но оставаться только для чтения.");
         }
+
+        viewModel.SelectTableCommand.Execute(prototypes);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        SpreadsheetColumnViewModel longValueColumn = prototypes.Columns.Single(column =>
+            column.FieldId == 29 && column.Projection is null);
+        RecordRowViewModel longValueRecord = prototypes.Records.First(candidate =>
+            (candidate.GetCell(longValueColumn.FieldId)?.EditorText.Length ?? 0) > 80);
+        RecordFieldViewModel longValueField = longValueRecord.GetCell(longValueColumn.FieldId)
+            ?? throw new InvalidOperationException("У прототипа отсутствует длинное поле StringList.");
+        DataGridColumn longValueGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, longValueColumn));
+        recordsGrid.CurrentCell = new DataGridCellInfo(longValueRecord, longValueGridColumn);
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(longValueRecord, longValueGridColumn));
+        window.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        ScrollViewer formulaContentHost = FindVisualChild<ScrollViewer>(editorBox)
+            ?? throw new InvalidOperationException("Строка формул должна содержать ScrollViewer PART_ContentHost.");
+        if (editorBox.Text != longValueField.EditorText ||
+            formulaContentHost.ComputedHorizontalScrollBarVisibility != Visibility.Collapsed ||
+            formulaContentHost.ComputedVerticalScrollBarVisibility != Visibility.Collapsed ||
+            formulaContentHost.ViewportHeight < editorBox.FontSize)
+        {
+            throw new InvalidOperationException(
+                "Длинный StringList должен оставаться видимым: полосы прокрутки не должны съедать высоту текста строки формул. " +
+                $"H={formulaContentHost.ComputedHorizontalScrollBarVisibility}, " +
+                $"V={formulaContentHost.ComputedVerticalScrollBarVisibility}, " +
+                $"viewport={formulaContentHost.ViewportHeight:0.##}, font={editorBox.FontSize:0.##}.");
+        }
+
+        formulaContentHost.ScrollToHorizontalOffset(formulaContentHost.ScrollableWidth);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        if (formulaContentHost.ScrollableWidth <= 0 || formulaContentHost.HorizontalOffset <= 0)
+        {
+            throw new InvalidOperationException(
+                "Скрытая полоса не должна отключать горизонтальную навигацию по длинному значению строки формул.");
+        }
+
+        formulaContentHost.ScrollToLeftEnd();
+
+        viewModel.SelectTableCommand.Execute(materials);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
     }
 
     private static T? FindVisualChild<T>(DependencyObject? parent)
