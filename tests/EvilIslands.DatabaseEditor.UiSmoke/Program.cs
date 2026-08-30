@@ -49,6 +49,7 @@ internal static class Program
             application.InitializeComponent();
             var window = new MainWindow(preferences);
             VerifyBranding(window);
+            VerifyLongTextEditorDialog();
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
             VerifySpreadsheetClipboardText();
@@ -2027,6 +2028,7 @@ internal static class Program
         var addressBox = (TextBox)window.FindName("FormulaAddressBox");
         var editorBox = (TextBox)window.FindName("FormulaEditorBox");
         var applyButton = (Button)window.FindName("FormulaApplyButton");
+        var openEditorButton = (Button)window.FindName("FormulaOpenEditorButton");
         RecordRowViewModel record = materials.Records[0];
         SpreadsheetColumnViewModel priceColumn = materials.Columns.Single(column => column.Title == "Цена");
         DataGridColumn priceGridColumn = recordsGrid.Columns.Single(column => ReferenceEquals(column.Header, priceColumn));
@@ -2037,11 +2039,12 @@ internal static class Program
         recordsGrid.CurrentCell = new DataGridCellInfo(record, priceGridColumn);
         recordsGrid.SelectedCells.Clear();
         recordsGrid.SelectedCells.Add(new DataGridCellInfo(record, priceGridColumn));
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-        if (string.IsNullOrWhiteSpace(addressBox.Text) ||
+         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+         if (string.IsNullOrWhiteSpace(addressBox.Text) ||
             editorBox.Text != originalPrice ||
             editorBox.IsReadOnly ||
             !applyButton.IsEnabled ||
+            openEditorButton.IsEnabled ||
             AutomationProperties.GetHelpText(editorBox).Contains("Цена", StringComparison.Ordinal) is not true)
         {
             throw new InvalidOperationException(
@@ -2093,7 +2096,8 @@ internal static class Program
             string changedTitle = originalTitle + " fx";
             string? titleError = null;
             if (editorBox.Text != originalTitle || editorBox.IsReadOnly ||
-                !window.TryApplyFormulaValue(changedTitle, out titleError) ||
+                 !openEditorButton.IsEnabled ||
+                 !window.TryApplyFormulaValue(changedTitle, out titleError) ||
                 titleError is not null || record.LocalizationTitle != changedTitle || viewModel.ChangeCount != 1)
             {
                 throw new InvalidOperationException(
@@ -2250,8 +2254,9 @@ internal static class Program
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
         ScrollViewer formulaContentHost = FindVisualChild<ScrollViewer>(editorBox)
             ?? throw new InvalidOperationException("Строка формул должна содержать ScrollViewer PART_ContentHost.");
-        if (editorBox.Text != longValueField.EditorText ||
-            editorBox.TextWrapping != TextWrapping.Wrap ||
+         if (editorBox.Text != longValueField.EditorText ||
+             !openEditorButton.IsEnabled ||
+             editorBox.TextWrapping != TextWrapping.Wrap ||
             editorBox.LineCount < 2 ||
             formulaContentHost.ComputedHorizontalScrollBarVisibility != Visibility.Collapsed ||
             formulaContentHost.ComputedVerticalScrollBarVisibility != Visibility.Collapsed ||
@@ -2287,6 +2292,7 @@ internal static class Program
         var addressBox = (TextBox)window.FindName("TextsFormulaAddressBox");
         var editorBox = (TextBox)window.FindName("TextsFormulaEditorBox");
         var applyButton = (Button)window.FindName("TextsFormulaApplyButton");
+        var openEditorButton = (Button)window.FindName("TextsFormulaOpenEditorButton");
         DataGridColumn descriptionColumn = textsGrid.Columns.Single(column => Equals(column.Header, "Описание RU"));
         LocalizationEntryViewModel entry = viewModel.TextResources.First(candidate =>
             !string.IsNullOrWhiteSpace(candidate.Description) && !candidate.IsNew);
@@ -2295,14 +2301,15 @@ internal static class Program
         textsGrid.CurrentCell = new DataGridCellInfo(entry, descriptionColumn);
         textsGrid.SelectedCells.Clear();
         textsGrid.SelectedCells.Add(new DataGridCellInfo(entry, descriptionColumn));
-        window.UpdateLayout();
-        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
-        if (string.IsNullOrWhiteSpace(addressBox.Text) ||
+         window.UpdateLayout();
+         window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+         if (string.IsNullOrWhiteSpace(addressBox.Text) ||
             editorBox.Text != originalDescription ||
             editorBox.IsReadOnly ||
             !applyButton.IsEnabled ||
+            !openEditorButton.IsEnabled ||
             editorBox.MinLines < 3 ||
-            editorBox.ActualHeight < 80)
+             editorBox.ActualHeight < 80)
         {
             throw new InvalidOperationException(
                 "Раздел texts.res должен показывать выбранное полное описание в крупной редактируемой строке формул.");
@@ -2330,6 +2337,49 @@ internal static class Program
 
         viewModel.SelectTableCommand.Execute(returnTable);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+    }
+
+    private static void VerifyLongTextEditorDialog()
+    {
+        string? appliedText = null;
+        var dialog = new LongTextEditorDialog(
+            "E4",
+            "Описание RU",
+            "Первая строка\nВторая строка",
+            value =>
+            {
+                appliedText = value;
+                return (true, null);
+            });
+
+        if (dialog.Width < 900 ||
+            dialog.Height < 620 ||
+            !dialog.Statistics.Contains("2", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Встроенный редактор большого текста должен открываться крупным, многострочным и показывать статистику.");
+        }
+
+        dialog.EditorText = "Строка 1\nСтрока 2\nСтрока 3";
+        if (!dialog.TryCommit() ||
+            !dialog.WasApplied ||
+            appliedText != dialog.EditorText ||
+            !dialog.Statistics.Contains("3", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Встроенный редактор большого текста должен передавать полное значение общему обработчику применения.");
+        }
+
+        var rejectingDialog = new LongTextEditorDialog(
+            "E4",
+            "Описание RU",
+            "Исходное значение",
+            _ => (false, "Проверочная ошибка"));
+        if (rejectingDialog.TryCommit() || rejectingDialog.WasApplied)
+        {
+            throw new InvalidOperationException(
+                "Встроенный редактор не должен закрывать применение при ошибке общего валидатора.");
+        }
     }
 
     private static T? FindVisualChild<T>(DependencyObject? parent)

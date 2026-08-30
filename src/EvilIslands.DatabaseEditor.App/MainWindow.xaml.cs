@@ -923,6 +923,7 @@ public partial class MainWindow : Window
                 : $"{context.Label}. Служебное поле доступно только для чтения.");
         TextsFormulaApplyButton.IsEnabled = context.IsEditable;
         TextsFormulaCancelButton.IsEnabled = context.IsEditable;
+        TextsFormulaOpenEditorButton.IsEnabled = context.CanOpenLongTextEditor;
         SetTextsFormulaError(null);
     }
 
@@ -972,7 +973,8 @@ public partial class MainWindow : Window
                 "Название RU",
                 () => entry.Title,
                 writeValue,
-                () => entry.ErrorMessage);
+                () => entry.ErrorMessage,
+                SupportsLongTextEditor: true);
             return true;
         }
 
@@ -988,7 +990,8 @@ public partial class MainWindow : Window
                 "Описание RU",
                 () => entry.Description,
                 writeValue,
-                () => entry.ErrorMessage);
+                () => entry.ErrorMessage,
+                SupportsLongTextEditor: true);
             return true;
         }
 
@@ -1014,6 +1017,7 @@ public partial class MainWindow : Window
         AutomationProperties.SetHelpText(TextsFormulaEditorBox, "Выберите ячейку texts.res.");
         TextsFormulaApplyButton.IsEnabled = false;
         TextsFormulaCancelButton.IsEnabled = false;
+        TextsFormulaOpenEditorButton.IsEnabled = false;
         SetTextsFormulaError(null);
     }
 
@@ -1075,6 +1079,35 @@ public partial class MainWindow : Window
     private void TextsFormulaCancelButton_Click(object sender, RoutedEventArgs e) => CancelTextsFormulaEdit();
 
     private void TextsFormulaApplyButton_Click(object sender, RoutedEventArgs e) => ApplyTextsFormulaEdit();
+
+    private void TextsFormulaOpenEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        FormulaCellContext? context = _textsFormulaCellContext;
+        if (context?.CanOpenLongTextEditor is not true)
+        {
+            return;
+        }
+
+        var dialog = new LongTextEditorDialog(
+            context.Address,
+            context.Label,
+            TextsFormulaEditorBox.Text,
+            value =>
+            {
+                bool success = TryApplyTextsFormulaValue(value, out string? error);
+                return (success, error);
+            })
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() is true && dialog.WasApplied)
+        {
+            SetTextsFormulaError(null);
+            TextsFormulaEditorBox.Text = context.ReadValue();
+            TextsGrid.Focus();
+        }
+    }
 
     private void CancelTextsFormulaEdit()
     {
@@ -1171,6 +1204,7 @@ public partial class MainWindow : Window
                 : $"{context.Label}. Вычисляемое или служебное поле доступно только для чтения.");
         FormulaApplyButton.IsEnabled = context.IsEditable;
         FormulaCancelButton.IsEnabled = context.IsEditable;
+        FormulaOpenEditorButton.IsEnabled = context.CanOpenLongTextEditor;
         SetFormulaError(null);
     }
 
@@ -1204,7 +1238,8 @@ public partial class MainWindow : Window
                     descriptor.Title,
                     () => field.GetProjectedText(descriptor.Projection),
                     projectedWriteValue,
-                    () => field.ErrorMessage);
+                    () => field.ErrorMessage,
+                    SupportsLongTextEditor: IsLongTextKind(descriptor.Kind));
                 return true;
             }
 
@@ -1218,7 +1253,8 @@ public partial class MainWindow : Window
                 descriptor.Title,
                 () => field.EditorText,
                 writeValue,
-                () => field.ErrorMessage);
+                () => field.ErrorMessage,
+                SupportsLongTextEditor: IsLongTextKind(descriptor.Kind));
             return true;
         }
 
@@ -1245,7 +1281,8 @@ public partial class MainWindow : Window
                 "Название RU",
                 () => record.LocalizationTitle,
                 writeValue,
-                () => record.PrimaryLocalizationErrorMessage);
+                () => record.PrimaryLocalizationErrorMessage,
+                SupportsLongTextEditor: true);
             return true;
         }
 
@@ -1261,7 +1298,8 @@ public partial class MainWindow : Window
                 "Описание RU",
                 () => record.LocalizationDescription,
                 writeValue,
-                () => record.PrimaryLocalizationErrorMessage);
+                () => record.PrimaryLocalizationErrorMessage,
+                SupportsLongTextEditor: true);
             return true;
         }
 
@@ -1282,6 +1320,9 @@ public partial class MainWindow : Window
     private bool CanEditLocalization(RecordRowViewModel record) =>
         _spreadsheetViewModel is { IsEditMode: true, IsBusy: false, IsCurrentTableEditable: true } &&
         record.CanEditPrimaryLocalization;
+
+    private static bool IsLongTextKind(string kind) =>
+        kind is "String" or "FixedString" or "StringList" or "FixedStringList";
 
     private static string GetSpreadsheetAddress(DataGrid grid, object item, DataGridColumn column)
     {
@@ -1329,6 +1370,7 @@ public partial class MainWindow : Window
         AutomationProperties.SetHelpText(FormulaEditorBox, "Выберите ячейку таблицы.");
         FormulaApplyButton.IsEnabled = false;
         FormulaCancelButton.IsEnabled = false;
+        FormulaOpenEditorButton.IsEnabled = false;
         SetFormulaError(null);
     }
 
@@ -1390,6 +1432,35 @@ public partial class MainWindow : Window
     private void FormulaCancelButton_Click(object sender, RoutedEventArgs e) => CancelFormulaEdit();
 
     private void FormulaApplyButton_Click(object sender, RoutedEventArgs e) => ApplyFormulaEdit();
+
+    private void FormulaOpenEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        FormulaCellContext? context = _formulaCellContext;
+        if (context?.CanOpenLongTextEditor is not true)
+        {
+            return;
+        }
+
+        var dialog = new LongTextEditorDialog(
+            context.Address,
+            context.Label,
+            FormulaEditorBox.Text,
+            value =>
+            {
+                bool success = TryApplyFormulaValue(value, out string? error);
+                return (success, error);
+            })
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() is true && dialog.WasApplied)
+        {
+            SetFormulaError(null);
+            FormulaEditorBox.Text = context.ReadValue();
+            RecordsGrid.Focus();
+        }
+    }
 
     private void CancelFormulaEdit()
     {
@@ -2428,9 +2499,12 @@ public partial class MainWindow : Window
         string Label,
         Func<string> ReadValue,
         Action<string>? WriteValue = null,
-        Func<string?>? ReadError = null)
+        Func<string?>? ReadError = null,
+        bool SupportsLongTextEditor = false)
     {
         public bool IsEditable => WriteValue is not null;
+
+        public bool CanOpenLongTextEditor => IsEditable && SupportsLongTextEditor;
     }
 
     private sealed class SpreadsheetRecordComparer(

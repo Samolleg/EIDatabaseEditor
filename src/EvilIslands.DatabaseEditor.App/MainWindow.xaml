@@ -1015,6 +1015,7 @@
                                             <ColumnDefinition Width="80" />
                                             <ColumnDefinition Width="38" />
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="44" />
                                             <ColumnDefinition Width="36" />
                                             <ColumnDefinition Width="36" />
                                         </Grid.ColumnDefinitions>
@@ -1061,8 +1062,20 @@
                                                  PreviewMouseLeftButtonDown="TextsFormulaEditorBox_PreviewMouseLeftButtonDown"
                                                  PreviewKeyDown="TextsFormulaEditorBox_PreviewKeyDown"
                                                  AutomationProperties.HelpText="Редактирование полного значения выбранной ячейки texts.res. Enter — применить, Esc — отменить." />
-                                        <Button x:Name="TextsFormulaCancelButton"
+                                        <Button x:Name="TextsFormulaOpenEditorButton"
                                                 Grid.Column="3"
+                                                Style="{StaticResource FormulaActionButton}"
+                                                Content="▤"
+                                                Width="44"
+                                                Height="86"
+                                                FontSize="17"
+                                                Margin="0"
+                                                IsEnabled="False"
+                                                Click="TextsFormulaOpenEditorButton_Click"
+                                                ToolTip="Открыть во встроенном редакторе большого текста"
+                                                AutomationProperties.Name="Открыть большой текст во встроенном редакторе" />
+                                        <Button x:Name="TextsFormulaCancelButton"
+                                                Grid.Column="4"
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="×"
                                                 Width="36"
@@ -1072,7 +1085,7 @@
                                                 Click="TextsFormulaCancelButton_Click"
                                                 ToolTip="Отменить ввод (Esc)" />
                                         <Button x:Name="TextsFormulaApplyButton"
-                                                Grid.Column="4"
+                                                Grid.Column="5"
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="✓"
                                                 Foreground="{StaticResource LocalizationAccentBrush}"
@@ -1085,7 +1098,7 @@
                                         <TextBlock x:Name="TextsFormulaErrorText"
                                                    Grid.Row="1"
                                                    Grid.Column="2"
-                                                   Grid.ColumnSpan="3"
+                                                   Grid.ColumnSpan="4"
                                                    Margin="10,5,4,0"
                                                    Foreground="{StaticResource DangerBrush}"
                                                    FontSize="10"
@@ -1273,6 +1286,7 @@
                                             <ColumnDefinition Width="80" />
                                             <ColumnDefinition Width="38" />
                                             <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="44" />
                                             <ColumnDefinition Width="36" />
                                             <ColumnDefinition Width="36" />
                                         </Grid.ColumnDefinitions>
@@ -1319,8 +1333,20 @@
                                                  PreviewMouseLeftButtonDown="FormulaEditorBox_PreviewMouseLeftButtonDown"
                                                  PreviewKeyDown="FormulaEditorBox_PreviewKeyDown"
                                                  AutomationProperties.HelpText="Редактирование полного значения выбранной ячейки. Enter — применить, Esc — отменить." />
-                                        <Button x:Name="FormulaCancelButton"
+                                        <Button x:Name="FormulaOpenEditorButton"
                                                 Grid.Column="3"
+                                                Style="{StaticResource FormulaActionButton}"
+                                                Content="▤"
+                                                Width="44"
+                                                Height="60"
+                                                FontSize="17"
+                                                Margin="0"
+                                                IsEnabled="False"
+                                                Click="FormulaOpenEditorButton_Click"
+                                                ToolTip="Открыть во встроенном редакторе большого текста"
+                                                AutomationProperties.Name="Открыть большой текст во встроенном редакторе" />
+                                        <Button x:Name="FormulaCancelButton"
+                                                Grid.Column="4"
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="×"
                                                 Width="36"
@@ -1330,7 +1356,7 @@
                                                 Click="FormulaCancelButton_Click"
                                                 ToolTip="Отменить ввод (Esc)" />
                                         <Button x:Name="FormulaApplyButton"
-                                                Grid.Column="4"
+                                                Grid.Column="5"
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="✓"
                                                 Foreground="{StaticResource AccentBrush}"
@@ -1343,7 +1369,7 @@
                                         <TextBlock x:Name="FormulaErrorText"
                                                    Grid.Row="1"
                                                    Grid.Column="2"
-                                                   Grid.ColumnSpan="3"
+                                                   Grid.ColumnSpan="4"
                                                    Margin="10,5,4,0"
                                                    Foreground="{StaticResource DangerBrush}"
                                                    FontSize="10"
