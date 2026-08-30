@@ -1230,7 +1230,7 @@ internal static class DatabaseValueCodec
         if (!HasBalancedEmbeddedDelimiters(text))
         {
             return text.Split(
-                [';', '\r', '\n'],
+                [',', ';', '\r', '\n'],
                 StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         }
 
@@ -1240,7 +1240,7 @@ internal static class DatabaseValueCodec
         foreach (char character in text)
         {
             bool isTopLevelSeparator = delimiters.Count == 0 &&
-                character is ';' or '\r' or '\n';
+                character is ',' or ';' or '\r' or '\n';
             if (isTopLevelSeparator)
             {
                 AddStringListToken(values, token);

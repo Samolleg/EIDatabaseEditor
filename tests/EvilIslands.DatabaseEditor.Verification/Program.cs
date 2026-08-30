@@ -241,6 +241,7 @@ internal static class Program
                 staging,
                 log).ConfigureAwait(false);
             await VerifyNestedStringListDelimiterSafetyAsync(sourcePath, log).ConfigureAwait(false);
+            await VerifyCommaSeparatedStringListSafetyAsync(sourcePath, log).ConfigureAwait(false);
 
             CoreDocumentAdapter editedDocument = await log.MeasureAsync(
                 "Повторное открытие для тестового изменения",
@@ -711,6 +712,47 @@ internal static class Program
         log.Assert(
             originalState.IsEquivalentTo(field.CaptureState()),
             "Восстановление возвращает точные исходные TLV-границы и payload StringList.");
+    }
+
+    private static async Task VerifyCommaSeparatedStringListSafetyAsync(
+        string sourcePath,
+        VerificationLog log)
+    {
+        DatabaseDocument document = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        DatabaseTable? prototypes = document.Databases
+            .SelectMany(group => group.Tables)
+            .FirstOrDefault(table => table.Key == "units.prototypes");
+        DatabaseField? armorVariants = prototypes?.Records
+            .FirstOrDefault()?
+            .Fields
+            .FirstOrDefault(field => field.Id == 32);
+        if (prototypes is null || armorVariants is null ||
+            !armorVariants.TryGetStringListValues(out _))
+        {
+            log.Skip("В источнике нет units.prototypes/field-32 для проверки списка экипировки.");
+            return;
+        }
+
+        const string joined = "vlcsh.wool,vlcgl.wool,vlcpt.wool,vlcbt.wool";
+        string[] expected = ["vlcsh.wool", "vlcgl.wool", "vlcpt.wool", "vlcbt.wool"];
+        log.Assert(
+            armorVariants.TrySetStringListValues([joined], out string? joinedError),
+            $"Тестовая склейка списка создана только в памяти: {joinedError ?? "OK"}.");
+        log.Assert(
+            document.Validate().Any(diagnostic =>
+                diagnostic.Code == "SEM_STRING_LIST_JOINED" && diagnostic.IsBlocking),
+            "Склеенная экипировка блокирует сохранение до запуска игры.");
+
+        log.Assert(
+            armorVariants.TrySetValue(joined, out string? splitError),
+            $"Ввод списка через запятые принимается: {splitError ?? "OK"}.");
+        log.Assert(
+            armorVariants.TryGetStringListValues(out IReadOnlyList<string> splitValues) &&
+            splitValues.SequenceEqual(expected),
+            "Четыре предмета через запятые записываются четырьмя TLV-элементами.");
+        log.Assert(
+            document.Validate().All(diagnostic => diagnostic.Code != "SEM_STRING_LIST_JOINED"),
+            "После разбиения предупреждение о склеенном StringList исчезает.");
     }
 
     private static void AssertCoreValidation(

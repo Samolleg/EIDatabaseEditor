@@ -97,6 +97,7 @@ internal static class SemanticDatabaseValidator
         ValidateScalarReferences(tables, diagnostics, cancellationToken);
         ValidateRaceHitLocations(tables, diagnostics, cancellationToken);
         ValidateSpellReferences(tables, diagnostics, cancellationToken);
+        ValidateStringListElementBoundaries(tables, diagnostics, cancellationToken);
         ValidateEmbeddedItemMagic(tables, diagnostics, cancellationToken);
         ValidateNumericRanges(tables, diagnostics, cancellationToken);
         ValidateNumericProjectionRanges(tables, diagnostics, cancellationToken);
@@ -104,6 +105,73 @@ internal static class SemanticDatabaseValidator
         ValidateLootItemEnums(tables, diagnostics, cancellationToken);
         ValidatePerkSkillRequirements(tables, diagnostics, cancellationToken);
         ValidateBooleanValues(tables, diagnostics, cancellationToken);
+    }
+
+    private static void ValidateStringListElementBoundaries(
+        IReadOnlyDictionary<string, DatabaseTable> tables,
+        ICollection<ValidationDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        foreach (DatabaseTable table in tables.Values)
+        {
+            foreach (DatabaseRecord record in table.Records)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                foreach (DatabaseField field in record.Fields)
+                {
+                    if (!field.TryGetStringListValues(out IReadOnlyList<string> values))
+                    {
+                        continue;
+                    }
+
+                    string? joinedValue = values.FirstOrDefault(ContainsTopLevelListSeparator);
+                    if (joinedValue is null)
+                    {
+                        continue;
+                    }
+
+                    AddBlockingSemanticError(
+                        diagnostics,
+                        "SEM_STRING_LIST_JOINED",
+                        $"«{record.Name}»: поле «{field.DisplayName}» содержит несколько значений, " +
+                        "склеенных в один элемент списка. Разделите их запятыми или точками с запятой и примените ячейку.",
+                        table,
+                        record,
+                        field);
+                }
+            }
+        }
+    }
+
+    private static bool ContainsTopLevelListSeparator(string value)
+    {
+        var delimiters = new Stack<char>();
+        foreach (char character in value)
+        {
+            if (character is '[' or '{')
+            {
+                delimiters.Push(character);
+                continue;
+            }
+
+            if (character is ']' or '}')
+            {
+                char expected = character == ']' ? '[' : '{';
+                if (delimiters.Count > 0 && delimiters.Peek() == expected)
+                {
+                    delimiters.Pop();
+                }
+
+                continue;
+            }
+
+            if (delimiters.Count == 0 && character is ',' or ';' or '\r' or '\n')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void ValidatePendingAddedRecords(
@@ -1678,6 +1746,15 @@ internal static class SemanticDatabaseValidator
     }
 
     private static void AddBlockingAddedRecordError(
+        ICollection<ValidationDiagnostic> diagnostics,
+        string code,
+        string message,
+        DatabaseTable table,
+        DatabaseRecord record,
+        DatabaseField? field) =>
+        AddBlockingSemanticError(diagnostics, code, message, table, record, field);
+
+    private static void AddBlockingSemanticError(
         ICollection<ValidationDiagnostic> diagnostics,
         string code,
         string message,
