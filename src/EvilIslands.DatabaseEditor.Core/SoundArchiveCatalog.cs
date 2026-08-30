@@ -8,6 +8,7 @@ public sealed record SoundArchiveInfo(
     string SourcePath,
     string FileName,
     long FileLength,
+    DateTime LastWriteTimeUtc,
     int ArchiveEntryCount,
     int SoundResourceCount);
 
@@ -158,6 +159,7 @@ public sealed class SoundArchiveCatalog
                 source.SourcePath,
                 Path.GetFileName(source.SourcePath),
                 source.FileLength,
+                File.GetLastWriteTimeUtc(source.SourcePath),
                 source.Entries.Count,
                 soundEntries.Length);
             archives[archiveIndex] = archive;

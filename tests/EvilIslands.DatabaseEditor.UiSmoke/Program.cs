@@ -1865,6 +1865,11 @@ internal static class Program
             }
         }
 
+        if (viewModel.HasSoundArchives)
+        {
+            VerifyBriefingSoundStaging(window, viewModel, tables);
+        }
+
         if (!string.IsNullOrWhiteSpace(screenshotPath))
         {
             DatabaseTableViewModel? previewMissingTextsTable = tables.FirstOrDefault(table =>
@@ -1942,6 +1947,76 @@ internal static class Program
         }
 
         VerifyUnsavedChangesClose(sourcePath);
+    }
+
+    private static void VerifyBriefingSoundStaging(
+        MainWindow window,
+        MainWindowViewModel viewModel,
+        IReadOnlyList<DatabaseTableViewModel> tables)
+    {
+        DatabaseTableViewModel briefings = tables.Single(table => table.Key == "quests.briefings");
+        RecordRowViewModel record = briefings.Records.First(candidate => candidate.BriefingPhrases.Any(phrase =>
+            phrase.IsPhrase && phrase.HasText && phrase.PrimarySound?.Format.Equals("MP3", StringComparison.OrdinalIgnoreCase) == true));
+        viewModel.SelectTableCommand.Execute(briefings);
+        viewModel.SelectedRecord = record;
+        BriefingPhraseViewModel phrase = record.BriefingPhrases.First(candidate =>
+            candidate.IsPhrase && candidate.HasText && candidate.PrimarySound?.Format.Equals("MP3", StringComparison.OrdinalIgnoreCase) == true);
+        viewModel.SelectedBriefingPhrase = phrase;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+
+        Button? importAudioButton = window.FindName("ImportBriefingAudioButton") as Button;
+        Border? pendingSoundPanel = window.FindName("PendingSoundEditPanel") as Border;
+        Button? saveSoundCopyButton = window.FindName("SavePendingSoundCopyButton") as Button;
+        string audioProbePath = Path.Combine(
+            Path.GetTempPath(),
+            $"EI-Database-Studio-UiSmoke-{Guid.NewGuid():N}.mp3");
+        try
+        {
+            File.WriteAllBytes(audioProbePath, [0x49, 0x44, 0x33, 0x04, 0, 0, 0, 0, 0, 0]);
+            RunWithDispatcher(() => viewModel.ImportBriefingAudioPathAsync(audioProbePath));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (importAudioButton?.IsEnabled != true ||
+                pendingSoundPanel?.Visibility != Visibility.Visible ||
+                saveSoundCopyButton?.IsEnabled != true ||
+                viewModel.PendingSoundEdit is null ||
+                !viewModel.PendingSoundEdit.IsReplacement ||
+                !viewModel.PendingSoundEdit.ResourceName.Equals(
+                    phrase.PrimarySound?.ResourceName,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !viewModel.HasUnsavedWork)
+            {
+                throw new InvalidOperationException(
+                    "Импорт MP3 должен подготовить точную замену выбранной реплики, показать предпросмотр и не менять исходный RES.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (viewModel.PendingSoundEdit is not null)
+            {
+                throw new InvalidOperationException("Undo должен отменять подготовку звука до физического Save As.");
+            }
+
+            viewModel.RedoCommand.Execute(null);
+            if (viewModel.PendingSoundEdit is null)
+            {
+                throw new InvalidOperationException("Redo должен возвращать подготовленную замену звука.");
+            }
+
+            viewModel.CancelPendingSoundEditCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (viewModel.PendingSoundEdit is not null ||
+                pendingSoundPanel?.Visibility == Visibility.Visible)
+            {
+                throw new InvalidOperationException(
+                    "Отмена должна убрать только подготовленный звук и скрыть панель без записи архива.");
+            }
+        }
+        finally
+        {
+            if (File.Exists(audioProbePath))
+            {
+                File.Delete(audioProbePath);
+            }
+        }
     }
 
     private static void VerifyPairedSave(string databaseSource, string textsSource)
@@ -2786,6 +2861,19 @@ internal static class Program
         public void RemoveAddedText(LocalizationEntryViewModel entry) => throw new NotSupportedException();
 
         public void RestoreAddedText(LocalizationEntryViewModel entry) => throw new NotSupportedException();
+
+        public Task<PendingSoundEditViewModel> PrepareBriefingSoundImportAsync(
+            RecordRowViewModel record,
+            BriefingPhraseViewModel phrase,
+            string sourcePath,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SoundArchiveCopyResult> SaveSoundCopyAsync(
+            PendingSoundEditViewModel edit,
+            string targetPath,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<SaveCurrentResult> SaveCurrentAsync(
             bool allowGameInstallationPath,

@@ -30,6 +30,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private ICollectionView _textsView;
     private RecordRowViewModel? _selectedRecord;
     private BriefingPhraseViewModel? _selectedBriefingPhrase;
+    private PendingSoundEditViewModel? _pendingSoundEdit;
     private bool _showOnlyBriefingProblems;
     private string _briefingDraftSpeaker = string.Empty;
     private string _briefingDraftText = string.Empty;
@@ -90,10 +91,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OpenCommand = new RelayCommand(() => OpenFileRequested?.Invoke(this, EventArgs.Empty), () => !IsBusy);
         AttachTextsCommand = new RelayCommand(
             () => AttachTextsRequested?.Invoke(this, EventArgs.Empty),
-            () => HasDocument && !HasChanges && !IsBusy);
+            () => HasDocument && !HasUnsavedWork && !IsBusy);
         AttachSoundsCommand = new RelayCommand(
             () => AttachSoundsRequested?.Invoke(this, EventArgs.Empty),
-            () => HasDocument && !HasChanges && !IsBusy);
+            () => HasDocument && !HasUnsavedWork && !IsBusy);
         SaveCommand = new RelayCommand(
             () => SaveRequested?.Invoke(this, EventArgs.Empty),
             () => HasDocument && !IsBusy);
@@ -162,6 +163,17 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         StopBriefingAudioCommand = new RelayCommand(
             () => StopBriefingAudioRequested?.Invoke(this, EventArgs.Empty),
             () => IsBriefingsTable);
+        ImportBriefingAudioCommand = new RelayCommand(
+            () => ImportBriefingAudioRequested?.Invoke(this, EventArgs.Empty),
+            () => IsBriefingsTable && SelectedRecord is not null &&
+                  SelectedBriefingPhrase?.IsPhrase is true && !IsNewBriefingPhrase &&
+                  HasSoundArchives && !IsBusy);
+        CancelPendingSoundEditCommand = new RelayCommand(
+            CancelPendingSoundEdit,
+            () => PendingSoundEdit is not null && !IsBusy);
+        SavePendingSoundCopyCommand = new RelayCommand(
+            () => SavePendingSoundCopyRequested?.Invoke(this, EventArgs.Empty),
+            () => PendingSoundEdit is not null && !IsBusy);
     }
 
     public event EventHandler? OpenFileRequested;
@@ -181,6 +193,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public event EventHandler<SoundPreviewRequestedEventArgs>? PlayBriefingAudioRequested;
 
     public event EventHandler? StopBriefingAudioRequested;
+
+    public event EventHandler? ImportBriefingAudioRequested;
+
+    public event EventHandler? SavePendingSoundCopyRequested;
 
     public ObservableCollection<NavigationItemViewModel> NavigationItems { get; }
 
@@ -263,6 +279,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand PlayBriefingAudioCommand { get; }
 
     public ICommand StopBriefingAudioCommand { get; }
+
+    public ICommand ImportBriefingAudioCommand { get; }
+
+    public ICommand CancelPendingSoundEditCommand { get; }
+
+    public ICommand SavePendingSoundCopyCommand { get; }
 
     public ICollectionView RecordsView
     {
@@ -757,6 +779,27 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool HasChanges => Changes.Count > 0;
 
+    public bool HasPendingSoundEdit => PendingSoundEdit is not null;
+
+    public bool HasUnsavedWork => HasChanges || HasPendingSoundEdit;
+
+    public PendingSoundEditViewModel? PendingSoundEdit
+    {
+        get => _pendingSoundEdit;
+        private set
+        {
+            if (!SetProperty(ref _pendingSoundEdit, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(HasPendingSoundEdit));
+            OnPropertyChanged(nameof(HasUnsavedWork));
+            (CancelPendingSoundEditCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (SavePendingSoundCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        }
+    }
+
     public string SourcePath => _workspace?.SourcePath ?? "Файл не открыт";
 
     public string SourceFileName => _workspace is null ? "database.res не открыт" : Path.GetFileName(_workspace.SourcePath);
@@ -870,7 +913,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public async Task AttachTextsPathAsync(string path)
     {
-        if (_workspace is null || HasChanges || IsBusy)
+        if (_workspace is null || HasUnsavedWork || IsBusy)
         {
             return;
         }
@@ -899,7 +942,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public async Task AttachSoundPathsAsync(IReadOnlyList<string> paths)
     {
-        if (_workspace is null || HasChanges || IsBusy || paths.Count == 0)
+        if (_workspace is null || HasUnsavedWork || IsBusy || paths.Count == 0)
         {
             return;
         }
@@ -924,6 +967,141 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             IsBusy = false;
             BusyText = string.Empty;
+        }
+    }
+
+    public async Task ImportBriefingAudioPathAsync(string path)
+    {
+        RecordRowViewModel? record = SelectedRecord;
+        BriefingPhraseViewModel? phrase = SelectedBriefingPhrase;
+        if (record is null || phrase?.IsPhrase is not true || IsBusy)
+        {
+            return;
+        }
+
+        CancelOperation();
+        _operationCancellation = new CancellationTokenSource();
+        CancellationToken cancellationToken = _operationCancellation.Token;
+        IsBusy = true;
+        IsOperationCancelable = true;
+        BusyText = "Проверка MP3/WAV и подготовка пути внутри RES…";
+        NotificationMessage = null;
+        try
+        {
+            PendingSoundEditViewModel prepared = await _service.PrepareBriefingSoundImportAsync(
+                record,
+                phrase,
+                path,
+                cancellationToken);
+            PendingSoundEditViewModel? previous = PendingSoundEdit;
+            PendingSoundEdit = prepared;
+            _undo.Push(new SoundStageEditFrame(previous, prepared));
+            _redo.Clear();
+            NotificationIsError = false;
+            NotificationMessage = prepared.IsReplacement
+                ? $"Подготовлена замена {prepared.ResourceName}. Исходный {prepared.ArchiveName} пока не изменён."
+                : $"Подготовлен новый ресурс {prepared.ResourceName}. Исходный {prepared.ArchiveName} пока не изменён.";
+            StatusText = "Звук находится только в памяти. Сохраните отдельную копию звукового RES или отмените подготовку.";
+            OnPropertyChanged(nameof(HasUnsavedWork));
+            RaiseCommandStates();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Импорт звука отменён.";
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Не удалось подготовить звук: {UnwrapMessage(exception)}");
+        }
+        finally
+        {
+            IsOperationCancelable = false;
+            IsBusy = false;
+            BusyText = string.Empty;
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+        }
+    }
+
+    public async Task SavePendingSoundCopyPathAsync(string targetPath)
+    {
+        PendingSoundEditViewModel? edit = PendingSoundEdit;
+        if (edit is null || IsBusy)
+        {
+            return;
+        }
+
+        CancelOperation();
+        _operationCancellation = new CancellationTokenSource();
+        CancellationToken cancellationToken = _operationCancellation.Token;
+        IsBusy = true;
+        IsOperationCancelable = false;
+        BusyText = "Потоковая сборка и повторная проверка звукового RES…";
+        NotificationMessage = null;
+        try
+        {
+            SoundArchiveCopyResult result = await _service.SaveSoundCopyAsync(
+                edit,
+                targetPath,
+                cancellationToken);
+            PendingSoundEdit = null;
+            LastSavedPath = result.TargetPath;
+            NotificationIsError = false;
+            NotificationMessage = result.IsReplacement
+                ? $"Создана проверенная копия {Path.GetFileName(result.TargetPath)}; аудио заменено только в копии."
+                : $"Создана проверенная копия {Path.GetFileName(result.TargetPath)}; новое аудио добавлено только в копию.";
+            StatusText = $"Копия звукового RES сохранена: {result.TargetPath}";
+            RemoveSoundFramesFromHistory();
+            RaiseCommandStates();
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Копия звукового RES не сохранена: {UnwrapMessage(exception)}");
+            StatusText = "Ошибка сохранения звукового RES.";
+        }
+        finally
+        {
+            IsOperationCancelable = false;
+            IsBusy = false;
+            BusyText = string.Empty;
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+        }
+    }
+
+    private void CancelPendingSoundEdit()
+    {
+        PendingSoundEditViewModel? previous = PendingSoundEdit;
+        if (previous is null)
+        {
+            return;
+        }
+
+        PendingSoundEdit = null;
+        _undo.Push(new SoundStageEditFrame(previous, null));
+        _redo.Clear();
+        NotificationIsError = false;
+        NotificationMessage = "Подготовка звукового RES отменена. Исходный архив не изменялся.";
+        StatusText = "Импорт звука отменён.";
+        RaiseCommandStates();
+    }
+
+    private void RemoveSoundFramesFromHistory()
+    {
+        RemoveSoundFrames(_undo);
+        RemoveSoundFrames(_redo);
+    }
+
+    private static void RemoveSoundFrames(Stack<WorkspaceEditFrame> stack)
+    {
+        WorkspaceEditFrame[] retained = stack
+            .Where(frame => frame is not SoundStageEditFrame)
+            .Reverse()
+            .ToArray();
+        stack.Clear();
+        foreach (WorkspaceEditFrame frame in retained)
+        {
+            stack.Push(frame);
         }
     }
 
@@ -1077,6 +1255,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         IsEditMode = true;
         _undo.Clear();
         _redo.Clear();
+        PendingSoundEdit = null;
         _changesByPath.Clear();
         Changes.Clear();
         LastSavedPath = null;
@@ -2247,6 +2426,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                     return false;
                 }
 
+            case SoundStageEditFrame soundFrame:
+                PendingSoundEdit = undo ? soundFrame.Before : soundFrame.After;
+                status = PendingSoundEdit is null
+                    ? "Отменена подготовка звука; исходный RES не изменён."
+                    : $"Возвращена подготовка звука: {PendingSoundEdit.ResourceName}.";
+                return true;
+
             default:
                 error = "Неизвестный тип операции Undo/Redo.";
                 return false;
@@ -2797,6 +2983,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (CancelOperationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (FocusSearchCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (NavigateToDiagnosticCommand as RelayCommand<ValidationMessageViewModel>)?.RaiseCanExecuteChanged();
+        (ImportBriefingAudioCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (CancelPendingSoundEditCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (SavePendingSoundCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
         RaiseBriefingCommandStates();
     }
 
@@ -2916,6 +3105,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         IReadOnlyList<WorkspaceEditFrame> Frames,
         string UndoStatus,
         string RedoStatus) : WorkspaceEditFrame;
+
+    private sealed record SoundStageEditFrame(
+        PendingSoundEditViewModel? Before,
+        PendingSoundEditViewModel? After) : WorkspaceEditFrame;
 }
 
 internal sealed class RecordFocusRequestedEventArgs(

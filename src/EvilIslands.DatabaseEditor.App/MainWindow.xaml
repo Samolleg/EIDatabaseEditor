@@ -1905,23 +1905,62 @@
                                                                 CornerRadius="7"
                                                                 Padding="10,8"
                                                                 Margin="0,12,0,0">
-                                                            <Grid>
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="*" />
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
-                                                                <StackPanel>
-                                                                    <TextBlock Text="Аудиофайл" Foreground="{StaticResource SoundAccentBrush}" FontWeight="SemiBold" />
-                                                                    <TextBlock Text="{Binding SelectedBriefingPhrase.AudioName, TargetNullValue=Аудио не выбрано}"
-                                                                               Foreground="{StaticResource SoundTextBrush}"
-                                                                               TextTrimming="CharacterEllipsis"
-                                                                               ToolTip="{Binding SelectedBriefingPhrase.AudioName}" />
-                                                                </StackPanel>
-                                                                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0">
-                                                                    <Button Style="{StaticResource RoundedButton}" Command="{Binding PlayBriefingAudioCommand}" Content="▶ Слушать" Padding="10,5" Margin="0,0,6,0" />
-                                                                    <Button Style="{StaticResource RoundedButton}" Command="{Binding StopBriefingAudioCommand}" Content="■" Padding="10,5" ToolTip="Остановить" />
-                                                                </StackPanel>
-                                                            </Grid>
+                                                            <StackPanel>
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="Auto" />
+                                                                    </Grid.ColumnDefinitions>
+                                                                    <StackPanel>
+                                                                        <TextBlock Text="Аудиофайл" Foreground="{StaticResource SoundAccentBrush}" FontWeight="SemiBold" />
+                                                                        <TextBlock Text="{Binding SelectedBriefingPhrase.AudioName, TargetNullValue=Аудио не выбрано}"
+                                                                                   Foreground="{StaticResource SoundTextBrush}"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   ToolTip="{Binding SelectedBriefingPhrase.AudioName}" />
+                                                                    </StackPanel>
+                                                                    <WrapPanel Grid.Column="1" Margin="12,0,0,0">
+                                                                        <Button x:Name="ImportBriefingAudioButton" Style="{StaticResource RoundedButton}" Command="{Binding ImportBriefingAudioCommand}" Content="＋ MP3/WAV…" Padding="10,5" Margin="0,0,6,0" ToolTip="Подготовить добавление или замену аудио; исходный RES не изменяется" />
+                                                                        <Button Style="{StaticResource RoundedButton}" Command="{Binding PlayBriefingAudioCommand}" Content="▶ Слушать" Padding="10,5" Margin="0,0,6,0" />
+                                                                        <Button Style="{StaticResource RoundedButton}" Command="{Binding StopBriefingAudioCommand}" Content="■" Padding="10,5" ToolTip="Остановить" />
+                                                                    </WrapPanel>
+                                                                </Grid>
+                                                                <Border x:Name="PendingSoundEditPanel"
+                                                                        Background="#16241F"
+                                                                        BorderBrush="{StaticResource AccentBrush}"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="6"
+                                                                        Padding="9,7"
+                                                                        Margin="0,9,0,0"
+                                                                        Visibility="{Binding HasPendingSoundEdit, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                    <Grid>
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <StackPanel>
+                                                                            <TextBlock Text="{Binding PendingSoundEdit.ActionText}" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" />
+                                                                            <TextBlock Text="{Binding PendingSoundEdit.PhraseText}" Foreground="{StaticResource TextBrush}" Margin="0,2,0,0" />
+                                                                            <TextBlock Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding PendingSoundEdit.ResourceName}">
+                                                                                <Run Text="{Binding PendingSoundEdit.SourceFileName, Mode=OneWay}" />
+                                                                                <Run Text="  →  " />
+                                                                                <Run Text="{Binding PendingSoundEdit.ArchiveName, Mode=OneWay}" />
+                                                                                <Run Text=" / " />
+                                                                                <Run Text="{Binding PendingSoundEdit.ResourceName, Mode=OneWay}" />
+                                                                                <Run Text="  ·  " />
+                                                                                <Run Text="{Binding PendingSoundEdit.LengthText, Mode=OneWay}" />
+                                                                            </TextBlock>
+                                                                            <TextBlock Text="Исходный архив не изменён: будет создана только новая проверенная копия."
+                                                                                       Foreground="{StaticResource SoundAccentBrush}"
+                                                                                       FontSize="11"
+                                                                                       Margin="0,3,0,0" />
+                                                                        </StackPanel>
+                                                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
+                                                                            <Button x:Name="SavePendingSoundCopyButton" Style="{StaticResource AccentButton}" Command="{Binding SavePendingSoundCopyCommand}" Content="Сохранить копию RES…" Padding="11,6" Margin="0,0,6,0" />
+                                                                            <Button x:Name="CancelPendingSoundEditButton" Style="{StaticResource RoundedButton}" Command="{Binding CancelPendingSoundEditCommand}" Content="Отменить" Padding="10,6" />
+                                                                        </StackPanel>
+                                                                    </Grid>
+                                                                </Border>
+                                                            </StackPanel>
                                                         </Border>
                                                     </Grid>
 

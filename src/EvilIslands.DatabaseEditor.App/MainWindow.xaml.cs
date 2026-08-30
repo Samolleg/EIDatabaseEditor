@@ -95,6 +95,8 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.RecordFocusRequested -= ViewModel_RecordFocusRequested;
             _spreadsheetViewModel.PlayBriefingAudioRequested -= ViewModel_PlayBriefingAudioRequested;
             _spreadsheetViewModel.StopBriefingAudioRequested -= ViewModel_StopBriefingAudioRequested;
+            _spreadsheetViewModel.ImportBriefingAudioRequested -= ViewModel_ImportBriefingAudioRequested;
+            _spreadsheetViewModel.SavePendingSoundCopyRequested -= ViewModel_SavePendingSoundCopyRequested;
         }
 
         _spreadsheetViewModel = e.NewValue as MainWindowViewModel;
@@ -104,6 +106,8 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.RecordFocusRequested += ViewModel_RecordFocusRequested;
             _spreadsheetViewModel.PlayBriefingAudioRequested += ViewModel_PlayBriefingAudioRequested;
             _spreadsheetViewModel.StopBriefingAudioRequested += ViewModel_StopBriefingAudioRequested;
+            _spreadsheetViewModel.ImportBriefingAudioRequested += ViewModel_ImportBriefingAudioRequested;
+            _spreadsheetViewModel.SavePendingSoundCopyRequested += ViewModel_SavePendingSoundCopyRequested;
         }
 
         RebuildSpreadsheetColumns();
@@ -136,6 +140,75 @@ public partial class MainWindow : Window
     }
 
     private void ViewModel_StopBriefingAudioRequested(object? sender, EventArgs e) => StopSoundPreview();
+
+    private async void ViewModel_ImportBriefingAudioRequested(object? sender, EventArgs e)
+    {
+        MainWindowViewModel viewModel = _spreadsheetViewModel ?? _viewModel;
+        var dialog = new OpenFileDialog
+        {
+            Title = "Добавить или заменить звук выбранной реплики",
+            Filter = "Звук Брифинга (*.mp3;*.wav)|*.mp3;*.wav|MP3 (*.mp3)|*.mp3|WAV (*.wav)|*.wav",
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Multiselect = false,
+            RestoreDirectory = true,
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+        if (dialog.ShowDialog(this) is true)
+        {
+            await viewModel.ImportBriefingAudioPathAsync(dialog.FileName);
+        }
+    }
+
+    private async void ViewModel_SavePendingSoundCopyRequested(object? sender, EventArgs e)
+    {
+        MainWindowViewModel viewModel = _spreadsheetViewModel ?? _viewModel;
+        PendingSoundEditViewModel? edit = viewModel.PendingSoundEdit;
+        if (edit is null)
+        {
+            return;
+        }
+
+        string sourceName = Path.GetFileNameWithoutExtension(edit.ArchiveName);
+        var dialog = new SaveFileDialog
+        {
+            Title = "Сохранить проверенную копию звукового RES",
+            Filter = "Evil Islands RES-контейнер (*.res)|*.res",
+            DefaultExt = ".res",
+            AddExtension = true,
+            CheckPathExists = true,
+            OverwritePrompt = false,
+            CreatePrompt = false,
+            RestoreDirectory = true,
+            InitialDirectory = GetStagingDirectory(),
+            FileName = $"{sourceName}.audio-edited.res",
+        };
+        if (dialog.ShowDialog(this) is not true)
+        {
+            return;
+        }
+
+        string targetPath = Path.GetFullPath(dialog.FileName);
+        if (string.Equals(targetPath, Path.GetFullPath(edit.ArchivePath), StringComparison.OrdinalIgnoreCase))
+        {
+            ShowSafetyDialog(
+                "Исходный звук защищён",
+                "Первая версия записи звука не перезаписывает подключённый RES.",
+                "Выберите новое имя в staging-папке. После проверки копию можно установить отдельно вручную.");
+            return;
+        }
+
+        if (File.Exists(targetPath))
+        {
+            ShowSafetyDialog(
+                "Перезапись запрещена",
+                "Копия звукового RES с таким именем уже существует.",
+                "Выберите новое имя; существующий файл редактор не заменяет.");
+            return;
+        }
+
+        await viewModel.SavePendingSoundCopyPathAsync(targetPath);
+    }
 
     private void StopSoundPreview()
     {
@@ -1927,12 +2000,12 @@ public partial class MainWindow : Window
 
     private async void ViewModel_OpenFileRequested(object? sender, EventArgs e)
     {
-        if (_viewModel.HasChanges)
+        if (_viewModel.HasUnsavedWork)
         {
             var discardDialog = new ConfirmDialog(
                 "Открыть другой файл?",
-                "Несохранённые изменения текущей рабочей модели будут потеряны.",
-                "Сначала нажмите «Сохранить» или создайте отдельную копию.",
+                "Несохранённые изменения текущей рабочей модели или подготовленный звук будут потеряны.",
+                "Сохраните database.res/texts.res либо отдельную копию звукового RES.",
                 "Открыть без сохранения",
                 "!")
             {
@@ -2443,7 +2516,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!_viewModel.HasChanges)
+        if (!_viewModel.HasUnsavedWork)
         {
             DetachAndDispose();
             return;
@@ -2457,8 +2530,12 @@ public partial class MainWindow : Window
     {
         var dialog = new ConfirmDialog(
             "Закрыть без сохранения?",
-            $"В рабочей памяти осталось изменений: {_viewModel.ChangeCount}.",
-            "Несохранённые изменения будут потеряны. Для записи используйте «Сохранить».",
+            _viewModel.HasPendingSoundEdit
+                ? $"В памяти осталось изменений database.res/texts.res: {_viewModel.ChangeCount}; также подготовлен звуковой RES."
+                : $"В рабочей памяти осталось изменений: {_viewModel.ChangeCount}.",
+            _viewModel.HasPendingSoundEdit
+                ? "Подготовленный звук ещё не записан. Используйте «Сохранить копию RES» в карточке аудио."
+                : "Несохранённые изменения будут потеряны. Для записи используйте «Сохранить».",
             "Закрыть без сохранения",
             "!")
         {
@@ -2502,6 +2579,8 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.RecordFocusRequested -= ViewModel_RecordFocusRequested;
             _spreadsheetViewModel.PlayBriefingAudioRequested -= ViewModel_PlayBriefingAudioRequested;
             _spreadsheetViewModel.StopBriefingAudioRequested -= ViewModel_StopBriefingAudioRequested;
+            _spreadsheetViewModel.ImportBriefingAudioRequested -= ViewModel_ImportBriefingAudioRequested;
+            _spreadsheetViewModel.SavePendingSoundCopyRequested -= ViewModel_SavePendingSoundCopyRequested;
             _spreadsheetViewModel = null;
         }
 

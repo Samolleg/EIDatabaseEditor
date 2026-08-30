@@ -226,7 +226,7 @@ internal static class Program
             log.Pass("No-op копия повторно разобрана до границ всех DB-полей.");
 
             await VerifyCompanionTextsAsync(sourcePath, staging, log).ConfigureAwait(false);
-            await VerifyCompanionSoundsAsync(sourcePath, log).ConfigureAwait(false);
+            await VerifyCompanionSoundsAsync(sourcePath, staging, log).ConfigureAwait(false);
 
             await VerifyRowAppendSafetyAsync(
                 sourcePath,
@@ -340,6 +340,7 @@ internal static class Program
 
     private static async Task VerifyCompanionSoundsAsync(
         string sourcePath,
+        SafeStagingArea staging,
         VerificationLog log)
     {
         string directory = Path.GetDirectoryName(sourcePath)!;
@@ -568,6 +569,99 @@ internal static class Program
             extractedBytes.Length == extractionProbe.Length,
             "Прослушивание извлекает из звукового RES точный диапазон выбранного WAV/MP3/OGG.");
 
+        SoundResourceInfo briefingAudio = briefings.First(link => link.IsResolved && link.Resource is not null).Resource!;
+        BriefingSoundImportTarget replacementTarget = SoundArchiveCopyEditor.ResolveBriefingTarget(
+            catalog,
+            "verification-scene",
+            phraseNumber: 1,
+            briefingAudio.Format,
+            briefingAudio);
+        log.Assert(
+            replacementTarget.IsReplacement &&
+            ReferenceEquals(replacementTarget.Archive, briefingAudio.Archive) &&
+            replacementTarget.ResourceName.Equals(briefingAudio.ResourceName, StringComparison.OrdinalIgnoreCase),
+            "Замена звука сохраняет точные архив, путь и формат существующей реплики.");
+        string briefingDirectory = briefingAudio.ResourceName[..briefingAudio.ResourceName.LastIndexOf('\\')];
+        string briefingKey = briefingDirectory[(briefingDirectory.LastIndexOf('\\') + 1)..];
+        BriefingSoundImportTarget resolvedAddition = SoundArchiveCopyEditor.ResolveBriefingTarget(
+            catalog,
+            briefingKey,
+            phraseNumber: 65_000,
+            briefingAudio.Format);
+        string resolvedDirectory = resolvedAddition.ResourceName[..resolvedAddition.ResourceName.LastIndexOf('\\')];
+        log.Info(
+            $"Автоимя звука: key={briefingKey}; archive={resolvedAddition.Archive.FileName}; " +
+            $"resource={resolvedAddition.ResourceName}.");
+        log.Assert(
+            !resolvedAddition.IsReplacement &&
+            resolvedAddition.ResourceName.EndsWith(
+                $"\\65000.{briefingAudio.Format.ToLowerInvariant()}",
+                StringComparison.OrdinalIgnoreCase) &&
+            catalog.FindBriefing(briefingKey).Any(resource =>
+                ReferenceEquals(resource.Archive, resolvedAddition.Archive) &&
+                resource.ResourceName.StartsWith($"{resolvedDirectory}\\", StringComparison.OrdinalIgnoreCase)),
+            "Новый звук получает архив и каталог текущей сцены, а имя — номер #phrase.");
+
+        SoundArchiveInfo smallestArchive = catalog.Archives.OrderBy(archive => archive.FileLength).First();
+        string probeName = $@"s\Briefing\verification-{Guid.NewGuid():N}\1.wav";
+        string probeInputPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-audio-probe.wav");
+        await File.WriteAllBytesAsync(probeInputPath, CreateProbeWav()).ConfigureAwait(false);
+        SoundImportAsset probeAsset = await SoundArchiveCopyEditor.LoadImportAsync(probeInputPath)
+            .ConfigureAwait(false);
+        var additionTarget = new BriefingSoundImportTarget(
+            smallestArchive,
+            "verification-scene",
+            PhraseNumber: 1,
+            probeName,
+            IsReplacement: false,
+            ExistingResource: null);
+        string soundCopyPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-audio-edited.res");
+        SoundArchiveCopyResult soundCopy = await log.MeasureAsync(
+            "Потоковая копия звукового RES",
+            () => SoundArchiveCopyEditor.SaveCopyAsync(additionTarget, probeAsset, soundCopyPath))
+            .ConfigureAwait(false);
+        log.Assert(
+            File.Exists(soundCopy.TargetPath) && !soundCopy.IsReplacement && soundCopy.ReopenedSuccessfully,
+            "Новый звук сохранён только в отдельной staging-копии RES.");
+
+        SoundArchiveCatalog reopenedSoundCopy = await SoundArchiveCatalog.OpenAsync([soundCopyPath])
+            .ConfigureAwait(false);
+        SoundResourceInfo? reopenedProbe = reopenedSoundCopy.Resources.FirstOrDefault(resource =>
+            resource.ResourceName.Equals(probeName, StringComparison.OrdinalIgnoreCase));
+        log.Assert(
+            reopenedProbe is not null &&
+            reopenedSoundCopy.Resources.Count == smallestArchive.SoundResourceCount + 1,
+            "Звуковая копия повторно разобрана и содержит ровно один новый WAV.");
+        if (reopenedProbe is not null)
+        {
+            byte[] reopenedProbeBytes = await SoundArchiveCatalog.ReadResourceAsync(reopenedProbe)
+                .ConfigureAwait(false);
+            log.Assert(
+                reopenedProbeBytes.AsSpan().SequenceEqual(probeAsset.Data.Span) &&
+                probeAsset.Sha256.Equals(
+                    Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(reopenedProbeBytes)),
+                    StringComparison.OrdinalIgnoreCase),
+                "Байты и SHA-256 импортированного WAV совпадают после повторного чтения RES.");
+        }
+
+        SoundResourceInfo[] originalSmallArchiveSounds = catalog.Resources
+            .Where(resource => ReferenceEquals(resource.Archive, smallestArchive))
+            .ToArray();
+        foreach (SoundResourceInfo originalSound in originalSmallArchiveSounds)
+        {
+            SoundResourceInfo copiedSound = reopenedSoundCopy.Resources.Single(resource =>
+                resource.ResourceName.Equals(originalSound.ResourceName, StringComparison.OrdinalIgnoreCase));
+            byte[] originalBytes = await SoundArchiveCatalog.ReadResourceAsync(originalSound).ConfigureAwait(false);
+            byte[] copiedBytes = await SoundArchiveCatalog.ReadResourceAsync(copiedSound).ConfigureAwait(false);
+            if (!originalBytes.AsSpan().SequenceEqual(copiedBytes))
+            {
+                throw new InvalidOperationException(
+                    $"Неизменённый звуковой ресурс {originalSound.ResourceName} отличается в Save As.");
+            }
+        }
+
+        log.Pass("Все прежние WAV/MP3/OGG в потоковой копии побайтово совпадают с исходным архивом.");
+
         string textsPath = Path.Combine(directory, "texts.res");
         if (File.Exists(textsPath))
         {
@@ -652,7 +746,30 @@ internal static class Program
             .ConfigureAwait(false);
         log.Assert(
             before.Zip(after).All(pair => pair.First.ContentEquals(pair.Second)),
-            "Построение каталога и связей не изменяет звуковые RES.");
+            "Каталог, связи и потоковая Save As не изменяют исходные звуковые RES.");
+    }
+
+    private static byte[] CreateProbeWav()
+    {
+        byte[] pcm = [0, 0, 64, 0, 128, 0, 64, 0];
+        using var stream = new MemoryStream(capacity: 44 + pcm.Length);
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write(36 + pcm.Length);
+        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+        writer.Write(Encoding.ASCII.GetBytes("fmt "));
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write((short)1);
+        writer.Write(8_000);
+        writer.Write(16_000);
+        writer.Write((short)2);
+        writer.Write((short)16);
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write(pcm.Length);
+        writer.Write(pcm);
+        writer.Flush();
+        return stream.ToArray();
     }
 
     private static async Task VerifyCompanionTextsAsync(

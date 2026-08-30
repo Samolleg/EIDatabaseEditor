@@ -325,6 +325,45 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         }
     }
 
+    public async Task<PendingSoundEditViewModel> PrepareBriefingSoundImportAsync(
+        RecordRowViewModel record,
+        BriefingPhraseViewModel phrase,
+        string sourcePath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+        ArgumentNullException.ThrowIfNull(phrase);
+        if (!record.TableKey.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase) || !phrase.IsPhrase)
+        {
+            throw new InvalidOperationException("Импорт звука доступен только для реплики Брифинга.");
+        }
+
+        SoundArchiveCatalog catalog = _soundCatalog
+            ?? throw new InvalidOperationException("Сначала подключите speech.res или другой звуковой RES.");
+        SoundImportAsset asset = await SoundArchiveCopyEditor
+            .LoadImportAsync(sourcePath, cancellationToken)
+            .ConfigureAwait(false);
+        string sceneKey = string.IsNullOrWhiteSpace(record.CoreRecord.IdentityValue)
+            ? record.CoreRecord.Name
+            : record.CoreRecord.IdentityValue;
+        BriefingSoundImportTarget target = SoundArchiveCopyEditor.ResolveBriefingTarget(
+            catalog,
+            sceneKey,
+            phrase.Number,
+            asset.Format,
+            phrase.PrimarySound?.Resource);
+        return new PendingSoundEditViewModel(sceneKey, phrase.Number, phrase.Speaker, target, asset);
+    }
+
+    public Task<SoundArchiveCopyResult> SaveSoundCopyAsync(
+        PendingSoundEditViewModel edit,
+        string targetPath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+        return SoundArchiveCopyEditor.SaveCopyAsync(edit.Target, edit.Asset, targetPath, cancellationToken);
+    }
+
     public async Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
         CancellationToken cancellationToken)

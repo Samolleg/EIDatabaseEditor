@@ -1090,6 +1090,59 @@ internal sealed class SoundArchiveViewModel
     public int SoundResourceCount { get; }
 }
 
+internal sealed class PendingSoundEditViewModel
+{
+    public PendingSoundEditViewModel(
+        string sceneKey,
+        int phraseNumber,
+        string speaker,
+        BriefingSoundImportTarget target,
+        SoundImportAsset asset)
+    {
+        SceneKey = sceneKey;
+        PhraseNumber = phraseNumber;
+        Speaker = speaker;
+        Target = target;
+        Asset = asset;
+    }
+
+    public string SceneKey { get; }
+
+    public int PhraseNumber { get; }
+
+    public string Speaker { get; }
+
+    public string SourceFileName => Asset.FileName;
+
+    public string Format => Asset.Format;
+
+    public int Length => Asset.Data.Length;
+
+    public string LengthText => Length < 1024
+        ? $"{Length:N0} Б"
+        : Length < 1024 * 1024
+            ? $"{Length / 1024d:N1} КиБ"
+            : $"{Length / 1024d / 1024d:N1} МиБ";
+
+    public string ArchiveName => Target.Archive.FileName;
+
+    public string ArchivePath => Target.Archive.SourcePath;
+
+    public string ResourceName => Target.ResourceName;
+
+    public bool IsReplacement => Target.IsReplacement;
+
+    public string ActionText => IsReplacement ? "Замена существующего аудио" : "Добавление нового аудио";
+
+    public string PhraseText => string.IsNullOrWhiteSpace(Speaker)
+        ? $"{SceneKey} · реплика № {PhraseNumber:N0}"
+        : $"{SceneKey} · реплика № {PhraseNumber:N0} · {Speaker}";
+
+    internal BriefingSoundImportTarget Target { get; }
+
+    internal SoundImportAsset Asset { get; }
+}
+
 internal sealed class SoundLinkViewModel
 {
     public SoundLinkViewModel(

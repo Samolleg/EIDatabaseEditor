@@ -1,4 +1,5 @@
 using EvilIslands.DatabaseEditor.App.Models;
+using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.App.Services;
 
@@ -29,6 +30,17 @@ internal interface IDatabaseWorkspaceService
     void RemoveAddedText(LocalizationEntryViewModel entry);
 
     void RestoreAddedText(LocalizationEntryViewModel entry);
+
+    Task<PendingSoundEditViewModel> PrepareBriefingSoundImportAsync(
+        RecordRowViewModel record,
+        BriefingPhraseViewModel phrase,
+        string sourcePath,
+        CancellationToken cancellationToken);
+
+    Task<SoundArchiveCopyResult> SaveSoundCopyAsync(
+        PendingSoundEditViewModel edit,
+        string targetPath,
+        CancellationToken cancellationToken);
 
     Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
