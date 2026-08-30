@@ -513,6 +513,52 @@ internal static class Program
             insertedPhraseTimeline[7].PhraseNumber == 2,
             "Новая реплика вставляется в выбранное место сценария, а не только в конец BRIEFING-ресурса.");
 
+        string duplicatedCameraProbe = BriefingTranscriptParser.DuplicateTimelineEvent(
+            timelineProbe,
+            timelineEvents[5].Ordinal);
+        BriefingTimelineEvent[] duplicatedCameraTimeline = BriefingTranscriptParser
+            .ParseTimeline(duplicatedCameraProbe)
+            .ToArray();
+        log.Assert(
+            duplicatedCameraTimeline.Length == timelineEvents.Length + 1 &&
+            duplicatedCameraTimeline[5].Kind == BriefingEventKind.Camera &&
+            duplicatedCameraTimeline[6].Kind == BriefingEventKind.Camera &&
+            duplicatedCameraTimeline[5].Arguments == duplicatedCameraTimeline[6].Arguments,
+            "Дублирование служебного события создаёт его точную копию сразу после исходного.");
+
+        string duplicatedPhraseProbe = BriefingTranscriptParser.DuplicateTimelineEvent(
+            timelineProbe,
+            timelineEvents[6].Ordinal);
+        BriefingTimelineEvent[] duplicatedPhraseTimeline = BriefingTranscriptParser
+            .ParseTimeline(duplicatedPhraseProbe)
+            .ToArray();
+        log.Assert(
+            duplicatedPhraseTimeline.Length == timelineEvents.Length + 1 &&
+            duplicatedPhraseTimeline[^1].IsPhrase &&
+            duplicatedPhraseTimeline[^1].PhraseNumber == 3 &&
+            duplicatedPhraseTimeline[^1].Speaker == "Sheriff" &&
+            duplicatedPhraseTimeline[^1].Text == "Ответ шерифа",
+            "Дублирование реплики сохраняет персонажа и текст, но выдаёт следующий свободный номер #phrase.");
+
+        const string invalidTimelineProbe =
+            "#show Hero 0\r\n#show Hero 0\r\n#hide Elder\r\n#CAMERA bad\r\n" +
+            "#ANIMATION nope\r\n#NOLIPS\r\n#phrase Hero 1\r\nПервая\r\n" +
+            "#phrase Elder 1\r\nПовтор\r\n#phrase Hero 3\r\nТретья\r\n" +
+            "#NOLIPS\r\n#phrase broken";
+        BriefingTimelineIssue[] timelineIssues = BriefingTranscriptParser
+            .ValidateTimeline(invalidTimelineProbe)
+            .ToArray();
+        log.Assert(
+            timelineIssues.Count(issue => issue.Code == BriefingIssueCode.DuplicatePhraseNumber) == 2 &&
+            timelineIssues.Any(issue => issue.Code == BriefingIssueCode.MissingPhraseNumber) &&
+            timelineIssues.Any(issue => issue.Code == BriefingIssueCode.InvalidCamera) &&
+            timelineIssues.Any(issue => issue.Code == BriefingIssueCode.InvalidAnimation) &&
+            timelineIssues.Any(issue => issue.Code == BriefingIssueCode.OrphanThought) &&
+            timelineIssues.Any(issue => issue.Code == BriefingIssueCode.DuplicateShow) &&
+            timelineIssues.Any(issue => issue.Code == BriefingIssueCode.HideBeforeShow) &&
+            timelineIssues.Any(issue => issue.Code == BriefingIssueCode.MalformedPhrase),
+            "Проверка сценария находит дубликаты и пропуски #phrase, неверные камеру/анимацию, осиротевший #NOLIPS и порядок show/hide.");
+
         SoundResourceInfo extractionProbe = catalog.Resources
             .Where(resource => resource.Length > 0)
             .OrderBy(resource => resource.Length)

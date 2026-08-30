@@ -539,6 +539,12 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         LocalizationEntryViewModel? briefingText = record.RelatedTexts.FirstOrDefault(text =>
             text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
         IReadOnlyList<BriefingTimelineEvent> timeline = BriefingTranscriptParser.ParseTimeline(briefingText?.Description);
+        IReadOnlyDictionary<int, IReadOnlyList<string>> issuesByOrdinal = BriefingTranscriptParser
+            .ValidateTimeline(briefingText?.Description)
+            .GroupBy(issue => issue.EventOrdinal)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<string>)group.Select(issue => issue.Message).ToArray());
         var phraseNumbers = timeline
             .Where(briefingEvent => briefingEvent.IsPhrase)
             .Select(briefingEvent => briefingEvent.PhraseNumber)
@@ -556,9 +562,13 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                 soundsByNumber.TryGetValue(
                     briefingEvent.PhraseNumber,
                     out IReadOnlyList<SoundLinkViewModel>? phraseSounds);
+                issuesByOrdinal.TryGetValue(
+                    briefingEvent.Ordinal,
+                    out IReadOnlyList<string>? scriptProblems);
                 return new BriefingPhraseViewModel(
                     briefingEvent,
-                    briefingEvent.IsPhrase ? phraseSounds ?? [] : []);
+                    briefingEvent.IsPhrase ? phraseSounds ?? [] : [],
+                    scriptProblems);
             })
             .ToList();
 
@@ -574,7 +584,8 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                     number,
                     string.Empty,
                     string.Empty),
-                soundsByNumber[number]));
+                soundsByNumber[number],
+                isTimelineEvent: false));
         }
 
         return result;

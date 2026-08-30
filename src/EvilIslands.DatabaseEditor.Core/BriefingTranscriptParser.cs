@@ -30,6 +30,24 @@ public sealed record BriefingTimelineEvent(
     public bool IsPhrase => Kind == BriefingEventKind.Phrase;
 }
 
+public enum BriefingIssueCode
+{
+    MalformedPhrase,
+    DuplicatePhraseNumber,
+    MissingPhraseNumber,
+    InvalidCamera,
+    InvalidAnimation,
+    OrphanThought,
+    MissingParticipant,
+    HideBeforeShow,
+    DuplicateShow,
+}
+
+public sealed record BriefingTimelineIssue(
+    int EventOrdinal,
+    BriefingIssueCode Code,
+    string Message);
+
 public static partial class BriefingTranscriptParser
 {
     public static IReadOnlyList<BriefingPhrase> Parse(string? description)
@@ -339,9 +357,193 @@ public static partial class BriefingTranscriptParser
         return source[..first.Start] + secondBlock + firstBlock + source[second.End..];
     }
 
+    public static string DuplicateTimelineEvent(string? description, int eventOrdinal)
+    {
+        string source = description ?? string.Empty;
+        TimelineSpan span = GetTimelineSpan(source, eventOrdinal);
+        string block = source[span.Start..span.End];
+        BriefingTimelineEvent selected = ParseTimeline(source)
+            .First(briefingEvent => briefingEvent.Ordinal == eventOrdinal);
+        if (selected.IsPhrase)
+        {
+            int lineEnd = block.IndexOfAny(['\r', '\n']);
+            string directiveLine = lineEnd < 0 ? block : block[..lineEnd];
+            Match phrase = PhraseDirective().Match(directiveLine);
+            if (!phrase.Success)
+            {
+                throw new InvalidOperationException("Не удалось прочитать выбранную реплику для дублирования.");
+            }
+
+            Group number = phrase.Groups["number"];
+            block = block[..number.Index] +
+                    GetNextPhraseNumber(source).ToString(CultureInfo.InvariantCulture) +
+                    block[(number.Index + number.Length)..];
+        }
+
+        string separator = span.End > 0 && !IsLineBreak(source[span.End - 1])
+            ? DetectNewline(source)
+            : string.Empty;
+        return source.Insert(span.End, separator + block);
+    }
+
+    public static IReadOnlyList<BriefingTimelineIssue> ValidateTimeline(string? description)
+    {
+        IReadOnlyList<BriefingTimelineEvent> timeline = ParseTimeline(description);
+        if (timeline.Count == 0)
+        {
+            return [];
+        }
+
+        var result = new List<BriefingTimelineIssue>();
+        foreach (BriefingTimelineEvent briefingEvent in timeline)
+        {
+            switch (briefingEvent.Kind)
+            {
+                case BriefingEventKind.Command when
+                    briefingEvent.Directive.Equals("phrase", StringComparison.OrdinalIgnoreCase):
+                    AddIssue(
+                        result,
+                        briefingEvent,
+                        BriefingIssueCode.MalformedPhrase,
+                        "Некорректная команда #phrase: ожидаются персонаж и положительный номер реплики.");
+                    break;
+                case BriefingEventKind.Phrase when briefingEvent.PhraseNumber <= 0:
+                    AddIssue(
+                        result,
+                        briefingEvent,
+                        BriefingIssueCode.MalformedPhrase,
+                        "Номер #phrase должен быть положительным целым числом.");
+                    break;
+                case BriefingEventKind.Camera when !IsValidCameraArguments(briefingEvent.Arguments):
+                    AddIssue(
+                        result,
+                        briefingEvent,
+                        BriefingIssueCode.InvalidCamera,
+                        "Некорректная камера: нужен один целый номер либо четыре значения — номер, угол, дистанция и высота.");
+                    break;
+                case BriefingEventKind.Animation when
+                    !int.TryParse(briefingEvent.Arguments, NumberStyles.Integer, CultureInfo.InvariantCulture, out _):
+                    AddIssue(
+                        result,
+                        briefingEvent,
+                        BriefingIssueCode.InvalidAnimation,
+                        "Некорректная анимация: после #ANIMATION должен быть целый номер.");
+                    break;
+                case BriefingEventKind.Show or BriefingEventKind.Hide when
+                    GetParticipant(briefingEvent.Arguments).Length == 0:
+                    AddIssue(
+                        result,
+                        briefingEvent,
+                        BriefingIssueCode.MissingParticipant,
+                        $"Команда #{briefingEvent.Directive} не содержит имя участника сцены.");
+                    break;
+            }
+        }
+
+        foreach (IGrouping<int, BriefingTimelineEvent> duplicate in timeline
+                     .Where(briefingEvent => briefingEvent.IsPhrase)
+                     .GroupBy(briefingEvent => briefingEvent.PhraseNumber)
+                     .Where(group => group.Count() > 1))
+        {
+            foreach (BriefingTimelineEvent briefingEvent in duplicate)
+            {
+                AddIssue(
+                    result,
+                    briefingEvent,
+                    BriefingIssueCode.DuplicatePhraseNumber,
+                    $"Номер #phrase {duplicate.Key} повторяется {duplicate.Count()} раза.");
+            }
+        }
+
+        BriefingTimelineEvent[] orderedPhrases = timeline
+            .Where(briefingEvent => briefingEvent.IsPhrase)
+            .GroupBy(briefingEvent => briefingEvent.PhraseNumber)
+            .Select(group => group.First())
+            .OrderBy(briefingEvent => briefingEvent.PhraseNumber)
+            .ToArray();
+        for (var index = 1; index < orderedPhrases.Length; index++)
+        {
+            int previous = orderedPhrases[index - 1].PhraseNumber;
+            int current = orderedPhrases[index].PhraseNumber;
+            if (current > previous + 1)
+            {
+                AddIssue(
+                    result,
+                    orderedPhrases[index],
+                    BriefingIssueCode.MissingPhraseNumber,
+                    $"Между #phrase {previous} и #phrase {current} пропущены номера {previous + 1}–{current - 1}.");
+            }
+        }
+
+        for (var index = 0; index < timeline.Count; index++)
+        {
+            if (timeline[index].Kind != BriefingEventKind.Thought)
+            {
+                continue;
+            }
+
+            bool hasFollowingPhrase = false;
+            for (var next = index + 1; next < timeline.Count; next++)
+            {
+                if (timeline[next].Kind == BriefingEventKind.Thought)
+                {
+                    break;
+                }
+
+                if (timeline[next].IsPhrase)
+                {
+                    hasFollowingPhrase = true;
+                    break;
+                }
+            }
+
+            if (!hasFollowingPhrase)
+            {
+                AddIssue(
+                    result,
+                    timeline[index],
+                    BriefingIssueCode.OrphanThought,
+                    "После #NOLIPS нет реплики: признак мысли не к чему применить.");
+            }
+        }
+
+        var visibleParticipants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (BriefingTimelineEvent briefingEvent in timeline)
+        {
+            string participant = GetParticipant(briefingEvent.Arguments);
+            if (participant.Length == 0)
+            {
+                continue;
+            }
+
+            if (briefingEvent.Kind == BriefingEventKind.Show && !visibleParticipants.Add(participant))
+            {
+                AddIssue(
+                    result,
+                    briefingEvent,
+                    BriefingIssueCode.DuplicateShow,
+                    $"Участник «{participant}» повторно показан без промежуточного #hide.");
+            }
+            else if (briefingEvent.Kind == BriefingEventKind.Hide && !visibleParticipants.Remove(participant))
+            {
+                AddIssue(
+                    result,
+                    briefingEvent,
+                    BriefingIssueCode.HideBeforeShow,
+                    $"Участник «{participant}» скрывается до команды #show в этом сценарии.");
+            }
+        }
+
+        return result;
+    }
+
     public static int GetNextPhraseNumber(string? description)
     {
-        int maximum = Parse(description).Select(phrase => phrase.Number).DefaultIfEmpty(0).Max();
+        int maximum = ParseTimeline(description)
+            .Where(briefingEvent => briefingEvent.IsPhrase)
+            .Select(briefingEvent => briefingEvent.PhraseNumber)
+            .DefaultIfEmpty(0)
+            .Max();
         return checked(maximum + 1);
     }
 
@@ -505,19 +707,37 @@ public static partial class BriefingTranscriptParser
 
     private static void ValidateCameraArguments(string arguments, string parameterName)
     {
+        if (IsValidCameraArguments(arguments))
+        {
+            return;
+        }
+
+        throw new ArgumentException(
+            "Камера задаётся одним целым номером либо четырьмя значениями: номер, угол, дистанция и высота.",
+            parameterName);
+    }
+
+    private static bool IsValidCameraArguments(string arguments)
+    {
         string[] parts = arguments.Split(
             [' ', '\t'],
             StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length is not (1 or 4) ||
-            !int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out _) ||
-            parts.Skip(1).Any(part =>
-                !double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out _)))
-        {
-            throw new ArgumentException(
-                "Камера задаётся одним целым номером либо четырьмя значениями: номер, угол, дистанция и высота.",
-                parameterName);
-        }
+        return parts.Length is 1 or 4 &&
+               int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out _) &&
+               parts.Skip(1).All(part =>
+                   double.TryParse(part, NumberStyles.Float, CultureInfo.InvariantCulture, out _));
     }
+
+    private static string GetParticipant(string arguments) => arguments
+        .Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .FirstOrDefault() ?? string.Empty;
+
+    private static void AddIssue(
+        ICollection<BriefingTimelineIssue> destination,
+        BriefingTimelineEvent briefingEvent,
+        BriefingIssueCode code,
+        string message) =>
+        destination.Add(new(briefingEvent.Ordinal, code, message));
 
     private static void ValidatePhrase(int phraseNumber, string speaker, string text)
     {

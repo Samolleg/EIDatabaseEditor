@@ -1318,6 +1318,61 @@ internal static class Program
                     "Три Undo должны точно вернуть исходный BRIEFING после удаления, перемещения и добавления события.");
             }
 
+            viewModel.SelectedBriefingPhrase = briefingWithSound.BriefingPhrases.First(briefingEvent =>
+                briefingEvent.Kind == BriefingEventKind.Camera && briefingEvent.IsTimelineEvent);
+            int duplicateSourceOrdinal = viewModel.SelectedBriefingPhrase.EventOrdinal;
+            if (!viewModel.DuplicateBriefingEventCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException("Выбранное событие сценария должно разрешать безопасное дублирование.");
+            }
+
+            viewModel.DuplicateBriefingEventCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (briefingWithSound.BriefingEventCount != originalEventCount + 1 ||
+                viewModel.SelectedBriefingPhrase?.EventOrdinal != duplicateSourceOrdinal + 1 ||
+                viewModel.SelectedBriefingPhrase.Kind != BriefingEventKind.Camera)
+            {
+                throw new InvalidOperationException(
+                    "Дублированное событие должно появляться сразу после исходного и оставаться выбранным.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (briefingText.Description != originalBriefingDescription ||
+                briefingWithSound.BriefingEventCount != originalEventCount)
+            {
+                throw new InvalidOperationException("Undo должен точно отменять дублирование события Брифинга.");
+            }
+
+            string invalidCameraDescription = originalBriefingDescription +
+                                              (originalBriefingDescription.EndsWith('\n') || originalBriefingDescription.EndsWith('\r')
+                                                  ? string.Empty
+                                                  : "\r\n") +
+                                              "#CAMERA bad";
+            briefingText.Description = invalidCameraDescription;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            BriefingPhraseViewModel invalidCamera = briefingWithSound.BriefingPhrases.Single(briefingEvent =>
+                briefingEvent.Kind == BriefingEventKind.Camera && briefingEvent.Arguments == "bad");
+            viewModel.SelectedBriefingPhrase = invalidCamera;
+            viewModel.ShowOnlyBriefingProblems = true;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (!invalidCamera.HasProblem ||
+                !invalidCamera.ProblemSummary.Contains("Некорректная камера", StringComparison.CurrentCulture) ||
+                briefingPhrasesGrid.Items.Count != briefingWithSound.BriefingProblemCount ||
+                viewModel.ApplyBriefingPhraseCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException(
+                    "Проверка Брифинга должна подсвечивать неверную камеру, объяснять проблему и показывать её фильтром.");
+            }
+
+            viewModel.ShowOnlyBriefingProblems = false;
+            viewModel.UndoCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (briefingText.Description != originalBriefingDescription)
+            {
+                throw new InvalidOperationException("Undo должен убрать тестовую ошибку сценария без изменения исходного Брифинга.");
+            }
+
             viewModel.SelectTableCommand.Execute(acks);
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         }

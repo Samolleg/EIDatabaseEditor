@@ -699,9 +699,10 @@ internal sealed class RecordRowViewModel : ObservableObject
         }
     }
 
-    public int BriefingPhraseCount => BriefingPhrases.Count(briefingEvent => briefingEvent.IsPhrase);
+    public int BriefingPhraseCount => BriefingPhrases.Count(briefingEvent =>
+        briefingEvent.IsTimelineEvent && briefingEvent.IsPhrase);
 
-    public int BriefingEventCount => BriefingPhrases.Count;
+    public int BriefingEventCount => BriefingPhrases.Count(briefingEvent => briefingEvent.IsTimelineEvent);
 
     public int BriefingProblemCount => BriefingPhrases.Count(phrase => phrase.HasProblem);
 
@@ -1178,7 +1179,9 @@ internal sealed class BriefingPhraseViewModel
 {
     public BriefingPhraseViewModel(
         BriefingTimelineEvent timelineEvent,
-        IReadOnlyList<SoundLinkViewModel> sounds)
+        IReadOnlyList<SoundLinkViewModel> sounds,
+        IReadOnlyList<string>? scriptProblems = null,
+        bool isTimelineEvent = true)
     {
         EventOrdinal = timelineEvent.Ordinal;
         Kind = timelineEvent.Kind;
@@ -1188,11 +1191,15 @@ internal sealed class BriefingPhraseViewModel
         Speaker = timelineEvent.Speaker;
         Text = timelineEvent.Text;
         Sounds = sounds;
+        ScriptProblems = scriptProblems ?? [];
+        IsTimelineEvent = isTimelineEvent;
     }
 
     public int EventOrdinal { get; }
 
     public int SequenceNumber => EventOrdinal + 1;
+
+    public bool IsTimelineEvent { get; }
 
     public BriefingEventKind Kind { get; }
 
@@ -1232,7 +1239,37 @@ internal sealed class BriefingPhraseViewModel
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .Count();
 
-    public bool HasProblem => IsPhrase && (!HasText || !HasAudio || HasDuplicateAudio);
+    public IReadOnlyList<string> ScriptProblems { get; }
+
+    public IReadOnlyList<string> ProblemMessages
+    {
+        get
+        {
+            var result = new List<string>(ScriptProblems);
+            if (IsPhrase && !HasText)
+            {
+                result.Add(IsTimelineEvent
+                    ? "У реплики отсутствует текст."
+                    : $"Для аудио № {Number:N0} отсутствует команда #phrase.");
+            }
+
+            if (IsPhrase && !HasAudio && IsTimelineEvent)
+            {
+                result.Add($"Для реплики № {Number:N0} не найден звуковой файл.");
+            }
+
+            if (HasDuplicateAudio)
+            {
+                result.Add($"К реплике № {Number:N0} привязано несколько одинаковых аудиофайлов.");
+            }
+
+            return result.Distinct(StringComparer.CurrentCulture).ToArray();
+        }
+    }
+
+    public bool HasProblem => ProblemMessages.Count > 0;
+
+    public string ProblemSummary => string.Join(" • ", ProblemMessages);
 
     public string AudioName => PrimarySound is null
         ? "Аудио не найдено"
@@ -1240,15 +1277,18 @@ internal sealed class BriefingPhraseViewModel
             ? $"{PrimarySound.ResourceName} · ещё {AudioPartCount - 1:N0}"
             : PrimarySound.ResourceName;
 
-    public string StatusText => (HasText, HasAudio, HasDuplicateAudio) switch
-    {
-        _ when !IsPhrase => EventTypeText,
-        (false, false, _) => "Нет текста и звука",
-        (false, true, _) => "Нет текста",
-        (true, false, _) => "Нет звука",
-        (_, _, true) => "Несколько аудиофайлов",
-        _ => "Готово",
-    };
+    public string StatusText => ScriptProblems.Count > 0
+        ? ScriptProblems.Count == 1 ? "Проверить сценарий" : $"Проблем: {ProblemMessages.Count:N0}"
+        : !IsTimelineEvent ? "Нет #phrase"
+        : (HasText, HasAudio, HasDuplicateAudio) switch
+        {
+            _ when !IsPhrase => EventTypeText,
+            (false, false, _) => "Нет текста и звука",
+            (false, true, _) => "Нет текста",
+            (true, false, _) => "Нет звука",
+            (_, _, true) => "Несколько аудиофайлов",
+            _ => "Готово",
+        };
 
     public string EventTypeText => Kind switch
     {
@@ -1286,7 +1326,9 @@ internal sealed class BriefingPhraseViewModel
         _ => Arguments,
     };
 
-    public string DisplayDetails => IsPhrase ? AudioName : $"#{Directive} {Arguments}".TrimEnd();
+    public string DisplayDetails => !IsTimelineEvent
+        ? $"Аудио № {Number:N0} не связано с текстовой репликой"
+        : IsPhrase ? AudioName : $"#{Directive} {Arguments}".TrimEnd();
 }
 
 internal sealed class LocalizationEntryViewModel : ObservableObject

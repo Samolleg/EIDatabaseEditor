@@ -1803,6 +1803,7 @@
                                             <Grid>
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="*" />
                                                     <RowDefinition Height="Auto" />
                                                 </Grid.RowDefinitions>
@@ -1847,10 +1848,29 @@
                                                                 Margin="0,4,0,0">
                                                         <Button Style="{StaticResource RoundedButton}" Command="{Binding MoveBriefingEventUpCommand}" Content="↑ Выше" Padding="9,5" Margin="0,0,6,0" ToolTip="Переместить выбранное событие на один шаг выше" />
                                                         <Button Style="{StaticResource RoundedButton}" Command="{Binding MoveBriefingEventDownCommand}" Content="↓ Ниже" Padding="9,5" Margin="0,0,6,0" ToolTip="Переместить выбранное событие на один шаг ниже" />
+                                                        <Button Style="{StaticResource RoundedButton}" Command="{Binding DuplicateBriefingEventCommand}" Content="⧉ Дублировать" Padding="9,5" Margin="0,0,6,0" ToolTip="Создать копию выбранного события сразу после него" />
                                                         <Button Style="{StaticResource RoundedButton}" Command="{Binding DeleteBriefingEventCommand}" Content="Удалить событие" Padding="9,5" ToolTip="Удалить выбранное событие; Ctrl+Z вернёт его" />
                                                     </StackPanel>
                                                 </Grid>
-                                                <Grid Grid.Row="1" Margin="0,18,0,0">
+                                                <Border Grid.Row="1"
+                                                        Background="#342D1D"
+                                                        BorderBrush="{StaticResource WarningBrush}"
+                                                        BorderThickness="1"
+                                                        CornerRadius="7"
+                                                        Padding="10,7"
+                                                        Margin="0,12,0,0"
+                                                        Visibility="{Binding SelectedBriefingPhrase.HasProblem, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <StackPanel>
+                                                        <TextBlock Text="Что требует внимания"
+                                                                   Foreground="{StaticResource WarningBrush}"
+                                                                   FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding SelectedBriefingPhrase.ProblemSummary}"
+                                                                   Foreground="{StaticResource TextBrush}"
+                                                                   TextWrapping="Wrap"
+                                                                   Margin="0,4,0,0" />
+                                                    </StackPanel>
+                                                </Border>
+                                                <Grid Grid.Row="2" Margin="0,14,0,0">
                                                     <Grid Visibility="{Binding IsPhraseBriefingEditor, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                         <Grid.RowDefinitions>
                                                             <RowDefinition Height="Auto" />
@@ -1961,7 +1981,7 @@
                                                     </Grid>
                                                 </Grid>
 
-                                                <Grid Grid.Row="2" Margin="0,12,0,0">
+                                                <Grid Grid.Row="3" Margin="0,12,0,0">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto" />
                                                         <ColumnDefinition Width="Auto" />
