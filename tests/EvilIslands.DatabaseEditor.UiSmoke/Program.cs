@@ -1959,12 +1959,26 @@ internal static class Program
             phrase.IsPhrase && phrase.HasText && phrase.PrimarySound?.Format.Equals("MP3", StringComparison.OrdinalIgnoreCase) == true));
         viewModel.SelectTableCommand.Execute(briefings);
         viewModel.SelectedRecord = record;
+        Button? importAudioButton = window.FindName("ImportBriefingAudioButton") as Button;
+        BriefingPhraseViewModel nonPhrase = record.BriefingPhrases.First(candidate => !candidate.IsPhrase);
+        viewModel.SelectedBriefingPhrase = nonPhrase;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (importAudioButton?.IsEnabled != false)
+        {
+            throw new InvalidOperationException(
+                "Импорт MP3/WAV должен быть недоступен для служебного события Брифинга.");
+        }
+
         BriefingPhraseViewModel phrase = record.BriefingPhrases.First(candidate =>
             candidate.IsPhrase && candidate.HasText && candidate.PrimarySound?.Format.Equals("MP3", StringComparison.OrdinalIgnoreCase) == true);
         viewModel.SelectedBriefingPhrase = phrase;
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (importAudioButton?.IsEnabled != true)
+        {
+            throw new InvalidOperationException(
+                "После выбора реплики подключённого Брифинга кнопка импорта MP3/WAV должна сразу разблокироваться.");
+        }
 
-        Button? importAudioButton = window.FindName("ImportBriefingAudioButton") as Button;
         Border? pendingSoundPanel = window.FindName("PendingSoundEditPanel") as Border;
         Button? saveSoundCopyButton = window.FindName("SavePendingSoundCopyButton") as Button;
         string audioProbePath = Path.Combine(

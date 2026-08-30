@@ -1864,6 +1864,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (NextBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (PlayBriefingAudioCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (StopBriefingAudioCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (ImportBriefingAudioCommand as RelayCommand)?.RaiseCanExecuteChanged();
     }
 
     private bool FilterRecord(object item)
