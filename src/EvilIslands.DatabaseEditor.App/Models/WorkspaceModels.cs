@@ -694,11 +694,14 @@ internal sealed class RecordRowViewModel : ObservableObject
             _briefingPhrases = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(BriefingPhraseCount));
+            OnPropertyChanged(nameof(BriefingEventCount));
             OnPropertyChanged(nameof(BriefingProblemCount));
         }
     }
 
-    public int BriefingPhraseCount => BriefingPhrases.Count;
+    public int BriefingPhraseCount => BriefingPhrases.Count(briefingEvent => briefingEvent.IsPhrase);
+
+    public int BriefingEventCount => BriefingPhrases.Count;
 
     public int BriefingProblemCount => BriefingPhrases.Count(phrase => phrase.HasProblem);
 
@@ -1174,16 +1177,32 @@ internal sealed class SoundLinkViewModel
 internal sealed class BriefingPhraseViewModel
 {
     public BriefingPhraseViewModel(
-        int number,
-        string speaker,
-        string text,
+        BriefingTimelineEvent timelineEvent,
         IReadOnlyList<SoundLinkViewModel> sounds)
     {
-        Number = number;
-        Speaker = speaker;
-        Text = text;
+        EventOrdinal = timelineEvent.Ordinal;
+        Kind = timelineEvent.Kind;
+        Directive = timelineEvent.Directive;
+        Arguments = timelineEvent.Arguments;
+        Number = timelineEvent.PhraseNumber;
+        Speaker = timelineEvent.Speaker;
+        Text = timelineEvent.Text;
         Sounds = sounds;
     }
+
+    public int EventOrdinal { get; }
+
+    public int SequenceNumber => EventOrdinal + 1;
+
+    public BriefingEventKind Kind { get; }
+
+    public string Directive { get; }
+
+    public string Arguments { get; }
+
+    public bool IsPhrase => Kind == BriefingEventKind.Phrase;
+
+    public bool IsCommand => !IsPhrase;
 
     public int Number { get; }
 
@@ -1213,7 +1232,7 @@ internal sealed class BriefingPhraseViewModel
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .Count();
 
-    public bool HasProblem => !HasText || !HasAudio || HasDuplicateAudio;
+    public bool HasProblem => IsPhrase && (!HasText || !HasAudio || HasDuplicateAudio);
 
     public string AudioName => PrimarySound is null
         ? "Аудио не найдено"
@@ -1223,12 +1242,51 @@ internal sealed class BriefingPhraseViewModel
 
     public string StatusText => (HasText, HasAudio, HasDuplicateAudio) switch
     {
+        _ when !IsPhrase => EventTypeText,
         (false, false, _) => "Нет текста и звука",
         (false, true, _) => "Нет текста",
         (true, false, _) => "Нет звука",
         (_, _, true) => "Несколько аудиофайлов",
         _ => "Готово",
     };
+
+    public string EventTypeText => Kind switch
+    {
+        BriefingEventKind.Phrase => $"Реплика № {Number:N0}",
+        BriefingEventKind.Camera => "Камера",
+        BriefingEventKind.Animation => "Анимация",
+        BriefingEventKind.Thought => "Мысль",
+        BriefingEventKind.Show => "Появление",
+        BriefingEventKind.Hide => "Скрытие",
+        BriefingEventKind.Description => "Режиссёрская пометка",
+        _ => $"Команда #{Directive}",
+    };
+
+    public string DisplayTitle => Kind switch
+    {
+        BriefingEventKind.Phrase => Speaker,
+        BriefingEventKind.Camera => "Положение камеры",
+        BriefingEventKind.Animation => "Анимация персонажа",
+        BriefingEventKind.Thought => "Мысль — без движения губ",
+        BriefingEventKind.Show => "Показать участника",
+        BriefingEventKind.Hide => "Скрыть участника",
+        BriefingEventKind.Description => "Служебное описание",
+        _ => $"#{Directive}",
+    };
+
+    public string DisplayText => Kind switch
+    {
+        BriefingEventKind.Phrase => Text,
+        BriefingEventKind.Camera => $"Камера: {Arguments}",
+        BriefingEventKind.Animation => $"Номер анимации: {Arguments}",
+        BriefingEventKind.Thought => "Следующая реплика произносится в голове героя.",
+        BriefingEventKind.Show => $"Участник: {Arguments}",
+        BriefingEventKind.Hide => $"Участник: {Arguments}",
+        BriefingEventKind.Description => Arguments,
+        _ => Arguments,
+    };
+
+    public string DisplayDetails => IsPhrase ? AudioName : $"#{Directive} {Arguments}".TrimEnd();
 }
 
 internal sealed class LocalizationEntryViewModel : ObservableObject

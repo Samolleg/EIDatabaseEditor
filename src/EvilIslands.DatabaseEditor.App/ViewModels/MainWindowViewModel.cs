@@ -33,9 +33,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _showOnlyBriefingProblems;
     private string _briefingDraftSpeaker = string.Empty;
     private string _briefingDraftText = string.Empty;
+    private string _briefingDraftArguments = string.Empty;
     private int _briefingDraftNumber;
     private bool _isNewBriefingPhrase;
     private int? _pendingBriefingPhraseNumber;
+    private int? _pendingBriefingEventOrdinal;
     private string _searchText = string.Empty;
     private string _resourceSearchText = string.Empty;
     private string _textsSearchText = string.Empty;
@@ -128,9 +130,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ApplyBriefingPhraseCommand = new RelayCommand(
             ApplyBriefingPhrase,
             () => IsBriefingsTable && SelectedRecord is not null &&
-                  BriefingDraftNumber > 0 &&
-                  !string.IsNullOrWhiteSpace(BriefingDraftSpeaker) &&
-                  !string.IsNullOrWhiteSpace(BriefingDraftText) && !IsBusy);
+                  (IsCommandBriefingEditor ||
+                   (BriefingDraftNumber > 0 &&
+                    !string.IsNullOrWhiteSpace(BriefingDraftSpeaker) &&
+                    !string.IsNullOrWhiteSpace(BriefingDraftText))) && !IsBusy);
         PreviousBriefingPhraseCommand = new RelayCommand(
             () => MoveBriefingPhrase(-1),
             () => CanMoveBriefingPhrase(-1));
@@ -448,10 +451,16 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 BriefingDraftNumber = value.Number;
                 BriefingDraftSpeaker = value.Speaker;
                 BriefingDraftText = value.Text;
+                BriefingDraftArguments = value.Arguments;
             }
 
             OnPropertyChanged(nameof(IsNewBriefingPhrase));
+            OnPropertyChanged(nameof(IsPhraseBriefingEditor));
+            OnPropertyChanged(nameof(IsCommandBriefingEditor));
             OnPropertyChanged(nameof(BriefingEditorTitle));
+            OnPropertyChanged(nameof(BriefingCommandFieldLabel));
+            OnPropertyChanged(nameof(BriefingCommandHelp));
+            OnPropertyChanged(nameof(BriefingCommandHasArguments));
             RaiseBriefingCommandStates();
         }
     }
@@ -501,17 +510,59 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    public string BriefingDraftArguments
+    {
+        get => _briefingDraftArguments;
+        set
+        {
+            if (SetProperty(ref _briefingDraftArguments, value))
+            {
+                RaiseBriefingCommandStates();
+            }
+        }
+    }
+
     public bool IsNewBriefingPhrase => _isNewBriefingPhrase;
+
+    public bool IsPhraseBriefingEditor => IsNewBriefingPhrase || SelectedBriefingPhrase?.IsPhrase is true;
+
+    public bool IsCommandBriefingEditor => SelectedBriefingPhrase?.IsCommand is true && !IsNewBriefingPhrase;
 
     public string BriefingEditorTitle => IsNewBriefingPhrase
         ? $"Новая реплика № {BriefingDraftNumber:N0}"
         : SelectedBriefingPhrase is null
-            ? "Выберите реплику"
-            : $"Реплика № {SelectedBriefingPhrase.Number:N0}";
+            ? "Выберите событие"
+            : SelectedBriefingPhrase.IsPhrase
+                ? $"Реплика № {SelectedBriefingPhrase.Number:N0}"
+                : SelectedBriefingPhrase.DisplayTitle;
+
+    public string BriefingCommandFieldLabel => SelectedBriefingPhrase?.Kind switch
+    {
+        BriefingEventKind.Camera => "Положение камеры",
+        BriefingEventKind.Animation => "Номер анимации",
+        BriefingEventKind.Show => "Кого показать",
+        BriefingEventKind.Hide => "Кого скрыть",
+        BriefingEventKind.Description => "Служебное описание",
+        BriefingEventKind.Thought => "Параметры не требуются",
+        _ => "Параметры команды",
+    };
+
+    public string BriefingCommandHelp => SelectedBriefingPhrase?.Kind switch
+    {
+        BriefingEventKind.Camera => "Формат игры: номер камеры либо номер, угол, дистанция и высота.",
+        BriefingEventKind.Animation => "Целый номер анимации, которая запускается перед следующей репликой.",
+        BriefingEventKind.Show => "Персонаж, его позиция и необязательный параметр weapon.",
+        BriefingEventKind.Hide => "Имя участника, которого нужно скрыть из сцены.",
+        BriefingEventKind.Description => "Пометка сценария #DESC. Она сохраняется в исходной последовательности.",
+        BriefingEventKind.Thought => "#NOLIPS отключает движение губ для следующей реплики — герой думает в голове.",
+        _ => "Исходная команда сохраняется на своём месте в BRIEFING-ресурсе texts.res.",
+    };
+
+    public bool BriefingCommandHasArguments => SelectedBriefingPhrase?.Kind != BriefingEventKind.Thought;
 
     public string BriefingWorkspaceSummary => SelectedRecord is null
         ? "Выберите брифинг слева"
-        : $"{SelectedRecord.BriefingPhraseCount:N0} реплик · {SelectedRecord.BriefingProblemCount:N0} требуют внимания";
+        : $"{SelectedRecord.BriefingEventCount:N0} событий · {SelectedRecord.BriefingPhraseCount:N0} реплик · {SelectedRecord.BriefingProblemCount:N0} требуют внимания";
 
     public IReadOnlyList<SpreadsheetColumnViewModel> VisibleSpreadsheetColumns
     {
@@ -1199,12 +1250,19 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SelectedBriefingPhrase));
         BriefingDraftNumber = Math.Max(
             BriefingTranscriptParser.GetNextPhraseNumber(text.Description),
-            (SelectedRecord?.BriefingPhrases.Select(phrase => phrase.Number).DefaultIfEmpty(0).Max() ?? 0) + 1);
-        BriefingDraftSpeaker = SelectedRecord?.BriefingPhrases.LastOrDefault()?.Speaker is { Length: > 0 } speaker
+            (SelectedRecord?.BriefingPhrases
+                 .Where(briefingEvent => briefingEvent.IsPhrase)
+                 .Select(phrase => phrase.Number)
+                 .DefaultIfEmpty(0)
+                 .Max() ?? 0) + 1);
+        BriefingDraftSpeaker = SelectedRecord?.BriefingPhrases.LastOrDefault(briefingEvent => briefingEvent.IsPhrase)?.Speaker is { Length: > 0 } speaker
             ? speaker
             : "Hero";
         BriefingDraftText = string.Empty;
+        BriefingDraftArguments = string.Empty;
         OnPropertyChanged(nameof(IsNewBriefingPhrase));
+        OnPropertyChanged(nameof(IsPhraseBriefingEditor));
+        OnPropertyChanged(nameof(IsCommandBriefingEditor));
         OnPropertyChanged(nameof(BriefingEditorTitle));
         RaiseBriefingCommandStates();
         StatusText = $"Подготовлена новая реплика № {BriefingDraftNumber:N0}. Укажите персонажа и текст, затем нажмите «Применить».";
@@ -1222,29 +1280,53 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         try
         {
             int number = BriefingDraftNumber;
-            string updated = BriefingTranscriptParser.UpdatePhrase(
-                text.Description,
-                number,
-                BriefingDraftSpeaker,
-                BriefingDraftText);
-            _pendingBriefingPhraseNumber = number;
+            bool isNewPhrase = IsNewBriefingPhrase;
+            BriefingPhraseViewModel? selected = SelectedBriefingPhrase;
+            string updated = isNewPhrase
+                ? BriefingTranscriptParser.UpdatePhrase(
+                    text.Description,
+                    number,
+                    BriefingDraftSpeaker,
+                    BriefingDraftText)
+                : BriefingTranscriptParser.UpdateTimelineEvent(
+                    text.Description,
+                    selected?.EventOrdinal ?? throw new InvalidOperationException("Выберите событие брифинга."),
+                    BriefingDraftArguments,
+                    number,
+                    BriefingDraftSpeaker,
+                    BriefingDraftText);
+            if (isNewPhrase)
+            {
+                _pendingBriefingPhraseNumber = number;
+            }
+            else
+            {
+                _pendingBriefingEventOrdinal = selected!.EventOrdinal;
+            }
+
             text.Description = updated;
             if (text.HasError)
             {
                 _pendingBriefingPhraseNumber = null;
+                _pendingBriefingEventOrdinal = null;
                 ShowError(text.ErrorMessage ?? "Не удалось обновить реплику.");
                 return;
             }
 
             _isNewBriefingPhrase = false;
             OnPropertyChanged(nameof(IsNewBriefingPhrase));
+            OnPropertyChanged(nameof(IsPhraseBriefingEditor));
+            OnPropertyChanged(nameof(IsCommandBriefingEditor));
             OnPropertyChanged(nameof(BriefingEditorTitle));
-            StatusText = $"Реплика № {number:N0} записана в {text.ResourceName}.";
+            StatusText = selected?.IsCommand is true
+                ? $"Событие «{selected.DisplayTitle}» записано в {text.ResourceName}."
+                : $"Реплика № {number:N0} записана в {text.ResourceName}.";
             RaiseBriefingCommandStates();
         }
         catch (Exception exception)
         {
             _pendingBriefingPhraseNumber = null;
+            _pendingBriefingEventOrdinal = null;
             ShowError(UnwrapMessage(exception));
         }
     }
@@ -1275,15 +1357,20 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             BriefingDraftNumber = 0;
             BriefingDraftSpeaker = string.Empty;
             BriefingDraftText = string.Empty;
+            BriefingDraftArguments = string.Empty;
             return;
         }
 
-        int? preferredNumber = _pendingBriefingPhraseNumber ?? SelectedBriefingPhrase?.Number;
+        int? preferredOrdinal = _pendingBriefingEventOrdinal ?? SelectedBriefingPhrase?.EventOrdinal;
+        int? preferredNumber = _pendingBriefingPhraseNumber;
+        _pendingBriefingEventOrdinal = null;
         _pendingBriefingPhraseNumber = null;
         BriefingPhraseViewModel[] visible = FilteredBriefingPhrases.ToArray();
         BriefingPhraseViewModel? selected = preferredNumber is int number
-            ? visible.FirstOrDefault(phrase => phrase.Number == number)
-            : null;
+            ? visible.FirstOrDefault(briefingEvent => briefingEvent.IsPhrase && briefingEvent.Number == number)
+            : preferredOrdinal is int ordinal
+                ? visible.FirstOrDefault(briefingEvent => briefingEvent.EventOrdinal == ordinal)
+                : null;
         SelectedBriefingPhrase = selected ?? visible.FirstOrDefault();
     }
 

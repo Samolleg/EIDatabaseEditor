@@ -538,10 +538,11 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 
         LocalizationEntryViewModel? briefingText = record.RelatedTexts.FirstOrDefault(text =>
             text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
-        IReadOnlyList<BriefingPhrase> parsed = BriefingTranscriptParser.Parse(briefingText?.Description);
-        var phrasesByNumber = parsed
-            .GroupBy(phrase => phrase.Number)
-            .ToDictionary(group => group.Key, group => group.First());
+        IReadOnlyList<BriefingTimelineEvent> timeline = BriefingTranscriptParser.ParseTimeline(briefingText?.Description);
+        var phraseNumbers = timeline
+            .Where(briefingEvent => briefingEvent.IsPhrase)
+            .Select(briefingEvent => briefingEvent.PhraseNumber)
+            .ToHashSet();
         var soundsByNumber = sounds
             .Where(sound => sound.PhraseNumber is not null)
             .GroupBy(sound => sound.PhraseNumber!.Value)
@@ -549,21 +550,34 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                 group => group.Key,
                 group => (IReadOnlyList<SoundLinkViewModel>)group.ToArray());
 
-        return phrasesByNumber.Keys
-            .Concat(soundsByNumber.Keys)
-            .Distinct()
-            .Order()
-            .Select(number =>
+        var result = timeline
+            .Select(briefingEvent =>
             {
-                phrasesByNumber.TryGetValue(number, out BriefingPhrase? phrase);
-                soundsByNumber.TryGetValue(number, out IReadOnlyList<SoundLinkViewModel>? phraseSounds);
+                soundsByNumber.TryGetValue(
+                    briefingEvent.PhraseNumber,
+                    out IReadOnlyList<SoundLinkViewModel>? phraseSounds);
                 return new BriefingPhraseViewModel(
-                    number,
-                    phrase?.Speaker ?? string.Empty,
-                    phrase?.Text ?? string.Empty,
-                    phraseSounds ?? []);
+                    briefingEvent,
+                    briefingEvent.IsPhrase ? phraseSounds ?? [] : []);
             })
-            .ToArray();
+            .ToList();
+
+        int nextOrdinal = timeline.Count;
+        foreach (int number in soundsByNumber.Keys.Where(number => !phraseNumbers.Contains(number)).Order())
+        {
+            result.Add(new BriefingPhraseViewModel(
+                new BriefingTimelineEvent(
+                    nextOrdinal++,
+                    BriefingEventKind.Phrase,
+                    "phrase",
+                    string.Empty,
+                    number,
+                    string.Empty,
+                    string.Empty),
+                soundsByNumber[number]));
+        }
+
+        return result;
     }
 
     private void AddTextOwner(LocalizationEntryViewModel entry, RecordRowViewModel owner)

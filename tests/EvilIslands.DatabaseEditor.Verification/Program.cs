@@ -423,6 +423,43 @@ internal static class Program
                 phrase == new BriefingPhrase(2, "Hero", "Ответ героя")),
             "Новая реплика получает следующий номер и дописывается в BRIEFING-описание.");
 
+        const string timelineProbe =
+            "#DESC +\r\n#show Hero 0 weapon\r\n#ANIMATION 30\r\n#NOLIPS\r\n" +
+            "#phrase Hero 1\r\nМысль героя\r\n#CAMERA 8\r\n#phrase Sheriff 2\r\nОтвет шерифа";
+        BriefingTimelineEvent[] timelineEvents = BriefingTranscriptParser.ParseTimeline(timelineProbe).ToArray();
+        log.Assert(
+            timelineEvents.Select(briefingEvent => briefingEvent.Kind).SequenceEqual(
+            [
+                BriefingEventKind.Description,
+                BriefingEventKind.Show,
+                BriefingEventKind.Animation,
+                BriefingEventKind.Thought,
+                BriefingEventKind.Phrase,
+                BriefingEventKind.Camera,
+                BriefingEventKind.Phrase,
+            ]) &&
+            timelineEvents[4].PhraseNumber == 1 &&
+            timelineEvents[4].Speaker == "Hero" &&
+            timelineEvents[4].Text == "Мысль героя" &&
+            timelineEvents[5].Arguments == "8",
+            "Сценарная лента сохраняет порядок #DESC, появления, анимации, мысли, камеры и реплик.");
+        string updatedTimelineProbe = BriefingTranscriptParser.UpdateTimelineEvent(
+            timelineProbe,
+            timelineEvents[5].Ordinal,
+            "11 45 6 2",
+            0,
+            string.Empty,
+            string.Empty);
+        BriefingTimelineEvent[] updatedTimeline = BriefingTranscriptParser.ParseTimeline(updatedTimelineProbe).ToArray();
+        log.Assert(
+            updatedTimeline.Length == timelineEvents.Length &&
+            updatedTimeline[5].Kind == BriefingEventKind.Camera &&
+            updatedTimeline[5].Arguments == "11 45 6 2" &&
+            updatedTimeline[4].Text == "Мысль героя" &&
+            updatedTimeline[6].Text == "Ответ шерифа" &&
+            updatedTimelineProbe.Contains("#NOLIPS", StringComparison.Ordinal),
+            "Редактор события меняет только выбранную камеру и не повреждает соседние команды и реплики.");
+
         SoundResourceInfo extractionProbe = catalog.Resources
             .Where(resource => resource.Length > 0)
             .OrderBy(resource => resource.Length)

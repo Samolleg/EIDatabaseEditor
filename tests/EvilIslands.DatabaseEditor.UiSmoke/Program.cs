@@ -18,6 +18,7 @@ using EvilIslands.DatabaseEditor.App.Dialogs;
 using EvilIslands.DatabaseEditor.App.Models;
 using EvilIslands.DatabaseEditor.App.Services;
 using EvilIslands.DatabaseEditor.App.ViewModels;
+using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.UiSmoke;
 
@@ -1187,6 +1188,10 @@ internal static class Program
             Grid? briefingWorkspace = window.FindName("BriefingWorkspace") as Grid;
             Grid? genericRecordsWorkspace = window.FindName("GenericRecordsWorkspace") as Grid;
             DataGrid? briefingPhrasesGrid = window.FindName("BriefingPhrasesGrid") as DataGrid;
+            BriefingPhraseViewModel editablePhrase = briefingWithSound.BriefingPhrases.First(briefingEvent =>
+                briefingEvent.IsPhrase && briefingEvent.HasText && briefingEvent.HasAudio);
+            viewModel.SelectedBriefingPhrase = editablePhrase;
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
             if (!briefingWithSound.RelatedSounds.Any(sound =>
                     sound.IsResolved &&
                     sound.ResourceName.Contains("\\Briefing\\", StringComparison.OrdinalIgnoreCase) &&
@@ -1197,13 +1202,17 @@ internal static class Program
                 briefingWorkspace?.Visibility != Visibility.Visible ||
                 genericRecordsWorkspace?.Visibility != Visibility.Collapsed ||
                 briefingPhrasesGrid is null ||
-                briefingPhrasesGrid.Items.Count != briefingWithSound.BriefingPhraseCount ||
+                briefingPhrasesGrid.Items.Count != briefingWithSound.BriefingEventCount ||
+                !briefingWithSound.BriefingPhrases.Any(briefingEvent => briefingEvent.Kind == BriefingEventKind.Camera) ||
+                !briefingWithSound.BriefingPhrases.Any(briefingEvent => briefingEvent.Kind == BriefingEventKind.Animation) ||
+                !briefingWithSound.BriefingPhrases.Any(briefingEvent => briefingEvent.Kind == BriefingEventKind.Thought) ||
                 viewModel.SelectedBriefingPhrase is null ||
+                !viewModel.IsPhraseBriefingEditor ||
                 string.IsNullOrWhiteSpace(viewModel.BriefingDraftText) ||
                 !viewModel.PlayBriefingAudioCommand.CanExecute(null))
             {
                 throw new InvalidOperationException(
-                    "Режим Брифингов должен показывать список сцен, последовательность #phrase, крупный редактор и доступное прослушивание найденного MP3.");
+                    "Режим Брифингов должен показывать полную сценарную ленту, мысли, камеру, анимацию, реплики и найденные MP3.");
             }
 
             LocalizationEntryViewModel briefingText = briefingWithSound.RelatedTexts.Single(text =>
@@ -1229,6 +1238,32 @@ internal static class Program
             if (briefingText.Description != originalBriefingDescription)
             {
                 throw new InvalidOperationException("Undo должен полностью вернуть исходное описание BRIEFING после правки реплики.");
+            }
+
+            BriefingPhraseViewModel cameraEvent = briefingWithSound.BriefingPhrases.First(briefingEvent =>
+                briefingEvent.Kind == BriefingEventKind.Camera);
+            viewModel.SelectedBriefingPhrase = cameraEvent;
+            viewModel.BriefingDraftArguments = cameraEvent.Arguments == "99" ? "98" : "99";
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (!viewModel.IsCommandBriefingEditor ||
+                !viewModel.ApplyBriefingPhraseCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException("Параметры события камеры должны редактироваться в правой панели.");
+            }
+
+            viewModel.ApplyBriefingPhraseCommand.Execute(null);
+            if (briefingText.Description == originalBriefingDescription ||
+                viewModel.SelectedBriefingPhrase?.Kind != BriefingEventKind.Camera ||
+                viewModel.SelectedBriefingPhrase.Arguments != viewModel.BriefingDraftArguments)
+            {
+                throw new InvalidOperationException(
+                    "Редактор камеры должен менять точную директиву и сохранять выбранное событие после обновления texts.res.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (briefingText.Description != originalBriefingDescription)
+            {
+                throw new InvalidOperationException("Undo должен полностью вернуть BRIEFING после правки камеры.");
             }
 
             viewModel.SelectTableCommand.Execute(acks);
