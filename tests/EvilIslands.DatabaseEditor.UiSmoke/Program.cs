@@ -1174,16 +1174,51 @@ internal static class Program
             viewModel.SelectTableCommand.Execute(briefings);
             viewModel.SelectedRecord = briefingWithSound;
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            Grid? briefingWorkspace = window.FindName("BriefingWorkspace") as Grid;
+            Grid? genericRecordsWorkspace = window.FindName("GenericRecordsWorkspace") as Grid;
+            DataGrid? briefingPhrasesGrid = window.FindName("BriefingPhrasesGrid") as DataGrid;
             if (!briefingWithSound.RelatedSounds.Any(sound =>
                     sound.IsResolved &&
                     sound.ResourceName.Contains("\\Briefing\\", StringComparison.OrdinalIgnoreCase) &&
                     sound.HasTranscript &&
                     sound.Source.StartsWith("Реплика ", StringComparison.Ordinal)) ||
                 soundLinksGrid?.Items.Count != briefingWithSound.RelatedSounds.Count ||
-                !soundLinksGrid.Columns.Any(column => Equals(column.Header, "Текст реплики из texts.res")))
+                !soundLinksGrid.Columns.Any(column => Equals(column.Header, "Текст реплики из texts.res")) ||
+                briefingWorkspace?.Visibility != Visibility.Visible ||
+                genericRecordsWorkspace?.Visibility != Visibility.Collapsed ||
+                briefingPhrasesGrid is null ||
+                briefingPhrasesGrid.Items.Count != briefingWithSound.BriefingPhraseCount ||
+                viewModel.SelectedBriefingPhrase is null ||
+                string.IsNullOrWhiteSpace(viewModel.BriefingDraftText) ||
+                !viewModel.PlayBriefingAudioCommand.CanExecute(null))
             {
                 throw new InvalidOperationException(
-                    "Строка Брифинга должна показывать MP3, персонажа и конкретный русский текст #phrase.");
+                    "Режим Брифингов должен показывать список сцен, последовательность #phrase, крупный редактор и доступное прослушивание найденного MP3.");
+            }
+
+            LocalizationEntryViewModel briefingText = briefingWithSound.RelatedTexts.Single(text =>
+                text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
+            string originalBriefingDescription = briefingText.Description;
+            int editedPhraseNumber = viewModel.SelectedBriefingPhrase.Number;
+            viewModel.BriefingDraftText = viewModel.SelectedBriefingPhrase.Text + " проверка";
+            if (!viewModel.ApplyBriefingPhraseCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException("Выбранную реплику Брифинга нельзя применить из крупного редактора.");
+            }
+
+            viewModel.ApplyBriefingPhraseCommand.Execute(null);
+            if (briefingText.Description == originalBriefingDescription ||
+                viewModel.SelectedBriefingPhrase?.Number != editedPhraseNumber ||
+                !viewModel.SelectedBriefingPhrase.Text.EndsWith("проверка", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Крупный редактор должен менять точный #phrase и сохранять выбор реплики после обновления texts.res.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            if (briefingText.Description != originalBriefingDescription)
+            {
+                throw new InvalidOperationException("Undo должен полностью вернуть исходное описание BRIEFING после правки реплики.");
             }
 
             viewModel.SelectTableCommand.Execute(acks);

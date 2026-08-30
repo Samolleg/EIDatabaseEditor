@@ -69,6 +69,92 @@ public static partial class BriefingTranscriptParser
         return true;
     }
 
+    public static string UpdatePhrase(
+        string? description,
+        int phraseNumber,
+        string speaker,
+        string text)
+    {
+        if (phraseNumber <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(phraseNumber));
+        }
+
+        string normalizedSpeaker = speaker.Trim();
+        string normalizedText = text.Trim();
+        if (normalizedSpeaker.Length == 0)
+        {
+            throw new ArgumentException("Укажите персонажа реплики.", nameof(speaker));
+        }
+
+        if (normalizedText.Length == 0)
+        {
+            throw new ArgumentException("Введите текст реплики.", nameof(text));
+        }
+
+        string source = description ?? string.Empty;
+        string newline = source.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        string[] lines = source
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n');
+
+        for (var index = 0; index < lines.Length; index++)
+        {
+            Match phrase = PhraseDirective().Match(lines[index]);
+            if (!phrase.Success ||
+                !int.TryParse(phrase.Groups["number"].Value, out int number) ||
+                number != phraseNumber)
+            {
+                continue;
+            }
+
+            int end = index + 1;
+            while (end < lines.Length && !lines[end].TrimStart().StartsWith('#'))
+            {
+                end++;
+            }
+
+            var result = new List<string>(lines.Length - (end - index) + 2);
+            result.AddRange(lines[..index]);
+            result.Add($"#phrase {normalizedSpeaker} {phraseNumber}");
+            result.AddRange(NormalizeTextLines(normalizedText));
+            result.AddRange(lines[end..]);
+            return string.Join(newline, result);
+        }
+
+        string separator = source.Length == 0 || source.EndsWith('\n') || source.EndsWith('\r')
+            ? string.Empty
+            : newline;
+        return source + separator +
+               $"#phrase {normalizedSpeaker} {phraseNumber}" + newline +
+               string.Join(newline, NormalizeTextLines(normalizedText));
+    }
+
+    public static int GetNextPhraseNumber(string? description)
+    {
+        int maximum = Parse(description).Select(phrase => phrase.Number).DefaultIfEmpty(0).Max();
+        return checked(maximum + 1);
+    }
+
+    private static IReadOnlyList<string> NormalizeTextLines(string text)
+    {
+        string[] lines = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n')
+            .Select(line => line.TrimEnd())
+            .ToArray();
+        for (var index = 0; index + 1 < lines.Length; index++)
+        {
+            if (lines[index].Length > 0)
+            {
+                lines[index] += " ";
+            }
+        }
+
+        return lines;
+    }
+
     private static void AddPhrase(ICollection<BriefingPhrase> destination, PhraseBuilder? phrase)
     {
         if (phrase is null)

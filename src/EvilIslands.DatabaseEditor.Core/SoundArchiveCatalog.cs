@@ -16,7 +16,8 @@ public sealed record SoundResourceInfo(
     string ResourceName,
     string Format,
     int Length,
-    int ArchiveIndex);
+    int ArchiveIndex,
+    int DataOffset);
 
 public sealed class SoundArchiveCatalog
 {
@@ -114,6 +115,34 @@ public sealed class SoundArchiveCatalog
             : [];
     }
 
+    public static async Task<byte[]> ReadResourceAsync(
+        SoundResourceInfo resource,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(resource);
+        if (resource.Length < 0 || resource.DataOffset < ResArchiveDocument.HeaderSize)
+        {
+            throw new DatabaseFormatException("Диапазон звукового ресурса некорректен.", resource.Archive.SourcePath);
+        }
+
+        await using var stream = new FileStream(
+            resource.Archive.SourcePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            64 * 1024,
+            FileOptions.Asynchronous | FileOptions.RandomAccess);
+        if ((long)resource.DataOffset + resource.Length > stream.Length)
+        {
+            throw new DatabaseFormatException("Звуковой ресурс выходит за границы RES.", resource.Archive.SourcePath);
+        }
+
+        var bytes = new byte[resource.Length];
+        stream.Position = resource.DataOffset;
+        await stream.ReadExactlyAsync(bytes, cancellationToken).ConfigureAwait(false);
+        return bytes;
+    }
+
     private static SoundArchiveCatalog Create(IReadOnlyList<SoundArchiveIndex> sourceArchives)
     {
         var archives = new SoundArchiveInfo[sourceArchives.Count];
@@ -137,7 +166,8 @@ public sealed class SoundArchiveCatalog
                 NormalizeResourceName(entry.Name),
                 Path.GetExtension(entry.Name).TrimStart('.').ToUpperInvariant(),
                 entry.Size,
-                entry.Index)));
+                entry.Index,
+                entry.Offset)));
         }
 
         return new SoundArchiveCatalog(archives, resources);

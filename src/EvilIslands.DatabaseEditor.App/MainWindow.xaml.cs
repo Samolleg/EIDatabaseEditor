@@ -51,6 +51,8 @@ public partial class MainWindow : Window
     private bool _hasExplicitInterfaceScale;
     private bool _allowClose;
     private bool _closePromptPending;
+    private readonly MediaPlayer _soundPreviewPlayer = new();
+    private string? _soundPreviewPath;
 
     public MainWindow() : this(new EditorPreferencesStore())
     {
@@ -91,6 +93,8 @@ public partial class MainWindow : Window
         {
             _spreadsheetViewModel.PropertyChanged -= SpreadsheetViewModel_PropertyChanged;
             _spreadsheetViewModel.RecordFocusRequested -= ViewModel_RecordFocusRequested;
+            _spreadsheetViewModel.PlayBriefingAudioRequested -= ViewModel_PlayBriefingAudioRequested;
+            _spreadsheetViewModel.StopBriefingAudioRequested -= ViewModel_StopBriefingAudioRequested;
         }
 
         _spreadsheetViewModel = e.NewValue as MainWindowViewModel;
@@ -98,9 +102,66 @@ public partial class MainWindow : Window
         {
             _spreadsheetViewModel.PropertyChanged += SpreadsheetViewModel_PropertyChanged;
             _spreadsheetViewModel.RecordFocusRequested += ViewModel_RecordFocusRequested;
+            _spreadsheetViewModel.PlayBriefingAudioRequested += ViewModel_PlayBriefingAudioRequested;
+            _spreadsheetViewModel.StopBriefingAudioRequested += ViewModel_StopBriefingAudioRequested;
         }
 
         RebuildSpreadsheetColumns();
+    }
+
+    private async void ViewModel_PlayBriefingAudioRequested(object? sender, SoundPreviewRequestedEventArgs e)
+    {
+        try
+        {
+            StopSoundPreview();
+            byte[] bytes = await SoundArchiveCatalog.ReadResourceAsync(e.Resource);
+            string directory = Path.Combine(
+                Path.GetTempPath(),
+                "EvilIslands.DatabaseEditor",
+                "audio-preview");
+            Directory.CreateDirectory(directory);
+            string extension = "." + e.Resource.Format.ToLowerInvariant();
+            string target = Path.Combine(directory, $"phrase-{e.PhraseNumber}-{Guid.NewGuid():N}{extension}");
+            await File.WriteAllBytesAsync(target, bytes);
+            _soundPreviewPath = target;
+            _soundPreviewPlayer.Open(new Uri(target, UriKind.Absolute));
+            _soundPreviewPlayer.Play();
+        }
+        catch (Exception exception)
+        {
+            StopSoundPreview();
+            (_spreadsheetViewModel ?? _viewModel).ReportSpreadsheetError(
+                $"Не удалось воспроизвести звуковой файл: {exception.Message}");
+        }
+    }
+
+    private void ViewModel_StopBriefingAudioRequested(object? sender, EventArgs e) => StopSoundPreview();
+
+    private void StopSoundPreview()
+    {
+        _soundPreviewPlayer.Stop();
+        _soundPreviewPlayer.Close();
+        if (_soundPreviewPath is not { } path)
+        {
+            return;
+        }
+
+        _soundPreviewPath = null;
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (IOException)
+        {
+            // Windows Media Foundation may release the temporary file one dispatcher turn later.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Preview cleanup must never interrupt editing or saving the RES documents.
+        }
     }
 
     private void ViewModel_RecordFocusRequested(object? sender, RecordFocusRequestedEventArgs e)
@@ -2438,8 +2499,13 @@ public partial class MainWindow : Window
         if (_spreadsheetViewModel is not null)
         {
             _spreadsheetViewModel.PropertyChanged -= SpreadsheetViewModel_PropertyChanged;
+            _spreadsheetViewModel.RecordFocusRequested -= ViewModel_RecordFocusRequested;
+            _spreadsheetViewModel.PlayBriefingAudioRequested -= ViewModel_PlayBriefingAudioRequested;
+            _spreadsheetViewModel.StopBriefingAudioRequested -= ViewModel_StopBriefingAudioRequested;
             _spreadsheetViewModel = null;
         }
+
+        StopSoundPreview();
 
         _viewModel.OpenFileRequested -= ViewModel_OpenFileRequested;
         _viewModel.AttachTextsRequested -= ViewModel_AttachTextsRequested;

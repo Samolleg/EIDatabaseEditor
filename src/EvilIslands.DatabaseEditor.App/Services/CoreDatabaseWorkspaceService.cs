@@ -114,6 +114,8 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             {
                 AttachRelatedSounds(databases, soundCatalog, cancellationToken);
             }
+
+            AttachBriefingPhrases(databases, cancellationToken);
         }
         catch
         {
@@ -233,12 +235,15 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         if (_soundCatalog is null)
         {
             record.SetRelatedSounds([]);
+            record.SetBriefingPhrases(MapBriefingPhrases(record, []));
             return;
         }
 
-        record.SetRelatedSounds(MapSoundLinks(
+        IReadOnlyList<SoundLinkViewModel> sounds = MapSoundLinks(
             record,
-            DatabaseSoundLinkResolver.Resolve(record.TableKey, record.CoreRecord, _soundCatalog)));
+            DatabaseSoundLinkResolver.Resolve(record.TableKey, record.CoreRecord, _soundCatalog));
+        record.SetRelatedSounds(sounds);
+        record.SetBriefingPhrases(MapBriefingPhrases(record, sounds));
     }
 
     public void RemoveAddedRecord(RecordRowViewModel record)
@@ -472,6 +477,25 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         }
     }
 
+    private static void AttachBriefingPhrases(
+        IReadOnlyList<DatabaseGroupViewModel> databases,
+        CancellationToken cancellationToken)
+    {
+        DatabaseTableViewModel? table = databases
+            .SelectMany(group => group.Tables)
+            .FirstOrDefault(candidate => candidate.Key.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase));
+        if (table is null)
+        {
+            return;
+        }
+
+        foreach (RecordRowViewModel record in table.Records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            record.SetBriefingPhrases(MapBriefingPhrases(record, record.RelatedSounds));
+        }
+    }
+
     private static IReadOnlyList<SoundLinkViewModel> MapSoundLinks(
         RecordRowViewModel record,
         IReadOnlyList<DatabaseSoundLink> links)
@@ -501,6 +525,45 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 
             return new SoundLinkViewModel(link);
         }).ToArray();
+    }
+
+    private static IReadOnlyList<BriefingPhraseViewModel> MapBriefingPhrases(
+        RecordRowViewModel record,
+        IReadOnlyList<SoundLinkViewModel> sounds)
+    {
+        if (!record.TableKey.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        LocalizationEntryViewModel? briefingText = record.RelatedTexts.FirstOrDefault(text =>
+            text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
+        IReadOnlyList<BriefingPhrase> parsed = BriefingTranscriptParser.Parse(briefingText?.Description);
+        var phrasesByNumber = parsed
+            .GroupBy(phrase => phrase.Number)
+            .ToDictionary(group => group.Key, group => group.First());
+        var soundsByNumber = sounds
+            .Where(sound => sound.PhraseNumber is not null)
+            .GroupBy(sound => sound.PhraseNumber!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<SoundLinkViewModel>)group.ToArray());
+
+        return phrasesByNumber.Keys
+            .Concat(soundsByNumber.Keys)
+            .Distinct()
+            .Order()
+            .Select(number =>
+            {
+                phrasesByNumber.TryGetValue(number, out BriefingPhrase? phrase);
+                soundsByNumber.TryGetValue(number, out IReadOnlyList<SoundLinkViewModel>? phraseSounds);
+                return new BriefingPhraseViewModel(
+                    number,
+                    phrase?.Speaker ?? string.Empty,
+                    phrase?.Text ?? string.Empty,
+                    phraseSounds ?? []);
+            })
+            .ToArray();
     }
 
     private void AddTextOwner(LocalizationEntryViewModel entry, RecordRowViewModel owner)

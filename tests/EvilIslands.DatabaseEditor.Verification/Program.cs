@@ -405,6 +405,32 @@ internal static class Program
                 out string probeClipId) &&
             probeNumber == 2 && probeClipId == "2a",
             "Имя MP3, включая буквенный вариант, сопоставляется с номером #phrase.");
+        string editedProbe = BriefingTranscriptParser.UpdatePhrase(
+            "#DESC +\r\n#phrase Hero 1\r\nСтарый текст\r\n#CAMERA 3\r\n",
+            1,
+            "Elder",
+            "Новая строка\r\nи продолжение");
+        BriefingPhrase[] editedPhrases = BriefingTranscriptParser.Parse(editedProbe).ToArray();
+        log.Assert(
+            editedPhrases.Length == 1 &&
+            editedPhrases[0] == new BriefingPhrase(1, "Elder", "Новая строка и продолжение") &&
+            editedProbe.Contains("#CAMERA 3", StringComparison.Ordinal),
+            "Редактор реплики меняет только выбранный #phrase и сохраняет соседние команды брифинга.");
+        string appendedProbe = BriefingTranscriptParser.UpdatePhrase(editedProbe, 2, "Hero", "Ответ героя");
+        log.Assert(
+            BriefingTranscriptParser.GetNextPhraseNumber(editedProbe) == 2 &&
+            BriefingTranscriptParser.Parse(appendedProbe).Any(phrase =>
+                phrase == new BriefingPhrase(2, "Hero", "Ответ героя")),
+            "Новая реплика получает следующий номер и дописывается в BRIEFING-описание.");
+
+        SoundResourceInfo extractionProbe = catalog.Resources
+            .Where(resource => resource.Length > 0)
+            .OrderBy(resource => resource.Length)
+            .First();
+        byte[] extractedBytes = await SoundArchiveCatalog.ReadResourceAsync(extractionProbe).ConfigureAwait(false);
+        log.Assert(
+            extractedBytes.Length == extractionProbe.Length,
+            "Прослушивание извлекает из звукового RES точный диапазон выбранного WAV/MP3/OGG.");
 
         string textsPath = Path.Combine(directory, "texts.res");
         if (File.Exists(textsPath))

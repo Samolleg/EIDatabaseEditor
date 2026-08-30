@@ -581,6 +581,7 @@ internal sealed class RecordRowViewModel : ObservableObject
     private bool _hasBlockingDiagnostics;
     private IReadOnlyList<LocalizationEntryViewModel> _relatedTexts = [];
     private IReadOnlyList<SoundLinkViewModel> _relatedSounds = [];
+    private IReadOnlyList<BriefingPhraseViewModel> _briefingPhrases = [];
     private IReadOnlyList<string> _expectedTextKeys = [];
     private IReadOnlyList<string> _missingTextKeys = [];
     private LocalizationEntryViewModel? _primaryText;
@@ -684,6 +685,22 @@ internal sealed class RecordRowViewModel : ObservableObject
     public string PrimarySoundPath => RelatedSounds
         .FirstOrDefault(sound => sound.IsResolved && sound.IsPreferred)?.ResourceName ??
         RelatedSounds.FirstOrDefault()?.Reference ?? string.Empty;
+
+    public IReadOnlyList<BriefingPhraseViewModel> BriefingPhrases
+    {
+        get => _briefingPhrases;
+        private set
+        {
+            _briefingPhrases = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(BriefingPhraseCount));
+            OnPropertyChanged(nameof(BriefingProblemCount));
+        }
+    }
+
+    public int BriefingPhraseCount => BriefingPhrases.Count;
+
+    public int BriefingProblemCount => BriefingPhrases.Count(phrase => phrase.HasProblem);
 
     public bool CanEditPrimaryLocalization => _primaryText is not null;
 
@@ -885,6 +902,11 @@ internal sealed class RecordRowViewModel : ObservableObject
         OnPropertyChanged(nameof(SearchText));
     }
 
+    internal void SetBriefingPhrases(IReadOnlyList<BriefingPhraseViewModel> phrases)
+    {
+        BriefingPhrases = phrases;
+    }
+
     internal void RefreshLocalizationState()
     {
         OnPropertyChanged(nameof(LocalizationKeyText));
@@ -1084,6 +1106,20 @@ internal sealed class SoundLinkViewModel
         Format = link.Resource?.Format ?? "—";
         Length = link.Resource?.Length;
         TranscriptText = briefingPhrase?.Text ?? string.Empty;
+        PhraseNumber = briefingPhrase?.Number;
+        Speaker = briefingPhrase?.Speaker ?? string.Empty;
+        ClipId = clipId ?? string.Empty;
+        Resource = link.Resource;
+        if (PhraseNumber is null &&
+            link.Kind == DatabaseSoundLinkKind.BriefingFolder &&
+            BriefingTranscriptParser.TryGetClipIdentity(
+                link.Resource?.ResourceName,
+                out int parsedNumber,
+                out string parsedClipId))
+        {
+            PhraseNumber = parsedNumber;
+            ClipId = parsedClipId;
+        }
     }
 
     public DatabaseSoundLinkKind Kind { get; }
@@ -1097,6 +1133,12 @@ internal sealed class SoundLinkViewModel
     public string Reference { get; }
 
     public string TranscriptText { get; }
+
+    public int? PhraseNumber { get; }
+
+    public string Speaker { get; }
+
+    public string ClipId { get; }
 
     public bool HasTranscript => !string.IsNullOrWhiteSpace(TranscriptText);
 
@@ -1116,6 +1158,8 @@ internal sealed class SoundLinkViewModel
 
     public int? Length { get; }
 
+    internal SoundResourceInfo? Resource { get; }
+
     public string LengthText => Length is int length
         ? length < 1024
             ? $"{length:N0} Б"
@@ -1125,6 +1169,66 @@ internal sealed class SoundLinkViewModel
     public string StatusText => IsResolved
         ? IsPreferred ? "Найден" : "Дубликат"
         : "Не найден";
+}
+
+internal sealed class BriefingPhraseViewModel
+{
+    public BriefingPhraseViewModel(
+        int number,
+        string speaker,
+        string text,
+        IReadOnlyList<SoundLinkViewModel> sounds)
+    {
+        Number = number;
+        Speaker = speaker;
+        Text = text;
+        Sounds = sounds;
+    }
+
+    public int Number { get; }
+
+    public string NumberText => $"№ {Number:N0}";
+
+    public string Speaker { get; }
+
+    public string Text { get; }
+
+    public IReadOnlyList<SoundLinkViewModel> Sounds { get; }
+
+    public SoundLinkViewModel? PrimarySound => Sounds.FirstOrDefault(sound => sound.IsResolved && sound.IsPreferred) ??
+                                                     Sounds.FirstOrDefault(sound => sound.IsResolved);
+
+    public bool HasText => !string.IsNullOrWhiteSpace(Text);
+
+    public bool HasAudio => PrimarySound is not null;
+
+    public bool HasDuplicateAudio => Sounds
+        .Where(sound => sound.IsResolved)
+        .GroupBy(sound => sound.ResourceName, StringComparer.OrdinalIgnoreCase)
+        .Any(group => group.Count(sound => sound.IsPreferred) > 1);
+
+    public int AudioPartCount => Sounds
+        .Where(sound => sound.IsResolved && sound.IsPreferred)
+        .Select(sound => sound.ResourceName)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+    public bool HasProblem => !HasText || !HasAudio || HasDuplicateAudio;
+
+    public string AudioName => PrimarySound is null
+        ? "Аудио не найдено"
+        : AudioPartCount > 1
+            ? $"{PrimarySound.ResourceName} · ещё {AudioPartCount - 1:N0}"
+            : PrimarySound.ResourceName;
+
+    public string StatusText => (HasText, HasAudio, HasDuplicateAudio) switch
+    {
+        (false, false, _) => "Нет текста и звука",
+        (false, true, _) => "Нет текста",
+        (true, false, _) => "Нет звука",
+        (_, _, true) => "Несколько аудиофайлов",
+        _ => "Готово",
+    };
 }
 
 internal sealed class LocalizationEntryViewModel : ObservableObject

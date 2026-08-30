@@ -29,6 +29,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private ICollectionView _resourcesView;
     private ICollectionView _textsView;
     private RecordRowViewModel? _selectedRecord;
+    private BriefingPhraseViewModel? _selectedBriefingPhrase;
+    private bool _showOnlyBriefingProblems;
+    private string _briefingDraftSpeaker = string.Empty;
+    private string _briefingDraftText = string.Empty;
+    private int _briefingDraftNumber;
+    private bool _isNewBriefingPhrase;
+    private int? _pendingBriefingPhraseNumber;
     private string _searchText = string.Empty;
     private string _resourceSearchText = string.Empty;
     private string _textsSearchText = string.Empty;
@@ -115,6 +122,27 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         NavigateToDiagnosticCommand = new RelayCommand<ValidationMessageViewModel>(
             NavigateToDiagnostic,
             diagnostic => diagnostic?.CanNavigate is true && HasDocument && !IsBusy);
+        NewBriefingPhraseCommand = new RelayCommand(
+            BeginNewBriefingPhrase,
+            () => IsBriefingsTable && SelectedRecord is not null && HasTextsDocument && !IsBusy);
+        ApplyBriefingPhraseCommand = new RelayCommand(
+            ApplyBriefingPhrase,
+            () => IsBriefingsTable && SelectedRecord is not null &&
+                  BriefingDraftNumber > 0 &&
+                  !string.IsNullOrWhiteSpace(BriefingDraftSpeaker) &&
+                  !string.IsNullOrWhiteSpace(BriefingDraftText) && !IsBusy);
+        PreviousBriefingPhraseCommand = new RelayCommand(
+            () => MoveBriefingPhrase(-1),
+            () => CanMoveBriefingPhrase(-1));
+        NextBriefingPhraseCommand = new RelayCommand(
+            () => MoveBriefingPhrase(1),
+            () => CanMoveBriefingPhrase(1));
+        PlayBriefingAudioCommand = new RelayCommand(
+            PlayBriefingAudio,
+            () => SelectedBriefingPhrase?.PrimarySound?.Resource is not null && !IsBusy);
+        StopBriefingAudioCommand = new RelayCommand(
+            () => StopBriefingAudioRequested?.Invoke(this, EventArgs.Empty),
+            () => IsBriefingsTable);
     }
 
     public event EventHandler? OpenFileRequested;
@@ -130,6 +158,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public event EventHandler? SearchFocusRequested;
 
     public event EventHandler<RecordFocusRequestedEventArgs>? RecordFocusRequested;
+
+    public event EventHandler<SoundPreviewRequestedEventArgs>? PlayBriefingAudioRequested;
+
+    public event EventHandler? StopBriefingAudioRequested;
 
     public ObservableCollection<NavigationItemViewModel> NavigationItems { get; }
 
@@ -191,6 +223,18 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ICommand NavigateToDiagnosticCommand { get; }
 
+    public ICommand NewBriefingPhraseCommand { get; }
+
+    public ICommand ApplyBriefingPhraseCommand { get; }
+
+    public ICommand PreviousBriefingPhraseCommand { get; }
+
+    public ICommand NextBriefingPhraseCommand { get; }
+
+    public ICommand PlayBriefingAudioCommand { get; }
+
+    public ICommand StopBriefingAudioCommand { get; }
+
     public ICollectionView RecordsView
     {
         get => _recordsView;
@@ -237,6 +281,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(PageSubtitle));
             OnPropertyChanged(nameof(IsRecordsSection));
             OnPropertyChanged(nameof(IsTextsSection));
+            OnPropertyChanged(nameof(IsBriefingsTable));
             OnPropertyChanged(nameof(BreadcrumbText));
             RaiseCommandStates();
         }
@@ -304,6 +349,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsCurrentTableEditable));
             OnPropertyChanged(nameof(IsCurrentTableAddable));
             OnPropertyChanged(nameof(CurrentTableSupportsSounds));
+            OnPropertyChanged(nameof(IsBriefingsTable));
             OnPropertyChanged(nameof(VisibleSpreadsheetColumns));
             OnPropertyChanged(nameof(SpreadsheetColumnCountText));
             OnPropertyChanged(nameof(ColumnModeButtonText));
@@ -340,13 +386,24 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 return;
             }
 
+            if (_selectedRecord is not null)
+            {
+                _selectedRecord.PropertyChanged -= SelectedRecord_PropertyChanged;
+            }
+
             if (SetProperty(ref _selectedRecord, value))
             {
+                if (_selectedRecord is not null)
+                {
+                    _selectedRecord.PropertyChanged += SelectedRecord_PropertyChanged;
+                }
+
                 OnPropertyChanged(nameof(HasSelectedRecord));
                 OnPropertyChanged(nameof(SelectedRecordHasTexts));
                 OnPropertyChanged(nameof(SelectedRecordTextCount));
                 OnPropertyChanged(nameof(SelectedRecordHasSoundReferences));
                 OnPropertyChanged(nameof(SelectedRecordSoundCount));
+                RefreshBriefingPhraseSelection();
                 (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (AddMissingTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
@@ -367,6 +424,94 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool CurrentTableSupportsSounds => SelectedTable?.Key is
         "acks.answers" or "acks.cries" or "acks.others" or "quests.briefings";
+
+    public bool IsBriefingsTable => IsRecordsSection &&
+                                    SelectedTable?.Key.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase) is true;
+
+    public IEnumerable<BriefingPhraseViewModel> FilteredBriefingPhrases =>
+        (SelectedRecord?.BriefingPhrases ?? [])
+        .Where(phrase => !ShowOnlyBriefingProblems || phrase.HasProblem);
+
+    public BriefingPhraseViewModel? SelectedBriefingPhrase
+    {
+        get => _selectedBriefingPhrase;
+        set
+        {
+            if (!SetProperty(ref _selectedBriefingPhrase, value))
+            {
+                return;
+            }
+
+            if (value is not null)
+            {
+                _isNewBriefingPhrase = false;
+                BriefingDraftNumber = value.Number;
+                BriefingDraftSpeaker = value.Speaker;
+                BriefingDraftText = value.Text;
+            }
+
+            OnPropertyChanged(nameof(IsNewBriefingPhrase));
+            OnPropertyChanged(nameof(BriefingEditorTitle));
+            RaiseBriefingCommandStates();
+        }
+    }
+
+    public bool ShowOnlyBriefingProblems
+    {
+        get => _showOnlyBriefingProblems;
+        set
+        {
+            if (!SetProperty(ref _showOnlyBriefingProblems, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(FilteredBriefingPhrases));
+            RefreshBriefingPhraseSelection();
+        }
+    }
+
+    public int BriefingDraftNumber
+    {
+        get => _briefingDraftNumber;
+        private set => SetProperty(ref _briefingDraftNumber, value);
+    }
+
+    public string BriefingDraftSpeaker
+    {
+        get => _briefingDraftSpeaker;
+        set
+        {
+            if (SetProperty(ref _briefingDraftSpeaker, value))
+            {
+                RaiseBriefingCommandStates();
+            }
+        }
+    }
+
+    public string BriefingDraftText
+    {
+        get => _briefingDraftText;
+        set
+        {
+            if (SetProperty(ref _briefingDraftText, value))
+            {
+                RaiseBriefingCommandStates();
+            }
+        }
+    }
+
+    public bool IsNewBriefingPhrase => _isNewBriefingPhrase;
+
+    public string BriefingEditorTitle => IsNewBriefingPhrase
+        ? $"Новая реплика № {BriefingDraftNumber:N0}"
+        : SelectedBriefingPhrase is null
+            ? "Выберите реплику"
+            : $"Реплика № {SelectedBriefingPhrase.Number:N0}";
+
+    public string BriefingWorkspaceSummary => SelectedRecord is null
+        ? "Выберите брифинг слева"
+        : $"{SelectedRecord.BriefingPhraseCount:N0} реплик · {SelectedRecord.BriefingProblemCount:N0} требуют внимания";
 
     public IReadOnlyList<SpreadsheetColumnViewModel> VisibleSpreadsheetColumns
     {
@@ -1038,6 +1183,150 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             ShowError(UnwrapMessage(exception));
         }
+    }
+
+    private void BeginNewBriefingPhrase()
+    {
+        LocalizationEntryViewModel? text = GetSelectedBriefingText();
+        if (text is null)
+        {
+            ShowError("Для выбранного брифинга не найден ресурс BRIEFING в texts.res. Сначала создайте отсутствующий текст.");
+            return;
+        }
+
+        _isNewBriefingPhrase = true;
+        _selectedBriefingPhrase = null;
+        OnPropertyChanged(nameof(SelectedBriefingPhrase));
+        BriefingDraftNumber = Math.Max(
+            BriefingTranscriptParser.GetNextPhraseNumber(text.Description),
+            (SelectedRecord?.BriefingPhrases.Select(phrase => phrase.Number).DefaultIfEmpty(0).Max() ?? 0) + 1);
+        BriefingDraftSpeaker = SelectedRecord?.BriefingPhrases.LastOrDefault()?.Speaker is { Length: > 0 } speaker
+            ? speaker
+            : "Hero";
+        BriefingDraftText = string.Empty;
+        OnPropertyChanged(nameof(IsNewBriefingPhrase));
+        OnPropertyChanged(nameof(BriefingEditorTitle));
+        RaiseBriefingCommandStates();
+        StatusText = $"Подготовлена новая реплика № {BriefingDraftNumber:N0}. Укажите персонажа и текст, затем нажмите «Применить».";
+    }
+
+    private void ApplyBriefingPhrase()
+    {
+        LocalizationEntryViewModel? text = GetSelectedBriefingText();
+        if (text is null)
+        {
+            ShowError("Ресурс BRIEFING в texts.res не найден.");
+            return;
+        }
+
+        try
+        {
+            int number = BriefingDraftNumber;
+            string updated = BriefingTranscriptParser.UpdatePhrase(
+                text.Description,
+                number,
+                BriefingDraftSpeaker,
+                BriefingDraftText);
+            _pendingBriefingPhraseNumber = number;
+            text.Description = updated;
+            if (text.HasError)
+            {
+                _pendingBriefingPhraseNumber = null;
+                ShowError(text.ErrorMessage ?? "Не удалось обновить реплику.");
+                return;
+            }
+
+            _isNewBriefingPhrase = false;
+            OnPropertyChanged(nameof(IsNewBriefingPhrase));
+            OnPropertyChanged(nameof(BriefingEditorTitle));
+            StatusText = $"Реплика № {number:N0} записана в {text.ResourceName}.";
+            RaiseBriefingCommandStates();
+        }
+        catch (Exception exception)
+        {
+            _pendingBriefingPhraseNumber = null;
+            ShowError(UnwrapMessage(exception));
+        }
+    }
+
+    private LocalizationEntryViewModel? GetSelectedBriefingText() =>
+        SelectedRecord?.RelatedTexts.FirstOrDefault(text =>
+            text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
+
+    private void SelectedRecord_PropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
+    {
+        if (eventArgs.PropertyName != nameof(RecordRowViewModel.BriefingPhrases))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(FilteredBriefingPhrases));
+        OnPropertyChanged(nameof(BriefingWorkspaceSummary));
+        RefreshBriefingPhraseSelection();
+    }
+
+    private void RefreshBriefingPhraseSelection()
+    {
+        OnPropertyChanged(nameof(FilteredBriefingPhrases));
+        OnPropertyChanged(nameof(BriefingWorkspaceSummary));
+        if (!IsBriefingsTable || SelectedRecord is null)
+        {
+            SelectedBriefingPhrase = null;
+            BriefingDraftNumber = 0;
+            BriefingDraftSpeaker = string.Empty;
+            BriefingDraftText = string.Empty;
+            return;
+        }
+
+        int? preferredNumber = _pendingBriefingPhraseNumber ?? SelectedBriefingPhrase?.Number;
+        _pendingBriefingPhraseNumber = null;
+        BriefingPhraseViewModel[] visible = FilteredBriefingPhrases.ToArray();
+        BriefingPhraseViewModel? selected = preferredNumber is int number
+            ? visible.FirstOrDefault(phrase => phrase.Number == number)
+            : null;
+        SelectedBriefingPhrase = selected ?? visible.FirstOrDefault();
+    }
+
+    private bool CanMoveBriefingPhrase(int delta)
+    {
+        BriefingPhraseViewModel[] visible = FilteredBriefingPhrases.ToArray();
+        int index = SelectedBriefingPhrase is null ? -1 : Array.IndexOf(visible, SelectedBriefingPhrase);
+        int target = index + delta;
+        return IsBriefingsTable && target >= 0 && target < visible.Length;
+    }
+
+    private void MoveBriefingPhrase(int delta)
+    {
+        BriefingPhraseViewModel[] visible = FilteredBriefingPhrases.ToArray();
+        int index = SelectedBriefingPhrase is null ? -1 : Array.IndexOf(visible, SelectedBriefingPhrase);
+        int target = index + delta;
+        if (target >= 0 && target < visible.Length)
+        {
+            SelectedBriefingPhrase = visible[target];
+        }
+    }
+
+    private void PlayBriefingAudio()
+    {
+        SoundResourceInfo? resource = SelectedBriefingPhrase?.PrimarySound?.Resource;
+        if (resource is null)
+        {
+            return;
+        }
+
+        PlayBriefingAudioRequested?.Invoke(
+            this,
+            new SoundPreviewRequestedEventArgs(resource, SelectedBriefingPhrase!.Number));
+    }
+
+    private void RaiseBriefingCommandStates()
+    {
+        (NewBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (ApplyBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (PreviousBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (NextBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (PlayBriefingAudioCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (StopBriefingAudioCommand as RelayCommand)?.RaiseCanExecuteChanged();
     }
 
     private bool FilterRecord(object item)
@@ -2150,6 +2439,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (CancelOperationCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (FocusSearchCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (NavigateToDiagnosticCommand as RelayCommand<ValidationMessageViewModel>)?.RaiseCanExecuteChanged();
+        RaiseBriefingCommandStates();
     }
 
     private void CancelOperation()
@@ -2280,4 +2570,13 @@ internal sealed class RecordFocusRequestedEventArgs(
     public int FieldId { get; } = fieldId;
 
     public bool BeginEdit { get; } = beginEdit;
+}
+
+internal sealed class SoundPreviewRequestedEventArgs(
+    SoundResourceInfo resource,
+    int phraseNumber) : EventArgs
+{
+    public SoundResourceInfo Resource { get; } = resource;
+
+    public int PhraseNumber { get; } = phraseNumber;
 }
