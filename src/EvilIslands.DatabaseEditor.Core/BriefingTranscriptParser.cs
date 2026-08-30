@@ -270,6 +270,75 @@ public static partial class BriefingTranscriptParser
         throw new ArgumentOutOfRangeException(nameof(eventOrdinal), "Событие брифинга больше не найдено.");
     }
 
+    public static string InsertTimelineEvent(
+        string? description,
+        int? afterEventOrdinal,
+        BriefingEventKind kind,
+        string arguments = "",
+        int phraseNumber = 0,
+        string speaker = "",
+        string text = "")
+    {
+        string source = description ?? string.Empty;
+        IReadOnlyList<TimelineSpan> spans = FindTimelineSpans(source);
+        int insertionOffset;
+        if (afterEventOrdinal is int ordinal)
+        {
+            if (ordinal < 0 || ordinal >= spans.Count)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(afterEventOrdinal),
+                    "Выбранное место сценария больше не найдено.");
+            }
+
+            insertionOffset = spans[ordinal].End;
+        }
+        else
+        {
+            insertionOffset = source.Length;
+        }
+
+        string newline = DetectNewline(source);
+        string eventBlock = BuildTimelineEvent(kind, arguments, phraseNumber, speaker, text, newline);
+        bool needsLeadingNewline = insertionOffset > 0 && !IsLineBreak(source[insertionOffset - 1]);
+        bool needsTrailingNewline = insertionOffset < source.Length ||
+                                    (source.Length > 0 && IsLineBreak(source[^1]));
+        string insertion = (needsLeadingNewline ? newline : string.Empty) +
+                           eventBlock +
+                           (needsTrailingNewline ? newline : string.Empty);
+        return source.Insert(insertionOffset, insertion);
+    }
+
+    public static string RemoveTimelineEvent(string? description, int eventOrdinal)
+    {
+        string source = description ?? string.Empty;
+        TimelineSpan span = GetTimelineSpan(source, eventOrdinal);
+        return source.Remove(span.Start, span.End - span.Start);
+    }
+
+    public static string MoveTimelineEvent(string? description, int eventOrdinal, int delta)
+    {
+        if (delta is not (-1 or 1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(delta), "Событие можно переместить только на один шаг.");
+        }
+
+        string source = description ?? string.Empty;
+        IReadOnlyList<TimelineSpan> spans = FindTimelineSpans(source);
+        int targetOrdinal = eventOrdinal + delta;
+        if (eventOrdinal < 0 || eventOrdinal >= spans.Count ||
+            targetOrdinal < 0 || targetOrdinal >= spans.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(eventOrdinal), "Событие нельзя переместить дальше границы сценария.");
+        }
+
+        TimelineSpan first = spans[Math.Min(eventOrdinal, targetOrdinal)];
+        TimelineSpan second = spans[Math.Max(eventOrdinal, targetOrdinal)];
+        string firstBlock = source[first.Start..first.End];
+        string secondBlock = source[second.Start..second.End];
+        return source[..first.Start] + secondBlock + firstBlock + source[second.End..];
+    }
+
     public static int GetNextPhraseNumber(string? description)
     {
         int maximum = Parse(description).Select(phrase => phrase.Number).DefaultIfEmpty(0).Max();
@@ -283,6 +352,85 @@ public static partial class BriefingTranscriptParser
 
     private static string DetectNewline(string source) =>
         source.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+
+    private static TimelineSpan GetTimelineSpan(string source, int eventOrdinal)
+    {
+        IReadOnlyList<TimelineSpan> spans = FindTimelineSpans(source);
+        if (eventOrdinal < 0 || eventOrdinal >= spans.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(eventOrdinal), "Событие брифинга больше не найдено.");
+        }
+
+        return spans[eventOrdinal];
+    }
+
+    private static IReadOnlyList<TimelineSpan> FindTimelineSpans(string source)
+    {
+        var starts = new List<int>();
+        for (var position = 0; position < source.Length;)
+        {
+            int lineStart = position;
+            while (position < source.Length && !IsLineBreak(source[position]))
+            {
+                position++;
+            }
+
+            if (TryParseDirective(source[lineStart..position], out _, out _))
+            {
+                starts.Add(lineStart);
+            }
+
+            if (position < source.Length && source[position] == '\r')
+            {
+                position++;
+            }
+
+            if (position < source.Length && source[position] == '\n')
+            {
+                position++;
+            }
+        }
+
+        var result = new TimelineSpan[starts.Count];
+        for (var index = 0; index < starts.Count; index++)
+        {
+            result[index] = new(starts[index], index + 1 < starts.Count ? starts[index + 1] : source.Length);
+        }
+
+        return result;
+    }
+
+    private static bool IsLineBreak(char value) => value is '\r' or '\n';
+
+    private static string BuildTimelineEvent(
+        BriefingEventKind kind,
+        string arguments,
+        int phraseNumber,
+        string speaker,
+        string text,
+        string newline)
+    {
+        if (kind == BriefingEventKind.Phrase)
+        {
+            ValidatePhrase(phraseNumber, speaker, text);
+            return $"#phrase {speaker.Trim()} {phraseNumber}" + newline +
+                   string.Join(newline, NormalizeTextLines(text.Trim()));
+        }
+
+        string directive = kind switch
+        {
+            BriefingEventKind.Camera => "CAMERA",
+            BriefingEventKind.Animation => "ANIMATION",
+            BriefingEventKind.Thought => "NOLIPS",
+            BriefingEventKind.Show => "show",
+            BriefingEventKind.Hide => "hide",
+            BriefingEventKind.Description => "DESC",
+            _ => throw new ArgumentException("Добавление этой служебной команды пока не поддерживается.", nameof(kind)),
+        };
+        string normalizedArguments = NormalizeDirectiveArguments(kind, arguments);
+        return "#" + directive +
+               (normalizedArguments.Length == 0 ? string.Empty : " " + normalizedArguments);
+    }
 
     private static int FindDirectiveEnd(IReadOnlyList<string> lines, int directiveIndex)
     {
@@ -469,4 +617,6 @@ public static partial class BriefingTranscriptParser
             _previousLineEndedWithWhitespace = line.Length > 0 && char.IsWhiteSpace(line[^1]);
         }
     }
+
+    private readonly record struct TimelineSpan(int Start, int End);
 }

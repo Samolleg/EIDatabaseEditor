@@ -1266,6 +1266,58 @@ internal static class Program
                 throw new InvalidOperationException("Undo должен полностью вернуть BRIEFING после правки камеры.");
             }
 
+            viewModel.SelectedBriefingPhrase = briefingWithSound.BriefingPhrases.First(briefingEvent =>
+                briefingEvent.Kind == BriefingEventKind.Camera);
+            int originalEventCount = briefingWithSound.BriefingEventCount;
+            int originalCameraOrdinal = viewModel.SelectedBriefingPhrase.EventOrdinal;
+            if (!viewModel.AddBriefingEventCommand.CanExecute("Camera"))
+            {
+                throw new InvalidOperationException("После выбранного шага должно быть можно добавить новое событие камеры.");
+            }
+
+            viewModel.AddBriefingEventCommand.Execute("Camera");
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            string insertedEventDescription = briefingText.Description;
+            if (briefingWithSound.BriefingEventCount != originalEventCount + 1 ||
+                viewModel.SelectedBriefingPhrase?.Kind != BriefingEventKind.Camera ||
+                viewModel.SelectedBriefingPhrase.EventOrdinal != originalCameraOrdinal + 1 ||
+                viewModel.SelectedBriefingPhrase.Arguments != "1" ||
+                !viewModel.MoveBriefingEventUpCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException(
+                    "Новое сценарное событие должно появляться сразу после выбранного и оставаться выбранным для правки.");
+            }
+
+            viewModel.MoveBriefingEventUpCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            string movedEventDescription = briefingText.Description;
+            if (movedEventDescription == insertedEventDescription ||
+                viewModel.SelectedBriefingPhrase?.Kind != BriefingEventKind.Camera ||
+                viewModel.SelectedBriefingPhrase.EventOrdinal != originalCameraOrdinal ||
+                !viewModel.DeleteBriefingEventCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException(
+                    "Кнопка «Выше» должна переставлять целый выбранный блок и сохранять выбор события.");
+            }
+
+            viewModel.DeleteBriefingEventCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (briefingWithSound.BriefingEventCount != originalEventCount)
+            {
+                throw new InvalidOperationException("Удаление должно убирать ровно одно выбранное событие.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            viewModel.UndoCommand.Execute(null);
+            viewModel.UndoCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (briefingText.Description != originalBriefingDescription ||
+                briefingWithSound.BriefingEventCount != originalEventCount)
+            {
+                throw new InvalidOperationException(
+                    "Три Undo должны точно вернуть исходный BRIEFING после удаления, перемещения и добавления события.");
+            }
+
             viewModel.SelectTableCommand.Execute(acks);
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         }

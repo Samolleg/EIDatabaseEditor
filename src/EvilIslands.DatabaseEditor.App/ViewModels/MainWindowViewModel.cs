@@ -36,6 +36,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _briefingDraftArguments = string.Empty;
     private int _briefingDraftNumber;
     private bool _isNewBriefingPhrase;
+    private int? _newBriefingInsertAfterOrdinal;
     private int? _pendingBriefingPhraseNumber;
     private int? _pendingBriefingEventOrdinal;
     private string _searchText = string.Empty;
@@ -127,6 +128,21 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         NewBriefingPhraseCommand = new RelayCommand(
             BeginNewBriefingPhrase,
             () => IsBriefingsTable && SelectedRecord is not null && HasTextsDocument && !IsBusy);
+        AddBriefingEventCommand = new RelayCommand<string>(
+            AddBriefingEvent,
+            kind => IsBriefingsTable && SelectedRecord is not null &&
+                    GetSelectedBriefingText() is not null &&
+                    TryParseBriefingEventKind(kind, out _) && !IsBusy);
+        DeleteBriefingEventCommand = new RelayCommand(
+            DeleteBriefingEvent,
+            () => IsBriefingsTable && SelectedBriefingPhrase is not null &&
+                  !IsNewBriefingPhrase && !IsBusy);
+        MoveBriefingEventUpCommand = new RelayCommand(
+            () => ReorderBriefingEvent(-1),
+            () => CanReorderBriefingEvent(-1));
+        MoveBriefingEventDownCommand = new RelayCommand(
+            () => ReorderBriefingEvent(1),
+            () => CanReorderBriefingEvent(1));
         ApplyBriefingPhraseCommand = new RelayCommand(
             ApplyBriefingPhrase,
             () => IsBriefingsTable && SelectedRecord is not null &&
@@ -227,6 +243,14 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand NavigateToDiagnosticCommand { get; }
 
     public ICommand NewBriefingPhraseCommand { get; }
+
+    public ICommand AddBriefingEventCommand { get; }
+
+    public ICommand DeleteBriefingEventCommand { get; }
+
+    public ICommand MoveBriefingEventUpCommand { get; }
+
+    public ICommand MoveBriefingEventDownCommand { get; }
 
     public ICommand ApplyBriefingPhraseCommand { get; }
 
@@ -448,6 +472,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (value is not null)
             {
                 _isNewBriefingPhrase = false;
+                _newBriefingInsertAfterOrdinal = null;
                 BriefingDraftNumber = value.Number;
                 BriefingDraftSpeaker = value.Speaker;
                 BriefingDraftText = value.Text;
@@ -1245,6 +1270,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        _newBriefingInsertAfterOrdinal = SelectedBriefingPhrase?.EventOrdinal;
         _isNewBriefingPhrase = true;
         _selectedBriefingPhrase = null;
         OnPropertyChanged(nameof(SelectedBriefingPhrase));
@@ -1283,11 +1309,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             bool isNewPhrase = IsNewBriefingPhrase;
             BriefingPhraseViewModel? selected = SelectedBriefingPhrase;
             string updated = isNewPhrase
-                ? BriefingTranscriptParser.UpdatePhrase(
+                ? BriefingTranscriptParser.InsertTimelineEvent(
                     text.Description,
-                    number,
-                    BriefingDraftSpeaker,
-                    BriefingDraftText)
+                    _newBriefingInsertAfterOrdinal,
+                    BriefingEventKind.Phrase,
+                    phraseNumber: number,
+                    speaker: BriefingDraftSpeaker,
+                    text: BriefingDraftText)
                 : BriefingTranscriptParser.UpdateTimelineEvent(
                     text.Description,
                     selected?.EventOrdinal ?? throw new InvalidOperationException("Выберите событие брифинга."),
@@ -1297,7 +1325,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                     BriefingDraftText);
             if (isNewPhrase)
             {
-                _pendingBriefingPhraseNumber = number;
+                _pendingBriefingEventOrdinal = _newBriefingInsertAfterOrdinal is int afterOrdinal
+                    ? afterOrdinal + 1
+                    : BriefingTranscriptParser.ParseTimeline(updated).Count - 1;
             }
             else
             {
@@ -1309,11 +1339,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             {
                 _pendingBriefingPhraseNumber = null;
                 _pendingBriefingEventOrdinal = null;
+                _newBriefingInsertAfterOrdinal = null;
                 ShowError(text.ErrorMessage ?? "Не удалось обновить реплику.");
                 return;
             }
 
             _isNewBriefingPhrase = false;
+            _newBriefingInsertAfterOrdinal = null;
             OnPropertyChanged(nameof(IsNewBriefingPhrase));
             OnPropertyChanged(nameof(IsPhraseBriefingEditor));
             OnPropertyChanged(nameof(IsCommandBriefingEditor));
@@ -1327,9 +1359,156 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             _pendingBriefingPhraseNumber = null;
             _pendingBriefingEventOrdinal = null;
+            _newBriefingInsertAfterOrdinal = null;
             ShowError(UnwrapMessage(exception));
         }
     }
+
+    private void AddBriefingEvent(string? kindName)
+    {
+        LocalizationEntryViewModel? text = GetSelectedBriefingText();
+        if (text is null || !TryParseBriefingEventKind(kindName, out BriefingEventKind kind))
+        {
+            ShowError("Для выбранного брифинга не найден связанный текст или неизвестен тип нового события.");
+            return;
+        }
+
+        int? afterOrdinal = SelectedBriefingPhrase?.EventOrdinal;
+        try
+        {
+            ShowOnlyBriefingProblems = false;
+            string arguments = kind switch
+            {
+                BriefingEventKind.Camera => "1",
+                BriefingEventKind.Animation => "0",
+                BriefingEventKind.Show => "Hero 0",
+                BriefingEventKind.Hide => "Hero",
+                BriefingEventKind.Description => "+",
+                _ => string.Empty,
+            };
+            string updated = BriefingTranscriptParser.InsertTimelineEvent(
+                text.Description,
+                afterOrdinal,
+                kind,
+                arguments);
+            _pendingBriefingEventOrdinal = afterOrdinal is int selectedOrdinal
+                ? selectedOrdinal + 1
+                : BriefingTranscriptParser.ParseTimeline(updated).Count - 1;
+            text.Description = updated;
+            if (text.HasError)
+            {
+                _pendingBriefingEventOrdinal = null;
+                ShowError(text.ErrorMessage ?? "Не удалось добавить событие.");
+                return;
+            }
+
+            StatusText = $"Добавлено событие «{GetBriefingEventKindTitle(kind)}» после выбранного шага. При необходимости измените параметры справа.";
+            RaiseBriefingCommandStates();
+        }
+        catch (Exception exception)
+        {
+            _pendingBriefingEventOrdinal = null;
+            ShowError(UnwrapMessage(exception));
+        }
+    }
+
+    private void DeleteBriefingEvent()
+    {
+        LocalizationEntryViewModel? text = GetSelectedBriefingText();
+        BriefingPhraseViewModel? selected = SelectedBriefingPhrase;
+        if (text is null || selected is null)
+        {
+            return;
+        }
+
+        try
+        {
+            int eventCount = BriefingTranscriptParser.ParseTimeline(text.Description).Count;
+            int nextOrdinal = Math.Min(selected.EventOrdinal, eventCount - 2);
+            _pendingBriefingEventOrdinal = nextOrdinal >= 0 ? nextOrdinal : null;
+            string updated = BriefingTranscriptParser.RemoveTimelineEvent(
+                text.Description,
+                selected.EventOrdinal);
+            text.Description = updated;
+            if (text.HasError)
+            {
+                _pendingBriefingEventOrdinal = null;
+                ShowError(text.ErrorMessage ?? "Не удалось удалить событие.");
+                return;
+            }
+
+            StatusText = $"Удалено событие «{selected.DisplayTitle}». Ctrl+Z вернёт его вместе с исходным текстом.";
+            RaiseBriefingCommandStates();
+        }
+        catch (Exception exception)
+        {
+            _pendingBriefingEventOrdinal = null;
+            ShowError(UnwrapMessage(exception));
+        }
+    }
+
+    private bool CanReorderBriefingEvent(int delta)
+    {
+        int ordinal = SelectedBriefingPhrase?.EventOrdinal ?? -1;
+        int count = SelectedRecord?.BriefingEventCount ?? 0;
+        int target = ordinal + delta;
+        return IsBriefingsTable && !IsNewBriefingPhrase && !IsBusy &&
+               ordinal >= 0 && target >= 0 && target < count;
+    }
+
+    private void ReorderBriefingEvent(int delta)
+    {
+        LocalizationEntryViewModel? text = GetSelectedBriefingText();
+        BriefingPhraseViewModel? selected = SelectedBriefingPhrase;
+        if (text is null || selected is null)
+        {
+            return;
+        }
+
+        try
+        {
+            int targetOrdinal = selected.EventOrdinal + delta;
+            string updated = BriefingTranscriptParser.MoveTimelineEvent(
+                text.Description,
+                selected.EventOrdinal,
+                delta);
+            _pendingBriefingEventOrdinal = targetOrdinal;
+            text.Description = updated;
+            if (text.HasError)
+            {
+                _pendingBriefingEventOrdinal = null;
+                ShowError(text.ErrorMessage ?? "Не удалось переместить событие.");
+                return;
+            }
+
+            StatusText = delta < 0
+                ? $"Событие «{selected.DisplayTitle}» перемещено на один шаг выше."
+                : $"Событие «{selected.DisplayTitle}» перемещено на один шаг ниже.";
+            RaiseBriefingCommandStates();
+        }
+        catch (Exception exception)
+        {
+            _pendingBriefingEventOrdinal = null;
+            ShowError(UnwrapMessage(exception));
+        }
+    }
+
+    private static bool TryParseBriefingEventKind(string? value, out BriefingEventKind kind) =>
+        Enum.TryParse(value, ignoreCase: true, out kind) &&
+        kind is BriefingEventKind.Camera or BriefingEventKind.Animation or
+            BriefingEventKind.Thought or BriefingEventKind.Show or
+            BriefingEventKind.Hide or BriefingEventKind.Description;
+
+    private static string GetBriefingEventKindTitle(BriefingEventKind kind) => kind switch
+    {
+        BriefingEventKind.Camera => "Камера",
+        BriefingEventKind.Animation => "Анимация",
+        BriefingEventKind.Thought => "Мысль",
+        BriefingEventKind.Show => "Появление участника",
+        BriefingEventKind.Hide => "Скрытие участника",
+        BriefingEventKind.Description => "Режиссёрская пометка",
+        _ => "Событие",
+    };
 
     private LocalizationEntryViewModel? GetSelectedBriefingText() =>
         SelectedRecord?.RelatedTexts.FirstOrDefault(text =>
@@ -1409,6 +1588,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RaiseBriefingCommandStates()
     {
         (NewBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (AddBriefingEventCommand as RelayCommand<string>)?.RaiseCanExecuteChanged();
+        (DeleteBriefingEventCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (MoveBriefingEventUpCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (MoveBriefingEventDownCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (ApplyBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (PreviousBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (NextBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();

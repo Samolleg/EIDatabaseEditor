@@ -461,6 +461,58 @@ internal static class Program
             updatedTimelineProbe.Contains("#NOLIPS", StringComparison.Ordinal),
             "Редактор события меняет только выбранную камеру и не повреждает соседние команды и реплики.");
 
+        string insertedTimelineProbe = BriefingTranscriptParser.InsertTimelineEvent(
+            timelineProbe,
+            timelineEvents[3].Ordinal,
+            BriefingEventKind.Camera,
+            "12 35 7 2");
+        BriefingTimelineEvent[] insertedTimeline = BriefingTranscriptParser.ParseTimeline(insertedTimelineProbe).ToArray();
+        log.Assert(
+            insertedTimeline.Length == timelineEvents.Length + 1 &&
+            insertedTimeline[4].Kind == BriefingEventKind.Camera &&
+            insertedTimeline[4].Arguments == "12 35 7 2" &&
+            insertedTimeline[5].IsPhrase &&
+            insertedTimeline[5].Text == "Мысль героя",
+            "Новое событие вставляется сразу после выбранного шага, не повреждая следующую реплику.");
+
+        string movedTimelineProbe = BriefingTranscriptParser.MoveTimelineEvent(
+            insertedTimelineProbe,
+            insertedTimeline[4].Ordinal,
+            1);
+        BriefingTimelineEvent[] movedTimeline = BriefingTranscriptParser.ParseTimeline(movedTimelineProbe).ToArray();
+        log.Assert(
+            movedTimeline[4].IsPhrase &&
+            movedTimeline[4].Text == "Мысль героя" &&
+            movedTimeline[5].Kind == BriefingEventKind.Camera &&
+            movedTimeline[5].Arguments == "12 35 7 2",
+            "Перемещение меняет местами целые соседние блоки и сохраняет текст реплики.");
+
+        string removedTimelineProbe = BriefingTranscriptParser.RemoveTimelineEvent(
+            movedTimelineProbe,
+            movedTimeline[5].Ordinal);
+        BriefingTimelineEvent[] removedTimeline = BriefingTranscriptParser.ParseTimeline(removedTimelineProbe).ToArray();
+        log.Assert(
+            removedTimeline.Select(briefingEvent => briefingEvent.Kind).SequenceEqual(
+                timelineEvents.Select(briefingEvent => briefingEvent.Kind)) &&
+            removedTimeline[4].Text == "Мысль героя" &&
+            removedTimeline[6].Text == "Ответ шерифа",
+            "Удаление убирает только выбранное событие и возвращает исходную сценарную последовательность.");
+
+        string insertedPhraseProbe = BriefingTranscriptParser.InsertTimelineEvent(
+            timelineProbe,
+            timelineEvents[5].Ordinal,
+            BriefingEventKind.Phrase,
+            phraseNumber: 3,
+            speaker: "Hero",
+            text: "Новая реплика");
+        BriefingTimelineEvent[] insertedPhraseTimeline = BriefingTranscriptParser.ParseTimeline(insertedPhraseProbe).ToArray();
+        log.Assert(
+            insertedPhraseTimeline[6].IsPhrase &&
+            insertedPhraseTimeline[6].PhraseNumber == 3 &&
+            insertedPhraseTimeline[6].Text == "Новая реплика" &&
+            insertedPhraseTimeline[7].PhraseNumber == 2,
+            "Новая реплика вставляется в выбранное место сценария, а не только в конец BRIEFING-ресурса.");
+
         SoundResourceInfo extractionProbe = catalog.Resources
             .Where(resource => resource.Length > 0)
             .OrderBy(resource => resource.Length)
