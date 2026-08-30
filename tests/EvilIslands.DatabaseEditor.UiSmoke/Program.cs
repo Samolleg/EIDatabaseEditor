@@ -125,6 +125,15 @@ internal static class Program
                 "Выбранная DataGridCell должна иметь отдельный видимый Excel-подобный фон.");
         }
 
+        var gridStyle = (Style)application.Resources[typeof(DataGrid)];
+        Setter? deferredScrollingSetter = gridStyle.Setters.OfType<Setter>()
+            .FirstOrDefault(setter => setter.Property == ScrollViewer.IsDeferredScrollingEnabledProperty);
+        if (!Equals(deferredScrollingSetter?.Value, false))
+        {
+            throw new InvalidOperationException(
+                "Общий стиль таблиц обязан обновлять содержимое во время перетаскивания полосы прокрутки.");
+        }
+
     }
 
     private static void VerifyBranding(MainWindow window)
@@ -274,6 +283,7 @@ internal static class Program
 
         if (grid.AutoGenerateColumns || grid.IsReadOnly ||
             !grid.EnableRowVirtualization || !grid.EnableColumnVirtualization ||
+            ScrollViewer.GetIsDeferredScrollingEnabled(grid) ||
             !grid.CanUserResizeColumns || grid.CanUserReorderColumns ||
             grid.SelectionUnit != DataGridSelectionUnit.CellOrRowHeader ||
             grid.SelectionMode != DataGridSelectionMode.Extended ||

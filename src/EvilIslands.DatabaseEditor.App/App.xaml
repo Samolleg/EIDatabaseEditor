@@ -274,7 +274,7 @@
                 <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
                 <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling" />
                 <Setter Property="ScrollViewer.CanContentScroll" Value="True" />
-                <Setter Property="ScrollViewer.IsDeferredScrollingEnabled" Value="True" />
+                <Setter Property="ScrollViewer.IsDeferredScrollingEnabled" Value="False" />
                 <Setter Property="SelectionMode" Value="Single" />
                 <Setter Property="SelectionUnit" Value="FullRow" />
                 <Setter Property="RowHeight" Value="38" />
