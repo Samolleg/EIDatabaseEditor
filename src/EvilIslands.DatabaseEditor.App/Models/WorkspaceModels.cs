@@ -708,6 +708,8 @@ internal sealed class RecordRowViewModel : ObservableObject
 
     public bool CanEditPrimaryLocalization => _primaryText is not null;
 
+    internal LocalizationEntryViewModel? PrimaryLocalization => _primaryText;
+
     internal string? PrimaryLocalizationErrorMessage => _primaryText?.ErrorMessage;
 
     public bool HasMissingLocalization => MissingLocalizationCount > 0;

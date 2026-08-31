@@ -1164,6 +1164,82 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    internal async Task<SavePairCopyResult?> SaveRecoveryCopyPathAsync(string targetPath)
+    {
+        if (_workspace is null || !HasUnsavedWork || IsBusy)
+        {
+            return null;
+        }
+
+        IsBusy = true;
+        IsOperationCancelable = false;
+        BusyText = "Создание аварийной копии…";
+        try
+        {
+            SavePairCopyResult result = await _service.SaveCopyAsync(
+                Path.GetFullPath(targetPath),
+                CancellationToken.None);
+            StatusText = $"Аварийная копия обновлена: {DateTime.Now:HH:mm:ss}";
+            return result;
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Не удалось создать аварийную копию: {UnwrapMessage(exception)}");
+            return null;
+        }
+        finally
+        {
+            IsBusy = false;
+            BusyText = string.Empty;
+        }
+    }
+
+    internal void ReportRecoveryOpened(RecoverySnapshot snapshot)
+    {
+        NotificationIsError = false;
+        NotificationMessage = snapshot.PendingSoundAssetPath is null
+            ? "Открыта аварийная копия database.res + texts.res. Сохраните её под нужным именем после проверки."
+            : "Открыта аварийная копия database.res + texts.res; импортированный звук также сохранён рядом с копией.";
+        StatusText = $"Восстановлена аварийная копия от {snapshot.CreatedUtc.ToLocalTime():g}.";
+    }
+
+    internal async Task<bool> RestorePendingSoundRecoveryAsync(RecoverySnapshot snapshot)
+    {
+        if (string.IsNullOrWhiteSpace(snapshot.PendingSoundAssetPath))
+        {
+            return true;
+        }
+
+        if (!File.Exists(snapshot.PendingSoundAssetPath) ||
+            string.IsNullOrWhiteSpace(snapshot.PendingSoundArchivePath) ||
+            !File.Exists(snapshot.PendingSoundArchivePath) ||
+            string.IsNullOrWhiteSpace(snapshot.PendingSoundSceneKey) ||
+            snapshot.PendingSoundPhraseNumber is not int phraseNumber)
+        {
+            return false;
+        }
+
+        await AttachSoundPathsAsync([snapshot.PendingSoundArchivePath]);
+        DatabaseTableViewModel? table = Databases
+            .SelectMany(database => database.Tables)
+            .FirstOrDefault(candidate => candidate.Key.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase));
+        RecordRowViewModel? record = table?.Records.FirstOrDefault(candidate =>
+            candidate.IdentityValue.Equals(snapshot.PendingSoundSceneKey, StringComparison.OrdinalIgnoreCase) ||
+            candidate.DisplayName.Equals(snapshot.PendingSoundSceneKey, StringComparison.OrdinalIgnoreCase));
+        BriefingPhraseViewModel? phrase = record?.BriefingPhrases.FirstOrDefault(candidate =>
+            candidate.IsPhrase && candidate.Number == phraseNumber);
+        if (table is null || record is null || phrase is null)
+        {
+            return false;
+        }
+
+        SelectTableCommand.Execute(table);
+        SelectedRecord = record;
+        SelectedBriefingPhrase = phrase;
+        await ImportBriefingAudioPathAsync(snapshot.PendingSoundAssetPath);
+        return PendingSoundEdit is not null;
+    }
+
     public async Task SaveCurrentAsync(bool allowGameInstallationPath)
     {
         if (_workspace is null || !HasChanges || IsBusy)
@@ -2042,6 +2118,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (_isApplyingSpreadsheetPaste)
+        {
+            return;
+        }
+
         _undo.Push(new TextEditFrame(entry, eventArgs.BeforeState, eventArgs.AfterState));
         _redo.Clear();
         RefreshLocalizationChanges(entry);
@@ -2067,35 +2148,58 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         if (cells.Count == 0)
         {
-            error = "В буфере обмена нет табличных значений.";
-            ShowError(error);
-            return false;
+            StatusText = "Вставка не требуется: служебные значения уже совпадают с таблицей.";
+            return true;
         }
 
         var seen = new HashSet<(
             RecordRowViewModel Record,
             int FieldId,
             DatabaseFieldProjectionKind? ProjectionKind,
-            int ProjectionIndex)>();
+            int ProjectionIndex,
+            SpreadsheetPasteTarget Target)>();
         var pending = new List<(
             RecordRowViewModel Record,
             RecordFieldViewModel Field,
             DatabaseFieldProjection? Projection,
             string Value,
             DatabaseFieldState BeforeState)>();
+        var pendingTexts = new List<(
+            RecordRowViewModel Record,
+            LocalizationEntryViewModel Entry,
+            SpreadsheetPasteTarget Target,
+            string Value)>();
+        var textBeforeStates = new Dictionary<LocalizationEntryViewModel, TextResourceState>();
         foreach (SpreadsheetPasteCell cell in cells)
         {
             var identity = (
                 cell.Record,
                 cell.FieldId,
                 cell.Projection?.Kind,
-                cell.Projection?.Index ?? -1);
+                cell.Projection?.Index ?? -1,
+                cell.Target);
             if (!SelectedTable.Records.Any(record => ReferenceEquals(record, cell.Record)) ||
                 !seen.Add(identity))
             {
                 error = "Диапазон вставки содержит неизвестную или повторяющуюся ячейку.";
                 ShowError(error);
                 return false;
+            }
+
+            if (cell.Target is SpreadsheetPasteTarget.LocalizationTitle or
+                SpreadsheetPasteTarget.LocalizationDescription)
+            {
+                LocalizationEntryViewModel? entry = cell.Record.PrimaryLocalization;
+                if (entry is null)
+                {
+                    error = $"Для строки «{cell.Record.DisplayName}» нет редактируемой записи texts.res.";
+                    ShowError(error);
+                    return false;
+                }
+
+                textBeforeStates.TryAdd(entry, entry.CaptureState());
+                pendingTexts.Add((cell.Record, entry, cell.Target, cell.Value));
+                continue;
             }
 
             RecordFieldViewModel? field = cell.Record.GetCell(cell.FieldId);
@@ -2113,6 +2217,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         var edits = new List<FieldEditFrame>(pending.Count);
+        var changedTextTargets = new HashSet<(LocalizationEntryViewModel Entry, SpreadsheetPasteTarget Target)>();
         _isApplyingSpreadsheetPaste = true;
         try
         {
@@ -2143,6 +2248,32 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                     edits.Add(new FieldEditFrame(item.Record, item.Field, item.BeforeState, afterState));
                 }
             }
+
+            foreach (var item in pendingTexts)
+            {
+                string beforeValue = item.Target == SpreadsheetPasteTarget.LocalizationTitle
+                    ? item.Entry.Title
+                    : item.Entry.Description;
+                if (item.Target == SpreadsheetPasteTarget.LocalizationTitle)
+                {
+                    item.Entry.Title = item.Value;
+                }
+                else
+                {
+                    item.Entry.Description = item.Value;
+                }
+
+                if (item.Entry.HasError)
+                {
+                    throw new InvalidOperationException(
+                        $"{item.Record.DisplayName} · {(item.Target == SpreadsheetPasteTarget.LocalizationTitle ? "Название RU" : "Описание RU")}: {item.Entry.ErrorMessage}");
+                }
+
+                if (!string.Equals(beforeValue, item.Value, StringComparison.Ordinal))
+                {
+                    changedTextTargets.Add((item.Entry, item.Target));
+                }
+            }
         }
         catch (Exception exception)
         {
@@ -2151,7 +2282,17 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 item.Field.RestoreState(item.BeforeState);
             }
 
+            foreach ((LocalizationEntryViewModel entry, TextResourceState state) in textBeforeStates)
+            {
+                entry.RestoreState(state);
+            }
+
             RefreshChangedFields(pending.Select(item => (item.Record, item.Field)));
+            foreach (LocalizationEntryViewModel entry in textBeforeStates.Keys)
+            {
+                RefreshLocalizationOwners(entry);
+            }
+            RefreshViewsAfterLocalizationEdit();
             error = $"Вставка отменена без частичных изменений: {UnwrapMessage(exception)}";
             ShowError(error);
             return false;
@@ -2161,13 +2302,26 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             _isApplyingSpreadsheetPaste = false;
         }
 
-        if (edits.Count == 0)
+        TextEditFrame[] textEdits = textBeforeStates
+            .Select(pair => new TextEditFrame(pair.Key, pair.Value, pair.Key.CaptureState()))
+            .Where(edit => !edit.BeforeState.IsEquivalentTo(edit.AfterState))
+            .ToArray();
+        if (edits.Count == 0 && textEdits.Length == 0)
         {
             StatusText = "Вставленные значения уже совпадают с содержимым выбранных ячеек.";
             return true;
         }
 
         RefreshChangedFields(edits.Select(edit => (edit.Record, edit.Field)));
+        foreach (TextEditFrame textEdit in textEdits)
+        {
+            RefreshLocalizationChanges(textEdit.Entry);
+            RefreshLocalizationOwners(textEdit.Entry);
+        }
+        if (textEdits.Length > 0)
+        {
+            RefreshViewsAfterLocalizationEdit();
+        }
         var automaticTexts = new List<LocalizationEntryViewModel>();
         try
         {
@@ -2190,26 +2344,42 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 item.Field.RestoreState(item.BeforeState);
             }
 
+            foreach ((LocalizationEntryViewModel entry, TextResourceState state) in textBeforeStates)
+            {
+                entry.RestoreState(state);
+                RefreshLocalizationChanges(entry);
+                RefreshLocalizationOwners(entry);
+            }
+
             RefreshChangedFields(pending.Select(item => (item.Record, item.Field)));
+            RefreshViewsAfterLocalizationEdit();
             error = $"Вставка отменена без частичных изменений: {UnwrapMessage(exception)}";
             ShowError(error);
             return false;
         }
 
-        WorkspaceEditFrame fieldFrame = edits.Count == 1 ? edits[0] : new FieldBatchEditFrame(edits.ToArray());
-        WorkspaceEditFrame pasteFrame = automaticTexts.Count == 0
-            ? fieldFrame
+        var pasteFrames = new List<WorkspaceEditFrame>();
+        if (edits.Count > 0)
+        {
+            pasteFrames.Add(edits.Count == 1 ? edits[0] : new FieldBatchEditFrame(edits.ToArray()));
+        }
+        pasteFrames.AddRange(textEdits);
+        if (automaticTexts.Count > 0)
+        {
+            pasteFrames.Add(new TextPresenceBatchEditFrame(automaticTexts, BeforePresent: false, AfterPresent: true));
+        }
+
+        int totalChangedCells = edits.Count + changedTextTargets.Count;
+        WorkspaceEditFrame pasteFrame = pasteFrames.Count == 1
+            ? pasteFrames[0]
             : new CompositeEditFrame(
-                [
-                    fieldFrame,
-                    new TextPresenceBatchEditFrame(automaticTexts, BeforePresent: false, AfterPresent: true),
-                ],
-                $"Отменена вставка и автотексты: {edits.Count:N0} ячеек.",
-                $"Повторена вставка и автотексты: {edits.Count:N0} ячеек.");
+                pasteFrames,
+                $"Отменена вставка: {totalChangedCells:N0} ячеек.",
+                $"Повторена вставка: {totalChangedCells:N0} ячеек.");
         _undo.Push(pasteFrame);
         _redo.Clear();
         RefreshValidationDeferred();
-        changedCellCount = edits.Count;
+        changedCellCount = totalChangedCells;
         StatusText = automaticTexts.Count == 0
             ? $"Вставлено из буфера: {changedCellCount:N0} ячеек."
             : $"Вставлено ячеек: {changedCellCount:N0}; создано записей texts.res: {automaticTexts.Count:N0}.";

@@ -57,6 +57,7 @@ internal static class Program
             VerifyNavigationRequery(application);
             VerifyDatabaseTableNavigation();
             VerifyPreferencesStore();
+            VerifyRecoverySnapshotStore();
             if (args.Length > 0)
             {
                 string? screenshotPath = args.Length > 1 ? args[1] : null;
@@ -461,6 +462,61 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Обновление последней папки не должно стирать сохранённые ширины таблиц.");
+        }
+
+        Directory.Delete(root, recursive: true);
+    }
+
+    private static void VerifyRecoverySnapshotStore()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "EI-Database-Studio-UiSmoke", "recovery-" + Guid.NewGuid().ToString("N"));
+        string sourceDirectory = Path.Combine(root, "source");
+        string recoveryDirectory = Path.Combine(root, "recovery");
+        Directory.CreateDirectory(sourceDirectory);
+        string sourcePath = Path.Combine(sourceDirectory, "database.res");
+        File.WriteAllBytes(sourcePath, [1, 2, 3, 4]);
+        var store = new RecoverySnapshotStore(recoveryDirectory);
+        RecoverySnapshot? latest = null;
+        for (var index = 0; index < 3; index++)
+        {
+            RecoverySnapshotDraft draft = store.Prepare(sourcePath);
+            File.WriteAllBytes(draft.DatabasePath, [(byte)index, 7, 8]);
+            string textsPath = Path.Combine(draft.DirectoryPath, "texts.res");
+            File.WriteAllBytes(textsPath, [(byte)index, 9]);
+            latest = store.Complete(
+                sourcePath,
+                draft,
+                new SavePairCopyResult(
+                    new SaveCopyResult(draft.DatabasePath, 3, $"DB{index}", true, 0),
+                    new SaveCopyResult(textsPath, 2, $"TX{index}", true, 0)),
+                pendingSound: null);
+        }
+
+        RecoverySnapshot? reopened = store.FindLatest(sourcePath);
+        int completeSnapshotCount = Directory.EnumerateFiles(recoveryDirectory, "recovery.json", SearchOption.AllDirectories).Count();
+        if (latest is null || reopened is null ||
+            !string.Equals(latest.DatabasePath, reopened.DatabasePath, StringComparison.OrdinalIgnoreCase) ||
+            completeSnapshotCount != 2)
+        {
+            throw new InvalidOperationException(
+                "Аварийное автосохранение должно открывать последнюю полную пару и хранить не более двух снимков.");
+        }
+
+        using (var stream = new FileStream(sourcePath, FileMode.Append, FileAccess.Write, FileShare.None))
+        {
+            stream.WriteByte(5);
+        }
+        if (store.FindLatest(sourcePath) is not null)
+        {
+            throw new InvalidOperationException(
+                "Аварийная копия не должна предлагаться после внешнего изменения исходного database.res.");
+        }
+
+        store.Discard(sourcePath);
+        if (Directory.Exists(recoveryDirectory) &&
+            Directory.EnumerateFiles(recoveryDirectory, "recovery.json", SearchOption.AllDirectories).Any())
+        {
+            throw new InvalidOperationException("Штатный отказ от восстановления должен удалять снимки выбранного источника.");
         }
 
         Directory.Delete(root, recursive: true);
@@ -1594,6 +1650,101 @@ internal static class Program
             throw new InvalidOperationException(
                 "Один Ctrl+Z должен полностью отменять прямоугольную вставку из Excel.");
         }
+
+        DataGridColumn materialNameGridColumn = recordsGrid.Columns.Single(column =>
+            column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
+        DataGridColumn localizationTitleGridColumn = recordsGrid.Columns.Single(column =>
+            Equals(column.Header, "Название RU"));
+        DataGridColumn rowNumberGridColumn = recordsGrid.Columns.Single(column => Equals(column.Header, "#"));
+        DataGridColumn localizationKeyGridColumn = recordsGrid.Columns.Single(column =>
+            Equals(column.Header, "Ключ texts.res"));
+        DataGridColumn localizationDescriptionGridColumn = recordsGrid.Columns.Single(column =>
+            Equals(column.Header, "Описание RU"));
+        RecordRowViewModel mixedPasteRow = materials.Records.First(record => record.CanEditPrimaryLocalization);
+        string originalMixedTitle = mixedPasteRow.LocalizationTitle;
+        string originalMixedDescription = mixedPasteRow.LocalizationDescription;
+        string originalMixedType = mixedPasteRow.GetCell(materialType.FieldId)!.EditorText;
+        string changedMixedTitle = originalMixedTitle + " Excel";
+        string changedMixedDescription = originalMixedDescription + " Вставлено из Excel.";
+        string changedMixedType = originalMixedType + "Excel";
+        IReadOnlyList<IReadOnlyList<string>> mixedExcelRow =
+        [[
+            mixedPasteRow.DisplayName,
+            changedMixedTitle,
+            mixedPasteRow.Index.ToString(CultureInfo.InvariantCulture),
+            mixedPasteRow.LocalizationKeyText,
+            changedMixedDescription,
+            changedMixedType,
+        ]];
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(mixedPasteRow, materialNameGridColumn));
+        recordsGrid.CurrentCell = new DataGridCellInfo(mixedPasteRow, materialNameGridColumn);
+        if (!window.TryBuildPasteCells(mixedExcelRow, out IReadOnlyList<SpreadsheetPasteCell> mixedCells, out string? mixedError) ||
+            mixedCells.Count != 4 ||
+            !viewModel.TryPasteSpreadsheetCells(mixedCells, out int mixedChangedCount, out mixedError) ||
+            mixedChangedCount != 3 ||
+            mixedPasteRow.LocalizationTitle != changedMixedTitle ||
+            mixedPasteRow.LocalizationDescription != changedMixedDescription ||
+            mixedPasteRow.GetCell(materialType.FieldId)!.EditorText != changedMixedType)
+        {
+            throw new InvalidOperationException(
+                $"Excel-диапазон с RU и неизменными служебными столбцами должен вставляться атомарно: {mixedError}");
+        }
+
+        string recoveryIntegrationRoot = Path.Combine(
+            Path.GetTempPath(),
+            "EI-Database-Studio-UiSmoke",
+            "recovery-integration-" + Guid.NewGuid().ToString("N"));
+        var recoveryStore = new RecoverySnapshotStore(recoveryIntegrationRoot);
+        RecoverySnapshotDraft recoveryDraft = recoveryStore.Prepare(sourcePath);
+        SavePairCopyResult? recoverySave = null;
+        RunWithDispatcher(async () =>
+            recoverySave = await viewModel.SaveRecoveryCopyPathAsync(recoveryDraft.DatabasePath));
+        if (recoverySave is null)
+        {
+            throw new InvalidOperationException(
+                $"Аварийная копия изменённых database.res/texts.res не создана: {viewModel.NotificationMessage}");
+        }
+
+        RecoverySnapshot recoverySnapshot = recoveryStore.Complete(
+            sourcePath,
+            recoveryDraft,
+            recoverySave,
+            pendingSound: null);
+        if (!File.Exists(recoverySnapshot.DatabasePath) ||
+            recoverySnapshot.TextsPath is null || !File.Exists(recoverySnapshot.TextsPath) ||
+            recoveryStore.FindLatest(sourcePath) is null)
+        {
+            throw new InvalidOperationException(
+                "Полная аварийная пара database.res + texts.res должна повторно обнаруживаться после записи manifest.");
+        }
+        recoveryStore.Discard(sourcePath);
+        Directory.Delete(recoveryIntegrationRoot, recursive: true);
+
+        viewModel.UndoCommand.Execute(null);
+        if (mixedPasteRow.LocalizationTitle != originalMixedTitle ||
+            mixedPasteRow.LocalizationDescription != originalMixedDescription ||
+            mixedPasteRow.GetCell(materialType.FieldId)!.EditorText != originalMixedType ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Один Undo должен одновременно отменять DB- и texts.res-ячейки смешанной Excel-вставки.");
+        }
+
+        recordsGrid.CurrentCell = new DataGridCellInfo(mixedPasteRow, rowNumberGridColumn);
+        if (window.TryBuildPasteCells(
+                [[(mixedPasteRow.Index + 1).ToString(CultureInfo.InvariantCulture)]],
+                out _,
+                out string? serviceColumnError) ||
+            string.IsNullOrWhiteSpace(serviceColumnError))
+        {
+            throw new InvalidOperationException(
+                "Изменение вычисляемого номера строки должно отклоняться до модификации модели.");
+        }
+
+        _ = localizationTitleGridColumn;
+        _ = localizationKeyGridColumn;
+        _ = localizationDescriptionGridColumn;
 
         recordsGrid.SelectedCells.Clear();
         foreach (RecordRowViewModel pasteRow in pasteRows)

@@ -116,4 +116,12 @@ internal sealed record SpreadsheetPasteCell(
     RecordRowViewModel Record,
     int FieldId,
     string Value,
-    EvilIslands.DatabaseEditor.Core.DatabaseFieldProjection? Projection = null);
+    EvilIslands.DatabaseEditor.Core.DatabaseFieldProjection? Projection = null,
+    SpreadsheetPasteTarget Target = SpreadsheetPasteTarget.DatabaseField);
+
+internal enum SpreadsheetPasteTarget
+{
+    DatabaseField,
+    LocalizationTitle,
+    LocalizationDescription,
+}

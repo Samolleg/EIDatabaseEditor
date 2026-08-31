@@ -36,6 +36,8 @@ public partial class MainWindow : Window
     private static readonly IValueConverter ProjectionConverter = new SpreadsheetProjectionConverter();
     private readonly MainWindowViewModel _viewModel;
     private readonly EditorPreferencesStore _preferences;
+    private readonly RecoverySnapshotStore _recoveryStore = new();
+    private readonly DispatcherTimer _recoveryTimer;
     private readonly Dictionary<DataGridColumn, SpreadsheetColumnViewModel> _spreadsheetColumns = [];
     private DataGridColumn? _localizationKeyColumn;
     private DataGridColumn? _localizationTitleColumn;
@@ -51,6 +53,7 @@ public partial class MainWindow : Window
     private bool _hasExplicitInterfaceScale;
     private bool _allowClose;
     private bool _closePromptPending;
+    private bool _recoverySaveRunning;
     private readonly MediaPlayer _soundPreviewPlayer = new();
     private string? _soundPreviewPath;
 
@@ -85,6 +88,50 @@ public partial class MainWindow : Window
         _viewModel.SaveRequested += ViewModel_SaveRequested;
         _viewModel.SaveCopyRequested += ViewModel_SaveCopyRequested;
         _viewModel.SearchFocusRequested += ViewModel_SearchFocusRequested;
+        _recoveryTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(30),
+        };
+        _recoveryTimer.Tick += RecoveryTimer_Tick;
+        _recoveryTimer.Start();
+    }
+
+    private async void RecoveryTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_recoverySaveRunning || !_viewModel.HasUnsavedWork || _viewModel.IsBusy || !_viewModel.HasDocument)
+        {
+            return;
+        }
+
+        _recoverySaveRunning = true;
+        RecoverySnapshotDraft? draft = null;
+        try
+        {
+            string sourcePath = _viewModel.SourcePath;
+            PendingSoundEditViewModel? pendingSound = _viewModel.PendingSoundEdit;
+            draft = _recoveryStore.Prepare(sourcePath);
+            SavePairCopyResult? result = await _viewModel.SaveRecoveryCopyPathAsync(draft.DatabasePath);
+            if (result is null)
+            {
+                _recoveryStore.Abandon(draft);
+                return;
+            }
+
+            _recoveryStore.Complete(sourcePath, draft, result, pendingSound);
+        }
+        catch (Exception exception)
+        {
+            if (draft is not null)
+            {
+                _recoveryStore.Abandon(draft);
+            }
+
+            _viewModel.ReportSpreadsheetError($"Аварийная копия не создана: {exception.Message}");
+        }
+        finally
+        {
+            _recoverySaveRunning = false;
+        }
     }
 
     private void MainWindow_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
@@ -1808,16 +1855,16 @@ public partial class MainWindow : Window
             var fillCells = new List<SpreadsheetPasteCell>(selectedTargets.Length);
             foreach (DataGridCellInfo selected in selectedTargets)
             {
-                if (!TryGetPasteColumn(selected.Column, out SpreadsheetColumnViewModel? descriptor, out error))
+                var record = (RecordRowViewModel)selected.Item;
+                if (!TryCreatePasteCell(record, selected.Column, singleValue, out SpreadsheetPasteCell? cell, out error))
                 {
                     return false;
                 }
 
-                fillCells.Add(new SpreadsheetPasteCell(
-                    (RecordRowViewModel)selected.Item,
-                    descriptor.FieldId,
-                    singleValue,
-                    descriptor.Projection));
+                if (cell is not null)
+                {
+                    fillCells.Add(cell);
+                }
             }
 
             cells = fillCells;
@@ -1837,19 +1884,19 @@ public partial class MainWindow : Window
             for (var columnOffset = 0; columnOffset < width; columnOffset++)
             {
                 DataGridColumn column = columns[anchorColumn + columnOffset];
-                if (!TryGetPasteColumn(column, out SpreadsheetColumnViewModel? descriptor, out error))
+                string value = columnOffset < matrix[rowOffset].Count
+                    ? matrix[rowOffset][columnOffset]
+                    : string.Empty;
+                RecordRowViewModel record = rows[anchorRow + rowOffset];
+                if (!TryCreatePasteCell(record, column, value, out SpreadsheetPasteCell? cell, out error))
                 {
                     return false;
                 }
 
-                string value = columnOffset < matrix[rowOffset].Count
-                    ? matrix[rowOffset][columnOffset]
-                    : string.Empty;
-                result.Add(new SpreadsheetPasteCell(
-                    rows[anchorRow + rowOffset],
-                    descriptor.FieldId,
-                    value,
-                    descriptor.Projection));
+                if (cell is not null)
+                {
+                    result.Add(cell);
+                }
             }
         }
 
@@ -1857,20 +1904,66 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private bool TryGetPasteColumn(
+    private bool TryCreatePasteCell(
+        RecordRowViewModel record,
         DataGridColumn column,
-        out SpreadsheetColumnViewModel descriptor,
+        string value,
+        out SpreadsheetPasteCell? cell,
         out string? error)
     {
-        if (!_spreadsheetColumns.TryGetValue(column, out descriptor!) ||
-            !descriptor.IsEditable)
+        if (_spreadsheetColumns.TryGetValue(column, out SpreadsheetColumnViewModel? descriptor) &&
+            descriptor.IsEditable)
         {
-            error = "Вставка возможна только в редактируемые ячейки; служебные и вычисляемые колонки доступны только для копирования.";
+            cell = new SpreadsheetPasteCell(
+                record,
+                descriptor.FieldId,
+                value,
+                descriptor.Projection);
+            error = null;
+            return true;
+        }
+
+        if (ReferenceEquals(column, _localizationTitleColumn) ||
+            ReferenceEquals(column, _localizationDescriptionColumn))
+        {
+            if (record.CanEditPrimaryLocalization)
+            {
+                cell = new SpreadsheetPasteCell(
+                    record,
+                    -1,
+                    value,
+                    null,
+                    ReferenceEquals(column, _localizationTitleColumn)
+                        ? SpreadsheetPasteTarget.LocalizationTitle
+                        : SpreadsheetPasteTarget.LocalizationDescription);
+                error = null;
+                return true;
+            }
+
+            if (string.Equals(value, GetClipboardCellText(record, column), StringComparison.Ordinal))
+            {
+                cell = null;
+                error = null;
+                return true;
+            }
+
+            cell = null;
+            error = $"Для строки «{record.DisplayName}» нет связанной записи texts.res; сначала создайте тексты.";
             return false;
         }
 
-        error = null;
-        return true;
+        if (string.Equals(value, GetClipboardCellText(record, column), StringComparison.Ordinal))
+        {
+            cell = null;
+            error = null;
+            return true;
+        }
+
+        cell = null;
+        string columnName = column.Header?.ToString() ?? "служебный столбец";
+        error = $"Столбец «{columnName}» вычисляется редактором и не может быть изменён. " +
+                "Если он попал в скопированный диапазон из Excel без изменений, вставка пропустит его автоматически.";
+        return false;
     }
 
     private string GetClipboardCellText(RecordRowViewModel record, DataGridColumn column)
@@ -2000,6 +2093,7 @@ public partial class MainWindow : Window
 
     private async void ViewModel_OpenFileRequested(object? sender, EventArgs e)
     {
+        string? discardedSourcePath = null;
         if (_viewModel.HasUnsavedWork)
         {
             var discardDialog = new ConfirmDialog(
@@ -2016,6 +2110,8 @@ public partial class MainWindow : Window
             {
                 return;
             }
+
+            discardedSourcePath = _viewModel.SourcePath;
         }
 
         var dialog = new OpenFileDialog
@@ -2038,7 +2134,51 @@ public partial class MainWindow : Window
                     Path.GetFullPath(dialog.FileName),
                     StringComparison.OrdinalIgnoreCase))
             {
+                if (!string.IsNullOrWhiteSpace(discardedSourcePath))
+                {
+                    _recoveryStore.Discard(discardedSourcePath);
+                }
                 _preferences.RememberDatabasePath(dialog.FileName);
+                await OfferRecoveryAsync(dialog.FileName);
+            }
+        }
+    }
+
+    private async Task OfferRecoveryAsync(string sourcePath)
+    {
+        RecoverySnapshot? snapshot = _recoveryStore.FindLatest(sourcePath);
+        if (snapshot is null)
+        {
+            return;
+        }
+
+        var dialog = new ConfirmDialog(
+            "Найдена аварийная копия",
+            $"Есть автоматически сохранённая версия от {snapshot.CreatedUtc.ToLocalTime():g}.",
+            "Исходные игровые файлы не будут перезаписаны. Копия откроется отдельно; после проверки сохраните её под нужным именем.",
+            "Открыть аварийную копию",
+            "↻")
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() is not true)
+        {
+            return;
+        }
+
+        await _viewModel.OpenPathAsync(snapshot.DatabasePath);
+        if (_viewModel.HasDocument && string.Equals(
+                Path.GetFullPath(_viewModel.SourcePath),
+                Path.GetFullPath(snapshot.DatabasePath),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            bool soundRestored = await _viewModel.RestorePendingSoundRecoveryAsync(snapshot);
+            _viewModel.ReportRecoveryOpened(snapshot);
+            if (!soundRestored)
+            {
+                _viewModel.ReportSpreadsheetError(
+                    "database.res и texts.res восстановлены, но подготовленный звук не удалось автоматически вернуть. " +
+                    $"Его файл сохранён здесь: {snapshot.PendingSoundAssetPath}");
             }
         }
     }
@@ -2518,6 +2658,10 @@ public partial class MainWindow : Window
 
         if (!_viewModel.HasUnsavedWork)
         {
+            if (_viewModel.HasDocument)
+            {
+                _recoveryStore.Discard(_viewModel.SourcePath);
+            }
             DetachAndDispose();
             return;
         }
@@ -2544,6 +2688,7 @@ public partial class MainWindow : Window
 
         if (dialog.ShowDialog() is true)
         {
+            _recoveryStore.Discard(_viewModel.SourcePath);
             _allowClose = true;
             Close();
         }
@@ -2572,6 +2717,8 @@ public partial class MainWindow : Window
 
     private void DetachAndDispose()
     {
+        _recoveryTimer.Stop();
+        _recoveryTimer.Tick -= RecoveryTimer_Tick;
         DataContextChanged -= MainWindow_DataContextChanged;
         if (_spreadsheetViewModel is not null)
         {
