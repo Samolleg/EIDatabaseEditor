@@ -2060,13 +2060,14 @@
                                                                                 <Run Text="  ·  " />
                                                                                 <Run Text="{Binding PendingSoundEdit.LengthText, Mode=OneWay}" />
                                                                             </TextBlock>
-                                                                            <TextBlock Text="Исходный архив не изменён: будет создана только новая проверенная копия."
+                                                                            <TextBlock Text="Можно безопасно обновить текущий RES с .bak-копией или сохранить отдельную копию."
                                                                                        Foreground="{StaticResource SoundAccentBrush}"
                                                                                        FontSize="11"
                                                                                        Margin="0,3,0,0" />
                                                                         </StackPanel>
                                                                         <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center">
-                                                                            <Button x:Name="SavePendingSoundCopyButton" Style="{StaticResource AccentButton}" Command="{Binding SavePendingSoundCopyCommand}" Content="Сохранить копию RES…" Padding="11,6" Margin="0,0,6,0" />
+                                                                            <Button x:Name="SavePendingSoundCurrentButton" Style="{StaticResource AccentButton}" Command="{Binding SavePendingSoundCurrentCommand}" Content="Сохранить в текущий RES" Padding="11,6" Margin="0,0,6,0" />
+                                                                            <Button x:Name="SavePendingSoundCopyButton" Style="{StaticResource RoundedButton}" Command="{Binding SavePendingSoundCopyCommand}" Content="Сохранить копию…" Padding="11,6" Margin="0,0,6,0" />
                                                                             <Button x:Name="CancelPendingSoundEditButton" Style="{StaticResource RoundedButton}" Command="{Binding CancelPendingSoundEditCommand}" Content="Отменить" Padding="10,6" />
                                                                         </StackPanel>
                                                                     </Grid>

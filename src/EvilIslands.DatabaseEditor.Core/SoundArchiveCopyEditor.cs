@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace EvilIslands.DatabaseEditor.Core;
 
@@ -26,7 +27,8 @@ public sealed record SoundArchiveCopyResult(
     string ResourceName,
     bool IsReplacement,
     int ResourceCount,
-    bool ReopenedSuccessfully);
+    bool ReopenedSuccessfully,
+    string? BackupPath = null);
 
 public static class SoundArchiveCopyEditor
 {
@@ -172,6 +174,20 @@ public static class SoundArchiveCopyEditor
             CancellationToken.None);
     }
 
+    public static Task<SoundArchiveCopyResult> SaveInPlaceAsync(
+        BriefingSoundImportTarget target,
+        SoundImportAsset asset,
+        bool allowGameInstallationPath = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(asset);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(
+            () => SaveInPlace(target, asset, allowGameInstallationPath),
+            CancellationToken.None);
+    }
+
     private static SoundArchiveCopyResult SaveCopy(
         BriefingSoundImportTarget target,
         SoundImportAsset asset,
@@ -250,6 +266,7 @@ public static class SoundArchiveCopyEditor
 
             ArchiveIndex verified = OpenArchiveIndex(tempPath);
             VerifyResult(tempPath, verified, resources, target, asset);
+            VerifyUnchangedResources(source, tempPath, verified, resources);
             string outputSha256;
             using (var resultStream = File.OpenRead(tempPath))
             {
@@ -277,6 +294,127 @@ public static class SoundArchiveCopyEditor
 
             throw;
         }
+    }
+
+    private static SoundArchiveCopyResult SaveInPlace(
+        BriefingSoundImportTarget target,
+        SoundImportAsset asset,
+        bool allowGameInstallationPath)
+    {
+        string sourcePath = Path.GetFullPath(target.Archive.SourcePath);
+        EnsureSafeInPlaceTarget(sourcePath, allowGameInstallationPath);
+        ValidateResourceName(target.ResourceName);
+        ValidateAudioSignature(asset.Data.Span, asset.Format);
+
+        string directory = Path.GetDirectoryName(sourcePath)!;
+        string tempPath = Path.Combine(
+            directory,
+            $".{Path.GetFileName(sourcePath)}.partial-{Guid.NewGuid():N}");
+        string? backupPath = null;
+        try
+        {
+            using var source = new FileStream(
+                sourcePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.Read | FileShare.Delete,
+                CopyBufferSize,
+                FileOptions.SequentialScan);
+            EnsureSourceMetadataUnchanged(sourcePath, target.Archive);
+            string sourceSha256 = ComputeSha256(source);
+            ArchiveIndex sourceIndex = ReadArchiveIndex(sourcePath, source);
+            List<BuildResource> resources = BuildResources(sourceIndex, target, asset);
+
+            using (var output = new FileStream(
+                       tempPath,
+                       FileMode.CreateNew,
+                       FileAccess.ReadWrite,
+                       FileShare.None,
+                       CopyBufferSize,
+                       FileOptions.WriteThrough | FileOptions.SequentialScan))
+            {
+                WriteArchive(source, output, resources);
+                output.Flush(true);
+            }
+
+            ArchiveIndex verified = OpenArchiveIndex(tempPath);
+            VerifyResult(tempPath, verified, resources, target, asset);
+            VerifyUnchangedResources(source, tempPath, verified, resources);
+            string outputSha256 = ComputeSha256(tempPath);
+
+            EnsureSafeInPlaceTarget(sourcePath, allowGameInstallationPath);
+            EnsureSourceMetadataUnchanged(sourcePath, target.Archive);
+            if (!ComputeSha256(sourcePath).Equals(sourceSha256, StringComparison.Ordinal))
+            {
+                throw new IOException(
+                    "Исходный звуковой RES изменился после подключения. Сохранение отменено до замены файла.");
+            }
+
+            RetainNewestManagedBackupBeforeSave(sourcePath);
+            backupPath = CreateAvailableBackupPath(sourcePath);
+            CreateVerifiedBackup(source, sourceSha256, backupPath);
+            if (!ComputeSha256(sourcePath).Equals(sourceSha256, StringComparison.Ordinal))
+            {
+                throw new IOException(
+                    "Исходный звуковой RES изменился перед заменой. Сохранение отменено; проверенная backup-копия сохранена.");
+            }
+
+            File.Replace(tempPath, sourcePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            EnsureFileHash(backupPath, sourceSha256, "Резервная копия исходного звукового RES");
+            EnsureFileHash(sourcePath, outputSha256, "Сохранённый звуковой RES");
+
+            return new SoundArchiveCopyResult(
+                sourcePath,
+                new FileInfo(sourcePath).Length,
+                outputSha256,
+                target.ResourceName,
+                target.IsReplacement,
+                verified.Entries.Count,
+                true,
+                backupPath);
+        }
+        catch
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
+            throw;
+        }
+    }
+
+    private static List<BuildResource> BuildResources(
+        ArchiveIndex sourceIndex,
+        BriefingSoundImportTarget target,
+        SoundImportAsset asset)
+    {
+        BuildResource? existing = sourceIndex.Entries
+            .Where(entry => entry.Name.Equals(target.ResourceName, StringComparison.OrdinalIgnoreCase))
+            .Select(entry => new BuildResource(entry.Name, entry, null))
+            .FirstOrDefault();
+        if (target.IsReplacement && existing is null)
+        {
+            throw new IOException("Заменяемый звуковой ресурс исчез из исходного RES после подключения.");
+        }
+
+        if (!target.IsReplacement && existing is not null)
+        {
+            throw new IOException("Добавляемый звуковой ресурс уже появился в исходном RES. Переподключите каталог.");
+        }
+
+        var resources = sourceIndex.Entries
+            .OrderBy(entry => entry.Offset)
+            .Select(entry => entry.Name.Equals(target.ResourceName, StringComparison.OrdinalIgnoreCase)
+                ? new BuildResource(entry.Name, null, asset.Data)
+                : new BuildResource(entry.Name, entry, null))
+            .ToList();
+        if (!target.IsReplacement)
+        {
+            resources.Add(new BuildResource(target.ResourceName, null, asset.Data));
+        }
+
+        return resources;
     }
 
     private static void WriteArchive(
@@ -455,6 +593,55 @@ public static class SoundArchiveCopyEditor
         }
     }
 
+    private static void VerifyUnchangedResources(
+        FileStream source,
+        string rebuiltPath,
+        ArchiveIndex rebuiltIndex,
+        IReadOnlyList<BuildResource> expected)
+    {
+        Dictionary<string, ResEntry> rebuiltByName = rebuiltIndex.Entries.ToDictionary(
+            entry => entry.Name,
+            StringComparer.OrdinalIgnoreCase);
+        using var rebuilt = new FileStream(
+            rebuiltPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            CopyBufferSize,
+            FileOptions.SequentialScan);
+        byte[] sourceBuffer = new byte[CopyBufferSize];
+        byte[] rebuiltBuffer = new byte[CopyBufferSize];
+        foreach (BuildResource resource in expected)
+        {
+            if (resource.SourceEntry is not ResEntry sourceEntry || resource.ImportedData is not null)
+            {
+                continue;
+            }
+
+            ResEntry rebuiltEntry = rebuiltByName[resource.Name];
+            if (sourceEntry.Size != rebuiltEntry.Size)
+            {
+                throw new IOException($"Неизменённый ресурс '{resource.Name}' изменил размер после сборки RES.");
+            }
+
+            source.Position = sourceEntry.Offset;
+            rebuilt.Position = rebuiltEntry.Offset;
+            int remaining = sourceEntry.Size;
+            while (remaining > 0)
+            {
+                int blockSize = Math.Min(remaining, sourceBuffer.Length);
+                source.ReadExactly(sourceBuffer.AsSpan(0, blockSize));
+                rebuilt.ReadExactly(rebuiltBuffer.AsSpan(0, blockSize));
+                if (!sourceBuffer.AsSpan(0, blockSize).SequenceEqual(rebuiltBuffer.AsSpan(0, blockSize)))
+                {
+                    throw new IOException($"Неизменённый ресурс '{resource.Name}' отличается после сборки RES.");
+                }
+
+                remaining -= blockSize;
+            }
+        }
+    }
+
     private static ArchiveIndex OpenArchiveIndex(string path)
     {
         using var stream = new FileStream(
@@ -593,6 +780,177 @@ public static class SoundArchiveCopyEditor
             throw new InvalidOperationException(
                 "Путь копии звукового RES проходит через символическую ссылку или junction.");
         }
+    }
+
+    private static void EnsureSafeInPlaceTarget(string path, bool allowGameInstallationPath)
+    {
+        string fullPath = Path.GetFullPath(path);
+        string? directory = Path.GetDirectoryName(fullPath);
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory) || !File.Exists(fullPath))
+        {
+            throw new FileNotFoundException("Подключённый звуковой RES больше не существует.", fullPath);
+        }
+
+        FileAttributes attributes = File.GetAttributes(fullPath);
+        if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0 ||
+            DatabaseSafetyPolicy.ContainsReparsePoint(fullPath))
+        {
+            throw new InvalidOperationException(
+                "Путь звукового RES проходит через символическую ссылку или junction.");
+        }
+
+        if (!allowGameInstallationPath && DatabaseSafetyPolicy.IsLikelyGameInstallationPath(fullPath))
+        {
+            throw new InvalidOperationException(
+                "Прямая запись звукового RES в каталог игры требует отдельного подтверждения пользователя.");
+        }
+    }
+
+    private static void EnsureSourceMetadataUnchanged(string sourcePath, SoundArchiveInfo archive)
+    {
+        var sourceInfo = new FileInfo(sourcePath);
+        sourceInfo.Refresh();
+        if (sourceInfo.Length != archive.FileLength || sourceInfo.LastWriteTimeUtc != archive.LastWriteTimeUtc)
+        {
+            throw new IOException(
+                "Исходный звуковой RES изменился после подключения. Переподключите звуки и повторите импорт.");
+        }
+    }
+
+    private static string ComputeSha256(Stream stream)
+    {
+        stream.Position = 0;
+        string result = Convert.ToHexString(SHA256.HashData(stream));
+        stream.Position = 0;
+        return result;
+    }
+
+    private static string ComputeSha256(string path)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            CopyBufferSize,
+            FileOptions.SequentialScan);
+        return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    private static void EnsureFileHash(string path, string expectedSha256, string description)
+    {
+        if (!ComputeSha256(path).Equals(expectedSha256, StringComparison.Ordinal))
+        {
+            throw new IOException($"{description} не прошёл проверку SHA-256.");
+        }
+    }
+
+    private static void CreateVerifiedBackup(FileStream source, string sourceSha256, string backupPath)
+    {
+        source.Position = 0;
+        using (var backup = new FileStream(
+                   backupPath,
+                   FileMode.CreateNew,
+                   FileAccess.Write,
+                   FileShare.None,
+                   CopyBufferSize,
+                   FileOptions.WriteThrough | FileOptions.SequentialScan))
+        {
+            source.CopyTo(backup, CopyBufferSize);
+            backup.Flush(true);
+        }
+
+        source.Position = 0;
+        EnsureFileHash(backupPath, sourceSha256, "Резервная копия исходного звукового RES");
+    }
+
+    private static string CreateAvailableBackupPath(string sourcePath)
+    {
+        string basePath = sourcePath + ".bak";
+        if (!File.Exists(basePath) && !Directory.Exists(basePath))
+        {
+            return basePath;
+        }
+
+        string timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        for (var suffix = 0; suffix < 1000; suffix++)
+        {
+            string candidate = suffix == 0
+                ? $"{basePath}.{timestamp}"
+                : $"{basePath}.{timestamp}-{suffix:D3}";
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return $"{basePath}.{Guid.NewGuid():N}";
+    }
+
+    private static void RetainNewestManagedBackupBeforeSave(string sourcePath)
+    {
+        IReadOnlyList<FileInfo> backups = EnumerateManagedBackups(sourcePath);
+        foreach (FileInfo obsolete in backups.Skip(1))
+        {
+            try
+            {
+                FileAttributes attributes = File.GetAttributes(obsolete.FullName);
+                if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                {
+                    throw new IOException($"Старая резервная копия имеет небезопасный тип: {obsolete.FullName}");
+                }
+
+                File.Delete(obsolete.FullName);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    $"Не удалось удалить старую резервную копию '{obsolete.FullName}'. " +
+                    "Сохранение отменено до изменения звукового RES.",
+                    exception);
+            }
+        }
+
+        if (EnumerateManagedBackups(sourcePath).Count > 1)
+        {
+            throw new IOException(
+                "Не удалось сократить число резервных копий. Сохранение отменено до изменения звукового RES.");
+        }
+    }
+
+    private static IReadOnlyList<FileInfo> EnumerateManagedBackups(string sourcePath)
+    {
+        string fullSourcePath = Path.GetFullPath(sourcePath);
+        string directoryPath = Path.GetDirectoryName(fullSourcePath)
+            ?? throw new DirectoryNotFoundException("Не найдена папка подключённого звукового RES.");
+        string sourceFileName = Path.GetFileName(fullSourcePath);
+        var backupNamePattern = new Regex(
+            $"^{Regex.Escape(sourceFileName)}\\.bak(?:\\.\\d{{8}}-\\d{{6}}(?:-\\d{{3}})?|\\.[0-9a-f]{{32}})?$",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        var backups = new List<FileInfo>();
+        foreach (string candidatePath in Directory.EnumerateFileSystemEntries(directoryPath, sourceFileName + ".bak*"))
+        {
+            string candidateName = Path.GetFileName(candidatePath);
+            if (!backupNamePattern.IsMatch(candidateName))
+            {
+                continue;
+            }
+
+            FileAttributes attributes = File.GetAttributes(candidatePath);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            {
+                throw new IOException($"Резервная копия имеет небезопасный тип: {candidatePath}");
+            }
+
+            backups.Add(new FileInfo(candidatePath));
+        }
+
+        return backups
+            .OrderByDescending(backup => backup.LastWriteTimeUtc)
+            .ThenByDescending(backup => backup.CreationTimeUtc)
+            .ThenByDescending(backup => backup.Name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static void ValidateAudioSignature(ReadOnlySpan<byte> data, string format)

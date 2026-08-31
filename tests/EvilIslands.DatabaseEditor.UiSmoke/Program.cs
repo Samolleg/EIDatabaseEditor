@@ -2636,6 +2636,7 @@ internal static class Program
         }
 
         Border? pendingSoundPanel = window.FindName("PendingSoundEditPanel") as Border;
+        Button? saveSoundCurrentButton = window.FindName("SavePendingSoundCurrentButton") as Button;
         Button? saveSoundCopyButton = window.FindName("SavePendingSoundCopyButton") as Button;
         string audioProbePath = Path.Combine(
             Path.GetTempPath(),
@@ -2647,6 +2648,7 @@ internal static class Program
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
             if (importAudioButton?.IsEnabled != true ||
                 pendingSoundPanel?.Visibility != Visibility.Visible ||
+                saveSoundCurrentButton?.IsEnabled != true ||
                 saveSoundCopyButton?.IsEnabled != true ||
                 viewModel.PendingSoundEdit is null ||
                 !viewModel.PendingSoundEdit.IsReplacement ||
@@ -3701,6 +3703,12 @@ internal static class Program
         public Task<SoundArchiveCopyResult> SaveSoundCopyAsync(
             PendingSoundEditViewModel edit,
             string targetPath,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<SaveSoundCurrentResult> SaveSoundCurrentAsync(
+            PendingSoundEditViewModel edit,
+            bool allowGameInstallationPath,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

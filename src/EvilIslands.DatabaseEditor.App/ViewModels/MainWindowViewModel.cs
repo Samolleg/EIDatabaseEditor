@@ -174,6 +174,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         SavePendingSoundCopyCommand = new RelayCommand(
             () => SavePendingSoundCopyRequested?.Invoke(this, EventArgs.Empty),
             () => PendingSoundEdit is not null && !IsBusy);
+        SavePendingSoundCurrentCommand = new RelayCommand(
+            () => SavePendingSoundCurrentRequested?.Invoke(this, EventArgs.Empty),
+            () => PendingSoundEdit is not null && !IsBusy);
     }
 
     public event EventHandler? OpenFileRequested;
@@ -197,6 +200,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public event EventHandler? ImportBriefingAudioRequested;
 
     public event EventHandler? SavePendingSoundCopyRequested;
+
+    public event EventHandler? SavePendingSoundCurrentRequested;
 
     public ObservableCollection<NavigationItemViewModel> NavigationItems { get; }
 
@@ -285,6 +290,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand CancelPendingSoundEditCommand { get; }
 
     public ICommand SavePendingSoundCopyCommand { get; }
+
+    public ICommand SavePendingSoundCurrentCommand { get; }
 
     public ICollectionView RecordsView
     {
@@ -801,6 +808,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(HasUnsavedWork));
             (CancelPendingSoundEditCommand as RelayCommand)?.RaiseCanExecuteChanged();
             (SavePendingSoundCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            (SavePendingSoundCurrentCommand as RelayCommand)?.RaiseCanExecuteChanged();
         }
     }
 
@@ -1005,7 +1013,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             NotificationMessage = prepared.IsReplacement
                 ? $"Подготовлена замена {prepared.ResourceName}. Исходный {prepared.ArchiveName} пока не изменён."
                 : $"Подготовлен новый ресурс {prepared.ResourceName}. Исходный {prepared.ArchiveName} пока не изменён.";
-            StatusText = "Звук находится только в памяти. Сохраните отдельную копию звукового RES или отмените подготовку.";
+            StatusText = "Звук находится только в памяти. Сохраните текущий RES с резервной копией, создайте отдельную копию или отмените подготовку.";
             OnPropertyChanged(nameof(HasUnsavedWork));
             RaiseCommandStates();
         }
@@ -1062,6 +1070,84 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             ShowError($"Копия звукового RES не сохранена: {UnwrapMessage(exception)}");
             StatusText = "Ошибка сохранения звукового RES.";
+        }
+        finally
+        {
+            IsOperationCancelable = false;
+            IsBusy = false;
+            BusyText = string.Empty;
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+        }
+    }
+
+    public async Task SavePendingSoundCurrentAsync(bool allowGameInstallationPath)
+    {
+        PendingSoundEditViewModel? edit = PendingSoundEdit;
+        RecordRowViewModel? selectedRecord = SelectedRecord;
+        int selectedPhraseNumber = SelectedBriefingPhrase?.Number ?? edit?.PhraseNumber ?? -1;
+        if (edit is null || IsBusy)
+        {
+            return;
+        }
+
+        CancelOperation();
+        _operationCancellation = new CancellationTokenSource();
+        CancellationToken cancellationToken = _operationCancellation.Token;
+        IsBusy = true;
+        IsOperationCancelable = false;
+        BusyText = $"Проверенная сборка и безопасная замена {edit.ArchiveName}…";
+        NotificationMessage = null;
+        try
+        {
+            SaveSoundCurrentResult result = await _service.SaveSoundCurrentAsync(
+                edit,
+                allowGameInstallationPath,
+                cancellationToken);
+            if (_workspace is not null)
+            {
+                _workspace = new WorkspaceSnapshot
+                {
+                    SourcePath = _workspace.SourcePath,
+                    FileLength = _workspace.FileLength,
+                    Sha256 = _workspace.Sha256,
+                    Resources = _workspace.Resources,
+                    Databases = _workspace.Databases,
+                    Diagnostics = _workspace.Diagnostics,
+                    TextsPath = _workspace.TextsPath,
+                    TextsFileLength = _workspace.TextsFileLength,
+                    TextsSha256 = _workspace.TextsSha256,
+                    TextResourceCount = _workspace.TextResourceCount,
+                    TextResources = _workspace.TextResources,
+                    SoundArchives = result.SoundArchives,
+                    SoundResourceCount = result.SoundResourceCount,
+                };
+                OnPropertyChanged(nameof(SoundArchiveCount));
+                OnPropertyChanged(nameof(SoundResourceCount));
+                OnPropertyChanged(nameof(SoundArchivePaths));
+                OnPropertyChanged(nameof(AttachSoundsButtonText));
+            }
+
+            PendingSoundEdit = null;
+            if (selectedRecord is not null)
+            {
+                SelectedBriefingPhrase = selectedRecord.BriefingPhrases.FirstOrDefault(phrase =>
+                    phrase.IsPhrase && phrase.Number == selectedPhraseNumber);
+            }
+
+            LastSavedPath = result.Save.TargetPath;
+            NotificationIsError = false;
+            NotificationMessage = result.Save.IsReplacement
+                ? $"{edit.ArchiveName} сохранён и проверен; аудио заменено. Резервная копия: {Path.GetFileName(result.Save.BackupPath)}"
+                : $"{edit.ArchiveName} сохранён и проверен; новое аудио добавлено. Резервная копия: {Path.GetFileName(result.Save.BackupPath)}";
+            StatusText = $"Звуковой RES сохранён с резервной копией: {result.Save.TargetPath}";
+            RemoveSoundFramesFromHistory();
+            RaiseCommandStates();
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Текущий звуковой RES не сохранён: {UnwrapMessage(exception)}");
+            StatusText = "Ошибка сохранения звукового RES. Подготовленный звук сохранён в памяти.";
         }
         finally
         {
@@ -3298,6 +3384,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (ImportBriefingAudioCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (CancelPendingSoundEditCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SavePendingSoundCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (SavePendingSoundCurrentCommand as RelayCommand)?.RaiseCanExecuteChanged();
         RaiseBriefingCommandStates();
     }
 

@@ -364,6 +364,37 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         return SoundArchiveCopyEditor.SaveCopyAsync(edit.Target, edit.Asset, targetPath, cancellationToken);
     }
 
+    public async Task<SaveSoundCurrentResult> SaveSoundCurrentAsync(
+        PendingSoundEditViewModel edit,
+        bool allowGameInstallationPath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(edit);
+        SoundArchiveCatalog currentCatalog = _soundCatalog
+            ?? throw new InvalidOperationException("Сначала подключите звуковой RES.");
+        string[] soundPaths = currentCatalog.Archives
+            .Select(archive => archive.SourcePath)
+            .ToArray();
+        SoundArchiveCopyResult result = await SoundArchiveCopyEditor.SaveInPlaceAsync(
+            edit.Target,
+            edit.Asset,
+            allowGameInstallationPath,
+            cancellationToken).ConfigureAwait(false);
+
+        // The archive has already been replaced at this point. Finish refreshing the
+        // in-memory view even if the caller cancels after the irreversible write.
+        SoundArchiveCatalog refreshedCatalog = await SoundArchiveCatalog
+            .OpenAsync(soundPaths, CancellationToken.None)
+            .ConfigureAwait(false);
+        AttachRelatedSounds(_mappedDatabases, refreshedCatalog, CancellationToken.None);
+        AttachBriefingPhrases(_mappedDatabases, CancellationToken.None);
+        _soundCatalog = refreshedCatalog;
+        return new SaveSoundCurrentResult(
+            result,
+            refreshedCatalog.Archives.Select(archive => new SoundArchiveViewModel(archive)).ToArray(),
+            refreshedCatalog.Resources.Count);
+    }
+
     public async Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
         CancellationToken cancellationToken)

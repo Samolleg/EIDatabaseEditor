@@ -662,6 +662,94 @@ internal static class Program
 
         log.Pass("Все прежние WAV/MP3/OGG в потоковой копии побайтово совпадают с исходным архивом.");
 
+        string inPlaceSourcePath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-sound-current.res");
+        File.Copy(smallestArchive.SourcePath, inPlaceSourcePath, overwrite: false);
+        string inPlaceOriginalSha256 = ComputeFileSha256(inPlaceSourcePath);
+        SoundArchiveCatalog inPlaceCatalog = await SoundArchiveCatalog.OpenAsync([inPlaceSourcePath])
+            .ConfigureAwait(false);
+        SoundArchiveInfo inPlaceArchive = inPlaceCatalog.Archives.Single();
+        string inPlaceProbeName = $@"s\Briefing\verification-current-{Guid.NewGuid():N}\1.wav";
+        var inPlaceTarget = new BriefingSoundImportTarget(
+            inPlaceArchive,
+            "verification-current",
+            PhraseNumber: 1,
+            inPlaceProbeName,
+            IsReplacement: false,
+            ExistingResource: null);
+        SoundArchiveCopyResult inPlaceResult = await log.MeasureAsync(
+            "Безопасная замена текущего звукового RES",
+            () => SoundArchiveCopyEditor.SaveInPlaceAsync(inPlaceTarget, probeAsset))
+            .ConfigureAwait(false);
+        log.Assert(
+            inPlaceResult.TargetPath.Equals(inPlaceSourcePath, StringComparison.OrdinalIgnoreCase) &&
+            inPlaceResult.BackupPath is not null && File.Exists(inPlaceResult.BackupPath) &&
+            ComputeFileSha256(inPlaceResult.BackupPath).Equals(inPlaceOriginalSha256, StringComparison.Ordinal),
+            "Прямая запись заменяет только временный RES и сохраняет точную проверенную .bak-копию исходника.");
+        SoundArchiveCatalog reopenedInPlace = await SoundArchiveCatalog.OpenAsync([inPlaceSourcePath])
+            .ConfigureAwait(false);
+        SoundResourceInfo? inPlaceProbe = reopenedInPlace.Resources.FirstOrDefault(resource =>
+            resource.ResourceName.Equals(inPlaceProbeName, StringComparison.OrdinalIgnoreCase));
+        log.Assert(
+            inPlaceProbe is not null &&
+            (await SoundArchiveCatalog.ReadResourceAsync(inPlaceProbe).ConfigureAwait(false))
+                .AsSpan().SequenceEqual(probeAsset.Data.Span),
+            "Текущий звуковой RES повторно открыт, а добавленный WAV побайтово совпадает с импортом.");
+
+        for (var saveNumber = 2; saveNumber <= 3; saveNumber++)
+        {
+            SoundArchiveCatalog nextCatalog = await SoundArchiveCatalog.OpenAsync([inPlaceSourcePath])
+                .ConfigureAwait(false);
+            var nextTarget = new BriefingSoundImportTarget(
+                nextCatalog.Archives.Single(),
+                $"verification-current-{saveNumber}",
+                PhraseNumber: saveNumber,
+                $@"s\Briefing\verification-current-{Guid.NewGuid():N}\{saveNumber}.wav",
+                IsReplacement: false,
+                ExistingResource: null);
+            await SoundArchiveCopyEditor.SaveInPlaceAsync(nextTarget, probeAsset).ConfigureAwait(false);
+        }
+
+        string[] soundBackups = Directory.EnumerateFiles(
+                Path.GetDirectoryName(inPlaceSourcePath)!,
+                Path.GetFileName(inPlaceSourcePath) + ".bak*")
+            .ToArray();
+        log.Assert(
+            soundBackups.Length == 2 && soundBackups.All(path => new FileInfo(path).Length > 0),
+            "После трёх прямых сохранений звукового RES остаются ровно две непустые штатные backup-копии.");
+
+        string changedSourcePath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-sound-conflict.res");
+        File.Copy(smallestArchive.SourcePath, changedSourcePath, overwrite: false);
+        SoundArchiveCatalog changedCatalog = await SoundArchiveCatalog.OpenAsync([changedSourcePath])
+            .ConfigureAwait(false);
+        SoundArchiveInfo changedArchive = changedCatalog.Archives.Single();
+        File.SetLastWriteTimeUtc(changedSourcePath, changedArchive.LastWriteTimeUtc.AddSeconds(2));
+        string changedSha256 = ComputeFileSha256(changedSourcePath);
+        var changedTarget = new BriefingSoundImportTarget(
+            changedArchive,
+            "verification-conflict",
+            PhraseNumber: 1,
+            $@"s\Briefing\verification-conflict-{Guid.NewGuid():N}\1.wav",
+            IsReplacement: false,
+            ExistingResource: null);
+        bool conflictRejected = false;
+        try
+        {
+            await SoundArchiveCopyEditor.SaveInPlaceAsync(changedTarget, probeAsset).ConfigureAwait(false);
+        }
+        catch (IOException exception) when (exception.Message.Contains("изменился", StringComparison.OrdinalIgnoreCase))
+        {
+            conflictRejected = true;
+        }
+
+        log.Assert(
+            conflictRejected &&
+            ComputeFileSha256(changedSourcePath).Equals(changedSha256, StringComparison.Ordinal) &&
+            !Directory.EnumerateFiles(
+                    Path.GetDirectoryName(changedSourcePath)!,
+                    Path.GetFileName(changedSourcePath) + ".bak*")
+                .Any(),
+            "Изменившийся после подключения звуковой RES отклоняется до записи и без создания ложной backup-копии.");
+
         string textsPath = Path.Combine(directory, "texts.res");
         if (File.Exists(textsPath))
         {
@@ -1941,6 +2029,18 @@ internal static class Program
 
     private static bool NearlyEqual(object value, float expected) =>
         Math.Abs(Convert.ToSingle(value, System.Globalization.CultureInfo.InvariantCulture) - expected) <= 0.0001f;
+
+    private static string ComputeFileSha256(string path)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            1024 * 1024,
+            FileOptions.SequentialScan);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
+    }
 
     private static DatabaseTable RequireTable(
         IEnumerable<DatabaseTable> tables,

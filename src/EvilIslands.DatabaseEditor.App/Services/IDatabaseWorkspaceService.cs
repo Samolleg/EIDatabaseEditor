@@ -42,6 +42,11 @@ internal interface IDatabaseWorkspaceService
         string targetPath,
         CancellationToken cancellationToken);
 
+    Task<SaveSoundCurrentResult> SaveSoundCurrentAsync(
+        PendingSoundEditViewModel edit,
+        bool allowGameInstallationPath,
+        CancellationToken cancellationToken);
+
     Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
         CancellationToken cancellationToken);

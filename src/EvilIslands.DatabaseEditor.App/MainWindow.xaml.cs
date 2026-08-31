@@ -180,6 +180,7 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.StopBriefingAudioRequested -= ViewModel_StopBriefingAudioRequested;
             _spreadsheetViewModel.ImportBriefingAudioRequested -= ViewModel_ImportBriefingAudioRequested;
             _spreadsheetViewModel.SavePendingSoundCopyRequested -= ViewModel_SavePendingSoundCopyRequested;
+            _spreadsheetViewModel.SavePendingSoundCurrentRequested -= ViewModel_SavePendingSoundCurrentRequested;
         }
 
         _spreadsheetViewModel = e.NewValue as MainWindowViewModel;
@@ -191,6 +192,7 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.StopBriefingAudioRequested += ViewModel_StopBriefingAudioRequested;
             _spreadsheetViewModel.ImportBriefingAudioRequested += ViewModel_ImportBriefingAudioRequested;
             _spreadsheetViewModel.SavePendingSoundCopyRequested += ViewModel_SavePendingSoundCopyRequested;
+            _spreadsheetViewModel.SavePendingSoundCurrentRequested += ViewModel_SavePendingSoundCurrentRequested;
         }
 
         RebuildSpreadsheetColumns();
@@ -291,6 +293,41 @@ public partial class MainWindow : Window
         }
 
         await viewModel.SavePendingSoundCopyPathAsync(targetPath);
+    }
+
+    private async void ViewModel_SavePendingSoundCurrentRequested(object? sender, EventArgs e)
+    {
+        MainWindowViewModel viewModel = _spreadsheetViewModel ?? _viewModel;
+        PendingSoundEditViewModel? edit = viewModel.PendingSoundEdit;
+        if (edit is null)
+        {
+            return;
+        }
+
+        string targetPath = Path.GetFullPath(edit.ArchivePath);
+        bool isGamePath = DatabaseSafetyPolicy.IsLikelyGameInstallationPath(targetPath);
+        var dialog = new ConfirmDialog(
+            isGamePath
+                ? $"Сохранить звук прямо в игровой {edit.ArchiveName}?"
+                : $"Заменить текущий {edit.ArchiveName}?",
+            isGamePath
+                ? "Подключённый архив установленного мода будет заменён проверенной версией."
+                : "Подключённый звуковой архив будет заменён проверенной версией.",
+            $"Точный файл: {targetPath}{Environment.NewLine}" +
+            "Перед заменой редактор создаст и проверит резервную .bak-копию. " +
+            "Если архив изменился после подключения, запись будет отменена.",
+            "Сохранить с резервной копией",
+            "!")
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() is not true || !dialog.IsConfirmed)
+        {
+            return;
+        }
+
+        StopSoundPreview();
+        await viewModel.SavePendingSoundCurrentAsync(isGamePath);
     }
 
     private void StopSoundPreview()
@@ -3338,7 +3375,7 @@ public partial class MainWindow : Window
                 ? $"В памяти осталось изменений database.res/texts.res: {_viewModel.ChangeCount}; также подготовлен звуковой RES."
                 : $"В рабочей памяти осталось изменений: {_viewModel.ChangeCount}.",
             _viewModel.HasPendingSoundEdit
-                ? "Подготовленный звук ещё не записан. Используйте «Сохранить копию RES» в карточке аудио."
+                ? "Подготовленный звук ещё не записан. Используйте «Сохранить в текущий RES» или «Сохранить копию» в карточке аудио."
                 : "Несохранённые изменения будут потеряны. Для записи используйте «Сохранить».",
             "Закрыть без сохранения",
             "!")
@@ -3395,6 +3432,7 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.StopBriefingAudioRequested -= ViewModel_StopBriefingAudioRequested;
             _spreadsheetViewModel.ImportBriefingAudioRequested -= ViewModel_ImportBriefingAudioRequested;
             _spreadsheetViewModel.SavePendingSoundCopyRequested -= ViewModel_SavePendingSoundCopyRequested;
+            _spreadsheetViewModel.SavePendingSoundCurrentRequested -= ViewModel_SavePendingSoundCurrentRequested;
             _spreadsheetViewModel = null;
         }
 

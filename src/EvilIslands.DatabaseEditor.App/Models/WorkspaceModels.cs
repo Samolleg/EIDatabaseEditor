@@ -1950,3 +1950,8 @@ internal sealed record SaveCurrentResult(
 internal sealed record SavePairCopyResult(
     SaveCopyResult Database,
     SaveCopyResult? Texts);
+
+internal sealed record SaveSoundCurrentResult(
+    SoundArchiveCopyResult Save,
+    IReadOnlyList<SoundArchiveViewModel> SoundArchives,
+    int SoundResourceCount);
