@@ -188,6 +188,11 @@ internal sealed record SpreadsheetPasteCell(
     EvilIslands.DatabaseEditor.Core.DatabaseFieldProjection? Projection = null,
     SpreadsheetPasteTarget Target = SpreadsheetPasteTarget.DatabaseField);
 
+internal sealed record LocalizationSpreadsheetPasteCell(
+    LocalizationEntryViewModel Entry,
+    SpreadsheetPasteTarget Target,
+    string Value);
+
 internal enum SpreadsheetPasteTarget
 {
     DatabaseField,

@@ -945,7 +945,7 @@
                                     <TextBlock Grid.Column="2" Text="{Binding ResourceCount, StringFormat={}{0:N0} ресурсов}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
                                 </Grid>
                                 <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                                    <DataGrid ItemsSource="{Binding ResourcesView}" BorderThickness="0" IsReadOnly="True">
+                                    <DataGrid x:Name="ResourcesGrid" ItemsSource="{Binding ResourcesView}" BorderThickness="0" IsReadOnly="True">
                                         <DataGrid.Columns>
                                             <DataGridTextColumn Header="#"
                                                                 Binding="{Binding Index}"
@@ -1853,7 +1853,10 @@
                                                     </DataGrid.RowStyle>
                                                     <DataGrid.Columns>
                                                         <DataGridTextColumn Header="Шаг" Binding="{Binding SequenceNumber}" Width="48" ElementStyle="{StaticResource CenteredIndexTextStyle}" />
-                                                        <DataGridTemplateColumn Header="Событие" Width="*" MinWidth="300">
+                                                        <DataGridTemplateColumn Header="Событие"
+                                                                                Width="*"
+                                                                                MinWidth="300"
+                                                                                ClipboardContentBinding="{Binding DisplayText}">
                                                             <DataGridTemplateColumn.CellTemplate>
                                                                 <DataTemplate>
                                                                     <Grid Margin="8,4">
@@ -2181,7 +2184,7 @@
                                 </Border>
                                 <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                                     <Grid>
-                                        <DataGrid ItemsSource="{Binding Changes}" BorderThickness="0" IsReadOnly="True">
+                                        <DataGrid x:Name="ChangesGrid" ItemsSource="{Binding Changes}" BorderThickness="0" IsReadOnly="True">
                                             <DataGrid.Columns>
                                                 <DataGridTextColumn Header="Запись" Binding="{Binding RecordName}" Width="15*" MinWidth="150" />
                                                 <DataGridTextColumn Header="Поле" Binding="{Binding FieldName}" Width="12*" MinWidth="130" />
@@ -2258,7 +2261,7 @@
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Область" Width="124" SortMemberPath="DomainText">
+                                                <DataGridTemplateColumn Header="Область" Width="124" SortMemberPath="DomainText" ClipboardContentBinding="{Binding DomainText}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <StackPanel VerticalAlignment="Center">
@@ -2268,7 +2271,7 @@
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Место" Width="2*" MinWidth="240" SortMemberPath="Place">
+                                                <DataGridTemplateColumn Header="Место" Width="2*" MinWidth="240" SortMemberPath="Place" ClipboardContentBinding="{Binding Place}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <TextBlock Text="{Binding Place}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
@@ -2276,14 +2279,14 @@
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
                                                 <DataGridTextColumn Header="Уровень" Binding="{Binding SeverityText}" Width="118" />
-                                                <DataGridTemplateColumn Header="Код" Width="170" SortMemberPath="Code">
+                                                <DataGridTemplateColumn Header="Код" Width="170" SortMemberPath="Code" ClipboardContentBinding="{Binding Code}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <TextBlock Text="{Binding Code}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Code}" FontFamily="Cascadia Mono, Consolas" FontSize="11" />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Сообщение" Width="4*" MinWidth="320" SortMemberPath="Message">
+                                                <DataGridTemplateColumn Header="Сообщение" Width="4*" MinWidth="320" SortMemberPath="Message" ClipboardContentBinding="{Binding Message}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <TextBlock Text="{Binding Message}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}" />

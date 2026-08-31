@@ -40,6 +40,7 @@ public partial class MainWindow : Window
     private readonly RecoverySnapshotStore _recoveryStore;
     private readonly DispatcherTimer _recoveryTimer;
     private readonly Dictionary<DataGridColumn, SpreadsheetColumnViewModel> _spreadsheetColumns = [];
+    private readonly HashSet<DataGrid> _spreadsheetGrids = [];
     private DataGridColumn? _localizationKeyColumn;
     private DataGridColumn? _localizationTitleColumn;
     private DataGridColumn? _localizationDescriptionColumn;
@@ -71,6 +72,15 @@ public partial class MainWindow : Window
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         _recoveryStore = recoveryStore ?? new RecoverySnapshotStore();
         InitializeComponent();
+        AddHandler(FrameworkElement.LoadedEvent, new RoutedEventHandler(SpreadsheetElement_Loaded));
+        RegisterSpreadsheetGrid(RecordsGrid);
+        RegisterSpreadsheetGrid(ResourcesGrid);
+        RegisterSpreadsheetGrid(TextsGrid);
+        RegisterSpreadsheetGrid(LocalizationGrid);
+        RegisterSpreadsheetGrid(SoundLinksGrid);
+        RegisterSpreadsheetGrid(BriefingPhrasesGrid);
+        RegisterSpreadsheetGrid(ChangesGrid);
+        RegisterSpreadsheetGrid(ValidationGrid);
         _layout = _preferences.GetLayout();
         ApplyStoredLayout();
         double? storedInterfaceScale = _preferences.GetInterfaceScale();
@@ -79,14 +89,6 @@ public partial class MainWindow : Window
         SourceInitialized += Window_SourceInitialized;
         ContentRendered += Window_ContentRendered;
         Closed += Window_Closed;
-        RecordsGrid.CommandBindings.Add(new CommandBinding(
-            ApplicationCommands.Copy,
-            RecordsGrid_CopyExecuted,
-            RecordsGrid_CopyCanExecute));
-        RecordsGrid.CommandBindings.Add(new CommandBinding(
-            ApplicationCommands.Paste,
-            RecordsGrid_PasteExecuted,
-            RecordsGrid_PasteCanExecute));
         DataContextChanged += MainWindow_DataContextChanged;
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
@@ -1734,19 +1736,64 @@ public partial class MainWindow : Window
             : (Brush)FindResource("DangerBrush");
     }
 
-    private void RecordsGrid_CopyCanExecute(object sender, CanExecuteRoutedEventArgs e)
+    private void SpreadsheetElement_Loaded(object sender, RoutedEventArgs e)
     {
-        e.CanExecute = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
-                       (RecordsGrid.SelectedCells.Count > 0 || RecordsGrid.CurrentCell.IsValid);
+        if (e.OriginalSource is DataGrid grid)
+        {
+            RegisterSpreadsheetGrid(grid);
+        }
+    }
+
+    private void RegisterSpreadsheetGrid(DataGrid grid)
+    {
+        if (!_spreadsheetGrids.Add(grid))
+        {
+            return;
+        }
+
+        grid.ClipboardCopyMode = DataGridClipboardCopyMode.None;
+        grid.CommandBindings.Add(new CommandBinding(
+            ApplicationCommands.Copy,
+            (_, e) => SpreadsheetGrid_CopyExecuted(grid, e),
+            (_, e) => SpreadsheetGrid_CopyCanExecute(grid, e)));
+        grid.CommandBindings.Add(new CommandBinding(
+            ApplicationCommands.Paste,
+            (_, e) => SpreadsheetGrid_PasteExecuted(grid, e),
+            (_, e) => SpreadsheetGrid_PasteCanExecute(grid, e)));
+        grid.PreviewKeyDown += SpreadsheetGrid_PreviewKeyDown;
+    }
+
+    private void SpreadsheetGrid_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (sender is not DataGrid grid ||
+            Keyboard.Modifiers != ModifierKeys.Control ||
+            e.Key is not (Key.C or Key.V))
+        {
+            return;
+        }
+
+        grid.CommitEdit(DataGridEditingUnit.Cell, exitEditingMode: true);
+        grid.CommitEdit(DataGridEditingUnit.Row, exitEditingMode: true);
+        RoutedCommand command = e.Key == Key.C ? ApplicationCommands.Copy : ApplicationCommands.Paste;
+        if (command.CanExecute(null, grid))
+        {
+            command.Execute(null, grid);
+            e.Handled = true;
+        }
+    }
+
+    private static void SpreadsheetGrid_CopyCanExecute(DataGrid grid, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = grid.SelectedCells.Count > 0 || grid.CurrentCell.IsValid;
         e.Handled = true;
     }
 
-    private void RecordsGrid_CopyExecuted(object sender, ExecutedRoutedEventArgs e)
+    private void SpreadsheetGrid_CopyExecuted(DataGrid grid, ExecutedRoutedEventArgs e)
     {
         e.Handled = true;
         try
         {
-            if (!TryBuildClipboardMatrix(out IReadOnlyList<IReadOnlyList<string>> matrix) || matrix.Count == 0)
+            if (!TryBuildClipboardMatrix(grid, out IReadOnlyList<IReadOnlyList<string>> matrix) || matrix.Count == 0)
             {
                 _viewModel.ReportSpreadsheetError("Выберите одну или несколько ячеек для копирования.");
                 return;
@@ -1762,34 +1809,51 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RecordsGrid_PasteCanExecute(object sender, CanExecuteRoutedEventArgs e)
+    private void SpreadsheetGrid_PasteCanExecute(DataGrid grid, CanExecuteRoutedEventArgs e)
     {
-        e.CanExecute = _spreadsheetViewModel is
-        {
-            CurrentSection: WorkspaceSection.Records,
-            IsEditMode: true,
-            IsBusy: false,
-            IsCurrentTableEditable: true,
-        } &&
-        RecordsGrid.CurrentCell.IsValid;
+        e.CanExecute = grid.CurrentCell.IsValid && _spreadsheetViewModel?.IsBusy is not true;
 
         e.Handled = true;
     }
 
-    private void RecordsGrid_PasteExecuted(object sender, ExecutedRoutedEventArgs e)
+    private void SpreadsheetGrid_PasteExecuted(DataGrid grid, ExecutedRoutedEventArgs e)
     {
         e.Handled = true;
         try
         {
             string text = GetClipboardTextWithRetry();
             IReadOnlyList<IReadOnlyList<string>> matrix = SpreadsheetClipboardText.Parse(text);
-            if (!TryBuildPasteCells(matrix, out IReadOnlyList<SpreadsheetPasteCell> cells, out string? error))
+            if (ReferenceEquals(grid, RecordsGrid))
             {
-                _viewModel.ReportSpreadsheetError(error ?? "Не удалось определить диапазон вставки.");
+                if (!TryBuildPasteCells(matrix, out IReadOnlyList<SpreadsheetPasteCell> cells, out string? recordsError))
+                {
+                    _viewModel.ReportSpreadsheetError(recordsError ?? "Не удалось определить диапазон вставки.");
+                    return;
+                }
+
+                _viewModel.TryPasteSpreadsheetCells(cells, out _, out _);
                 return;
             }
 
-            _viewModel.TryPasteSpreadsheetCells(cells, out _, out _);
+            if (grid.Items.Cast<object>().Any(item => item is LocalizationEntryViewModel))
+            {
+                if (!TryBuildLocalizationPasteCells(
+                        grid,
+                        matrix,
+                        out IReadOnlyList<LocalizationSpreadsheetPasteCell> cells,
+                        out string? localizationError))
+                {
+                    _viewModel.ReportSpreadsheetError(localizationError ?? "Не удалось определить диапазон вставки texts.res.");
+                    return;
+                }
+
+                _viewModel.TryPasteLocalizationSpreadsheetCells(cells, out _, out _);
+                return;
+            }
+
+            _viewModel.ReportSpreadsheetError(
+                "Эта таблица вычисляется редактором и доступна только для копирования. " +
+                "Редактируемые таблицы принимают диапазоны из Excel через Ctrl+V.");
         }
         catch (Exception exception) when (exception is ExternalException or FormatException)
         {
@@ -1798,25 +1862,33 @@ public partial class MainWindow : Window
     }
 
     internal bool TryBuildClipboardMatrix(out IReadOnlyList<IReadOnlyList<string>> matrix)
+        => TryBuildClipboardMatrix(RecordsGrid, out matrix);
+
+    internal bool TryBuildClipboardMatrix(
+        DataGrid grid,
+        out IReadOnlyList<IReadOnlyList<string>> matrix)
     {
-        RecordRowViewModel[] rows = RecordsGrid.Items.Cast<object>().OfType<RecordRowViewModel>().ToArray();
-        DataGridColumn[] columns = RecordsGrid.Columns
+        object[] rows = grid.Items.Cast<object>()
+            .Where(item => !ReferenceEquals(item, CollectionView.NewItemPlaceholder))
+            .ToArray();
+        DataGridColumn[] columns = grid.Columns
             .Where(column => column.Visibility == Visibility.Visible)
             .OrderBy(column => column.DisplayIndex)
             .ToArray();
         var rowIndexes = rows.Select((row, index) => (row, index)).ToDictionary(item => item.row, item => item.index);
         var columnIndexes = columns.Select((column, index) => (column, index))
             .ToDictionary(item => item.column, item => item.index);
-        var selected = RecordsGrid.SelectedCells
-            .Where(cell => cell.Item is RecordRowViewModel && columnIndexes.ContainsKey(cell.Column))
-            .Select(cell => ((RecordRowViewModel)cell.Item, cell.Column))
+        var selected = grid.SelectedCells
+            .Where(cell => rowIndexes.ContainsKey(cell.Item) && columnIndexes.ContainsKey(cell.Column))
+            .Select(cell => (cell.Item, cell.Column))
             .Distinct()
             .ToArray();
         if (selected.Length == 0 &&
-            RecordsGrid.CurrentCell is { IsValid: true, Item: RecordRowViewModel currentRecord } &&
-            columnIndexes.ContainsKey(RecordsGrid.CurrentCell.Column))
+            grid.CurrentCell is { IsValid: true } currentCell &&
+            rowIndexes.ContainsKey(currentCell.Item) &&
+            columnIndexes.ContainsKey(currentCell.Column))
         {
-            selected = [(currentRecord, RecordsGrid.CurrentCell.Column)];
+            selected = [(currentCell.Item, currentCell.Column)];
         }
 
         if (selected.Length == 0)
@@ -1837,9 +1909,9 @@ public partial class MainWindow : Window
             for (int columnIndex = firstColumn; columnIndex <= lastColumn; columnIndex++)
             {
                 DataGridColumn column = columns[columnIndex];
-                RecordRowViewModel row = rows[rowIndex];
+                object row = rows[rowIndex];
                 values[columnIndex - firstColumn] = selectedSet.Contains((row, column))
-                    ? GetClipboardCellText(row, column)
+                    ? GetGridClipboardCellText(grid, row, column)
                     : string.Empty;
             }
 
@@ -1847,6 +1919,97 @@ public partial class MainWindow : Window
         }
 
         matrix = result;
+        return true;
+    }
+
+    internal bool TryBuildLocalizationPasteCells(
+        DataGrid grid,
+        IReadOnlyList<IReadOnlyList<string>> matrix,
+        out IReadOnlyList<LocalizationSpreadsheetPasteCell> cells,
+        out string? error)
+    {
+        cells = [];
+        error = null;
+        if (matrix.Count == 0 || matrix.All(row => row.Count == 0))
+        {
+            error = "В буфере обмена нет табличных значений.";
+            return false;
+        }
+
+        LocalizationEntryViewModel[] rows = grid.Items.Cast<object>().OfType<LocalizationEntryViewModel>().ToArray();
+        DataGridColumn[] columns = grid.Columns
+            .Where(column => column.Visibility == Visibility.Visible)
+            .OrderBy(column => column.DisplayIndex)
+            .ToArray();
+        int anchorRow = Array.FindIndex(rows, row => ReferenceEquals(row, grid.CurrentCell.Item));
+        int anchorColumn = Array.FindIndex(columns, column => ReferenceEquals(column, grid.CurrentCell.Column));
+        if (anchorRow < 0 || anchorColumn < 0)
+        {
+            error = "Выберите начальную ячейку для вставки.";
+            return false;
+        }
+
+        var targets = new List<(LocalizationEntryViewModel Entry, DataGridColumn Column, string Value)>();
+        string? singleValue = matrix.Count == 1 && matrix[0].Count == 1 ? matrix[0][0] : null;
+        if (singleValue is not null && grid.SelectedCells.Count > 1)
+        {
+            targets.AddRange(grid.SelectedCells
+                .Where(cell => cell.Item is LocalizationEntryViewModel && columns.Contains(cell.Column))
+                .OrderBy(cell => Array.FindIndex(rows, row => ReferenceEquals(row, cell.Item)))
+                .ThenBy(cell => cell.Column.DisplayIndex)
+                .Select(cell => ((LocalizationEntryViewModel)cell.Item, cell.Column, singleValue)));
+        }
+        else
+        {
+            int width = matrix.Max(row => row.Count);
+            if (anchorRow + matrix.Count > rows.Length || anchorColumn + width > columns.Length)
+            {
+                error = "Диапазон из буфера не помещается в оставшиеся строки или столбцы таблицы.";
+                return false;
+            }
+
+            for (var rowOffset = 0; rowOffset < matrix.Count; rowOffset++)
+            {
+                for (var columnOffset = 0; columnOffset < width; columnOffset++)
+                {
+                    targets.Add((
+                        rows[anchorRow + rowOffset],
+                        columns[anchorColumn + columnOffset],
+                        columnOffset < matrix[rowOffset].Count ? matrix[rowOffset][columnOffset] : string.Empty));
+                }
+            }
+        }
+
+        var result = new List<LocalizationSpreadsheetPasteCell>(targets.Count);
+        foreach ((LocalizationEntryViewModel entry, DataGridColumn column, string value) in targets)
+        {
+            string? propertyName = (column as DataGridBoundColumn)?.Binding is Binding binding
+                ? binding.Path?.Path
+                : null;
+            SpreadsheetPasteTarget target = propertyName switch
+            {
+                nameof(LocalizationEntryViewModel.Title) => SpreadsheetPasteTarget.LocalizationTitle,
+                nameof(LocalizationEntryViewModel.Description) => SpreadsheetPasteTarget.LocalizationDescription,
+                _ => SpreadsheetPasteTarget.DatabaseField,
+            };
+            if (target != SpreadsheetPasteTarget.DatabaseField && !column.IsReadOnly)
+            {
+                result.Add(new LocalizationSpreadsheetPasteCell(entry, target, value));
+                continue;
+            }
+
+            string current = GetGridClipboardCellText(grid, entry, column);
+            if (!string.Equals(value, current, StringComparison.Ordinal))
+            {
+                string label = column.Header?.ToString() ?? "служебный столбец";
+                string address = GetSpreadsheetAddress(grid, entry, column);
+                error = $"Ячейка {address}, столбец «{label}» доступна только для чтения. " +
+                        "Если она входит в диапазон Excel без изменений, редактор пропустит её автоматически.";
+                return false;
+            }
+        }
+
+        cells = result;
         return true;
     }
 
@@ -2097,6 +2260,23 @@ public partial class MainWindow : Window
         return Equals(column.Header, "#")
             ? record.Index.ToString(CultureInfo.InvariantCulture)
             : string.Empty;
+    }
+
+    private string GetGridClipboardCellText(DataGrid grid, object item, DataGridColumn column)
+    {
+        if (ReferenceEquals(grid, RecordsGrid) && item is RecordRowViewModel record)
+        {
+            return GetClipboardCellText(record, column);
+        }
+
+        object? value = column.OnCopyingCellClipboardContent(item);
+        return value switch
+        {
+            null => string.Empty,
+            string text => text,
+            IFormattable formattable => formattable.ToString(null, CultureInfo.CurrentCulture) ?? string.Empty,
+            _ => value.ToString() ?? string.Empty,
+        };
     }
 
     internal static DataObject CreateSpreadsheetClipboardDataObject(
@@ -2951,22 +3131,6 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (Keyboard.Modifiers == ModifierKeys.Control &&
-            e.Key is Key.C or Key.V &&
-            _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
-            RecordsGrid.IsKeyboardFocusWithin)
-        {
-            RecordsGrid.CommitEdit(DataGridEditingUnit.Cell, exitEditingMode: true);
-            RecordsGrid.CommitEdit(DataGridEditingUnit.Row, exitEditingMode: true);
-            RoutedCommand clipboardCommand = e.Key == Key.C ? ApplicationCommands.Copy : ApplicationCommands.Paste;
-            if (clipboardCommand.CanExecute(null, RecordsGrid))
-            {
-                clipboardCommand.Execute(null, RecordsGrid);
-                e.Handled = true;
-                return;
-            }
-        }
-
         if (e.Key == Key.F2 &&
             _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
             !FormulaEditorBox.IsKeyboardFocusWithin &&

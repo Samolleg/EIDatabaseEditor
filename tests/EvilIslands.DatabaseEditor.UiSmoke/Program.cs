@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -349,6 +350,31 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "RecordsGrid должен иметь одну центрированную колонку нумерации без пустого служебного столбца, выбор клеток и обе виртуализации.");
+        }
+
+        string[] spreadsheetGridNames =
+        [
+            "ResourcesGrid",
+            "TextsGrid",
+            "RecordsGrid",
+            "LocalizationGrid",
+            "SoundLinksGrid",
+            "BriefingPhrasesGrid",
+            "ChangesGrid",
+            "ValidationGrid",
+        ];
+        foreach (string gridName in spreadsheetGridNames)
+        {
+            if (window.FindName(gridName) is not DataGrid spreadsheetGrid ||
+                spreadsheetGrid.ClipboardCopyMode != DataGridClipboardCopyMode.None ||
+                !spreadsheetGrid.CommandBindings.OfType<CommandBinding>()
+                    .Any(binding => binding.Command == ApplicationCommands.Copy) ||
+                !spreadsheetGrid.CommandBindings.OfType<CommandBinding>()
+                    .Any(binding => binding.Command == ApplicationCommands.Paste))
+            {
+                throw new InvalidOperationException(
+                    $"Таблица {gridName} обязана использовать единый Excel-совместимый Ctrl+C/Ctrl+V.");
+            }
         }
 
         DataGridColumn indexColumn = grid.Columns[0];
@@ -1701,6 +1727,26 @@ internal static class Program
                     "Режим Брифингов должен показывать полную сценарную ленту, мысли, камеру, анимацию, реплики и найденные MP3.");
             }
 
+            var soundForExcel = briefingWithSound.RelatedSounds.First(sound => sound.HasTranscript);
+            DataGridColumn[] soundColumns = soundLinksGrid!.Columns.Take(4).ToArray();
+            soundLinksGrid.SelectedCells.Clear();
+            foreach (DataGridColumn column in soundColumns)
+            {
+                soundLinksGrid.SelectedCells.Add(new DataGridCellInfo(soundForExcel, column));
+            }
+            soundLinksGrid.CurrentCell = new DataGridCellInfo(soundForExcel, soundColumns[0]);
+            if (!ApplicationCommands.Copy.CanExecute(null, soundLinksGrid) ||
+                !window.TryBuildClipboardMatrix(
+                    soundLinksGrid,
+                    out IReadOnlyList<IReadOnlyList<string>> soundMatrix) ||
+                soundMatrix.Count != 1 || soundMatrix[0].Count != soundColumns.Length ||
+                !soundMatrix[0].Contains(soundForExcel.TranscriptText, StringComparer.Ordinal) ||
+                !soundMatrix[0].Contains(soundForExcel.DisplayResourceName, StringComparer.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "Таблица «Связанные звуковые файлы» должна копировать текст реплики и путь RES в Excel.");
+            }
+
             LocalizationEntryViewModel briefingText = briefingWithSound.RelatedTexts.Single(text =>
                 text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
             string originalBriefingDescription = briefingText.Description;
@@ -1979,6 +2025,7 @@ internal static class Program
 
         VerifyFormulaBar(window, viewModel, recordsGrid, materials, prototypes);
         VerifyTextsFormulaBar(window, viewModel, materials);
+        VerifyAuxiliarySpreadsheetClipboard(window, viewModel, materials);
 
         // The localization columns intentionally follow the database name column. Use two
         // adjacent physical database fields to verify rectangular Excel copy/paste semantics.
@@ -3160,6 +3207,157 @@ internal static class Program
         }
 
         viewModel.SelectTableCommand.Execute(materials);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+    }
+
+    private static void VerifyAuxiliarySpreadsheetClipboard(
+        MainWindow window,
+        MainWindowViewModel viewModel,
+        DatabaseTableViewModel returnTable)
+    {
+        if (!viewModel.HasTextsDocument)
+        {
+            return;
+        }
+
+        viewModel.SelectTableCommand.Execute(returnTable);
+        RecordRowViewModel record = returnTable.Records.First(candidate => candidate.RelatedTextCount >= 2);
+        viewModel.SelectedRecord = record;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        var localizationGrid = (DataGrid)window.FindName("LocalizationGrid");
+        LocalizationEntryViewModel[] relatedRows = localizationGrid.Items.Cast<object>()
+            .OfType<LocalizationEntryViewModel>()
+            .Take(2)
+            .ToArray();
+        DataGridColumn localizationTitle = localizationGrid.Columns.Single(column => Equals(column.Header, "Название RU"));
+        DataGridColumn localizationDescription = localizationGrid.Columns.Single(column => Equals(column.Header, "Описание RU"));
+        if (relatedRows.Length != 2)
+        {
+            throw new InvalidOperationException("Для проверки связанных текстов нужны две строки texts.res.");
+        }
+
+        localizationGrid.SelectedCells.Clear();
+        foreach (LocalizationEntryViewModel row in relatedRows)
+        {
+            localizationGrid.SelectedCells.Add(new DataGridCellInfo(row, localizationTitle));
+            localizationGrid.SelectedCells.Add(new DataGridCellInfo(row, localizationDescription));
+        }
+        localizationGrid.CurrentCell = new DataGridCellInfo(relatedRows[0], localizationTitle);
+        if (!ApplicationCommands.Copy.CanExecute(null, localizationGrid) ||
+            !window.TryBuildClipboardMatrix(localizationGrid, out IReadOnlyList<IReadOnlyList<string>> relatedMatrix) ||
+            relatedMatrix.Count != 2 ||
+            !relatedMatrix[0].SequenceEqual([relatedRows[0].Title, relatedRows[0].Description], StringComparer.Ordinal) ||
+            !relatedMatrix[1].SequenceEqual([relatedRows[1].Title, relatedRows[1].Description], StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Нижняя таблица «Связанные тексты» должна копировать прямоугольный диапазон названий и описаний в Excel.");
+        }
+
+        string[][] originalRelated = relatedRows
+            .Select(row => new[] { row.Title, row.Description })
+            .ToArray();
+        IReadOnlyList<IReadOnlyList<string>> relatedPaste =
+        [
+            [originalRelated[0][0] + " Excel", originalRelated[0][1] + " Excel"],
+            [originalRelated[1][0] + " Excel", originalRelated[1][1] + " Excel"],
+        ];
+        localizationGrid.SelectedCells.Clear();
+        localizationGrid.SelectedCells.Add(new DataGridCellInfo(relatedRows[0], localizationTitle));
+        localizationGrid.CurrentCell = new DataGridCellInfo(relatedRows[0], localizationTitle);
+        if (!window.TryBuildLocalizationPasteCells(
+                localizationGrid,
+                relatedPaste,
+                out IReadOnlyList<LocalizationSpreadsheetPasteCell> relatedCells,
+                out string? relatedError) ||
+            !viewModel.TryPasteLocalizationSpreadsheetCells(relatedCells, out int relatedChanged, out relatedError) ||
+            relatedChanged != 4)
+        {
+            throw new InvalidOperationException(
+                $"Нижняя таблица «Связанные тексты» не приняла диапазон из Excel: {relatedError}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        if (relatedRows.Where((row, index) =>
+                row.Title != originalRelated[index][0] || row.Description != originalRelated[index][1]).Any())
+        {
+            throw new InvalidOperationException(
+                "Undo должен целиком вернуть пакетную вставку в нижнюю таблицу связанных текстов.");
+        }
+
+        viewModel.NavigateCommand.Execute(viewModel.TextsNavigationItem);
+        viewModel.TextsSearchText = string.Empty;
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        var textsGrid = (DataGrid)window.FindName("TextsGrid");
+        DataGridColumn textsTitle = textsGrid.Columns.Single(column => Equals(column.Header, "Название RU"));
+        LocalizationEntryViewModel[] bulkRows = textsGrid.Items.Cast<object>()
+            .OfType<LocalizationEntryViewModel>()
+            .Where(entry => !entry.IsNew)
+            .Take(32)
+            .ToArray();
+        if (bulkRows.Length < 16)
+        {
+            throw new InvalidOperationException("Недостаточно строк texts.res для проверки пакетной вставки.");
+        }
+
+        string[] originalTitles = bulkRows.Select(entry => entry.Title).ToArray();
+        IReadOnlyList<IReadOnlyList<string>> bulkPaste = bulkRows
+            .Select((entry, index) => (IReadOnlyList<string>)[entry.Title + $" Excel {index + 1}"])
+            .ToArray();
+        textsGrid.SelectedCells.Clear();
+        textsGrid.SelectedCells.Add(new DataGridCellInfo(bulkRows[0], textsTitle));
+        textsGrid.CurrentCell = new DataGridCellInfo(bulkRows[0], textsTitle);
+
+        var recordsViewNotifications = (INotifyCollectionChanged)viewModel.RecordsView;
+        var textsViewNotifications = (INotifyCollectionChanged)viewModel.TextsView;
+        var recordsResets = 0;
+        var textsResets = 0;
+        NotifyCollectionChangedEventHandler recordsChanged = (_, eventArgs) =>
+        {
+            if (eventArgs.Action == NotifyCollectionChangedAction.Reset)
+            {
+                recordsResets++;
+            }
+        };
+        NotifyCollectionChangedEventHandler textsChanged = (_, eventArgs) =>
+        {
+            if (eventArgs.Action == NotifyCollectionChangedAction.Reset)
+            {
+                textsResets++;
+            }
+        };
+        recordsViewNotifications.CollectionChanged += recordsChanged;
+        textsViewNotifications.CollectionChanged += textsChanged;
+        var stopwatch = Stopwatch.StartNew();
+        bool built = window.TryBuildLocalizationPasteCells(
+            textsGrid,
+            bulkPaste,
+            out IReadOnlyList<LocalizationSpreadsheetPasteCell> bulkCells,
+            out string? bulkError);
+        var bulkChanged = 0;
+        bool pasted = built && viewModel.TryPasteLocalizationSpreadsheetCells(
+            bulkCells,
+            out bulkChanged,
+            out bulkError);
+        stopwatch.Stop();
+        recordsViewNotifications.CollectionChanged -= recordsChanged;
+        textsViewNotifications.CollectionChanged -= textsChanged;
+        if (!pasted || bulkChanged != bulkRows.Length || recordsResets != 0 || textsResets != 0 ||
+            stopwatch.Elapsed > TimeSpan.FromSeconds(5))
+        {
+            throw new InvalidOperationException(
+                "Пакетная вставка в texts.res должна выполняться одной операцией без зависания и полных перестроений. " +
+                $"built={built}; pasted={pasted}; changed={bulkChanged}/{bulkRows.Length}; " +
+                $"recordsReset={recordsResets}; textsReset={textsResets}; elapsed={stopwatch.Elapsed}; error={bulkError}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        if (bulkRows.Where((entry, index) => entry.Title != originalTitles[index]).Any() || viewModel.HasChanges)
+        {
+            throw new InvalidOperationException(
+                "Undo должен одной командой вернуть большую пакетную вставку из Excel в texts.res.");
+        }
+
+        viewModel.SelectTableCommand.Execute(returnTable);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
     }
 

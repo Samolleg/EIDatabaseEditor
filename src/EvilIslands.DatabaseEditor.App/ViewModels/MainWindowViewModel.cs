@@ -2320,8 +2320,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         foreach (TextEditFrame textEdit in textEdits)
         {
             RefreshLocalizationChanges(textEdit.Entry);
-            RefreshLocalizationOwners(textEdit.Entry);
         }
+        RefreshLocalizationOwners(textEdits.Select(textEdit => textEdit.Entry));
         if (textEdits.Length > 0)
         {
             RefreshViewsAfterLocalizationEdit();
@@ -2387,6 +2387,128 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         StatusText = automaticTexts.Count == 0
             ? $"Вставлено из буфера: {changedCellCount:N0} ячеек."
             : $"Вставлено ячеек: {changedCellCount:N0}; создано записей texts.res: {automaticTexts.Count:N0}.";
+        RaiseCommandStates();
+        return true;
+    }
+
+    internal bool TryPasteLocalizationSpreadsheetCells(
+        IReadOnlyList<LocalizationSpreadsheetPasteCell> cells,
+        out int changedCellCount,
+        out string? error)
+    {
+        changedCellCount = 0;
+        error = null;
+        if (!IsEditMode || IsBusy || !HasTextsDocument)
+        {
+            error = "Подключённый texts.res сейчас недоступен для вставки.";
+            ShowError(error);
+            return false;
+        }
+
+        if (cells.Count == 0)
+        {
+            StatusText = "Вставка не требуется: служебные значения уже совпадают с таблицей.";
+            return true;
+        }
+
+        var seen = new HashSet<(LocalizationEntryViewModel Entry, SpreadsheetPasteTarget Target)>();
+        HashSet<LocalizationEntryViewModel> knownEntries = TextResources.ToHashSet();
+        var beforeStates = new Dictionary<LocalizationEntryViewModel, TextResourceState>();
+        var beforeValues = new Dictionary<(LocalizationEntryViewModel Entry, SpreadsheetPasteTarget Target), string>();
+        foreach (LocalizationSpreadsheetPasteCell cell in cells)
+        {
+            if (cell.Target is not (SpreadsheetPasteTarget.LocalizationTitle or SpreadsheetPasteTarget.LocalizationDescription) ||
+                !knownEntries.Contains(cell.Entry) ||
+                !seen.Add((cell.Entry, cell.Target)))
+            {
+                error = "Диапазон вставки содержит неизвестную, служебную или повторяющуюся ячейку texts.res.";
+                ShowError(error);
+                return false;
+            }
+
+            beforeStates.TryAdd(cell.Entry, cell.Entry.CaptureState());
+            beforeValues.Add(
+                (cell.Entry, cell.Target),
+                cell.Target == SpreadsheetPasteTarget.LocalizationTitle
+                    ? cell.Entry.Title
+                    : cell.Entry.Description);
+        }
+
+        _isApplyingSpreadsheetPaste = true;
+        try
+        {
+            foreach (LocalizationSpreadsheetPasteCell cell in cells)
+            {
+                if (cell.Target == SpreadsheetPasteTarget.LocalizationTitle)
+                {
+                    cell.Entry.Title = cell.Value;
+                }
+                else
+                {
+                    cell.Entry.Description = cell.Value;
+                }
+
+                if (cell.Entry.HasError)
+                {
+                    throw new InvalidOperationException(
+                        $"{cell.Entry.ResourceName} · " +
+                        $"{(cell.Target == SpreadsheetPasteTarget.LocalizationTitle ? "Название RU" : "Описание RU")}: " +
+                        cell.Entry.ErrorMessage);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            foreach ((LocalizationEntryViewModel entry, TextResourceState state) in beforeStates)
+            {
+                entry.RestoreState(state);
+            }
+
+            RefreshLocalizationOwners(beforeStates.Keys);
+            RefreshViewsAfterLocalizationEdit();
+            error = $"Вставка отменена без частичных изменений: {UnwrapMessage(exception)}";
+            ShowError(error);
+            return false;
+        }
+        finally
+        {
+            _isApplyingSpreadsheetPaste = false;
+        }
+
+        TextEditFrame[] edits = beforeStates
+            .Select(pair => new TextEditFrame(pair.Key, pair.Value, pair.Key.CaptureState()))
+            .Where(edit => !edit.BeforeState.IsEquivalentTo(edit.AfterState))
+            .ToArray();
+        changedCellCount = cells.Count(cell =>
+        {
+            string after = cell.Target == SpreadsheetPasteTarget.LocalizationTitle
+                ? cell.Entry.Title
+                : cell.Entry.Description;
+            return !string.Equals(beforeValues[(cell.Entry, cell.Target)], after, StringComparison.Ordinal);
+        });
+        if (edits.Length == 0)
+        {
+            StatusText = "Вставленные значения уже совпадают с содержимым выбранных ячеек.";
+            return true;
+        }
+
+        foreach (TextEditFrame edit in edits)
+        {
+            RefreshLocalizationChanges(edit.Entry);
+        }
+        RefreshLocalizationOwners(edits.Select(edit => edit.Entry));
+        RefreshViewsAfterLocalizationEdit();
+
+        WorkspaceEditFrame frame = edits.Length == 1
+            ? edits[0]
+            : new CompositeEditFrame(
+                edits,
+                $"Отменена вставка texts.res: {changedCellCount:N0} ячеек.",
+                $"Повторена вставка texts.res: {changedCellCount:N0} ячеек.");
+        _undo.Push(frame);
+        _redo.Clear();
+        RefreshValidationDeferred();
+        StatusText = $"Вставлено из Excel в texts.res: {changedCellCount:N0} ячеек.";
         RaiseCommandStates();
         return true;
     }
@@ -2649,12 +2771,21 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasChanges));
     }
 
-    private void RefreshLocalizationOwners(LocalizationEntryViewModel entry)
+    private void RefreshLocalizationOwners(LocalizationEntryViewModel entry) =>
+        RefreshLocalizationOwners([entry]);
+
+    private void RefreshLocalizationOwners(IEnumerable<LocalizationEntryViewModel> entries)
     {
+        HashSet<LocalizationEntryViewModel> entrySet = entries.ToHashSet();
+        if (entrySet.Count == 0)
+        {
+            return;
+        }
+
         foreach (RecordRowViewModel record in Databases
                      .SelectMany(database => database.Tables)
                      .SelectMany(table => table.Records)
-                     .Where(record => record.RelatedTexts.Contains(entry)))
+                     .Where(record => record.RelatedTexts.Any(entrySet.Contains)))
         {
             record.RefreshLocalizationState();
             _service.RefreshRelatedSounds(record);
