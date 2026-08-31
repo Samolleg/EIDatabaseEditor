@@ -48,7 +48,8 @@ internal static class Program
                 ShutdownMode = ShutdownMode.OnExplicitShutdown,
             };
             application.InitializeComponent();
-            var window = new MainWindow(preferences);
+            var recoveryStore = new RecoverySnapshotStore(Path.Combine(uiSettingsRoot, "recovery"));
+            var window = new MainWindow(preferences, recoveryStore);
             VerifyBranding(window);
             VerifyLongTextEditorDialog();
             VerifyContrastStyles(application, window);
@@ -58,6 +59,7 @@ internal static class Program
             VerifyDatabaseTableNavigation();
             VerifyPreferencesStore();
             VerifyRecoverySnapshotStore();
+            VerifyStartupRecoveryPrompt();
             if (args.Length > 0)
             {
                 string? screenshotPath = args.Length > 1 ? args[1] : null;
@@ -260,6 +262,33 @@ internal static class Program
                 "Команда добавления должна называться «Новая строка» и объяснять безопасное клонирование выбранной строки.");
         }
 
+        string[] splitterNames =
+        [
+            "SidebarSplitter",
+            "FormulaSplitter",
+            "TextsFormulaSplitter",
+            "DetailsPaneSplitter",
+            "LocalizationSoundSplitter",
+            "BriefingScenesSplitter",
+            "BriefingTimelineSplitter",
+        ];
+        if (splitterNames.Any(name =>
+                window.FindName(name) is not GridSplitter { ShowsPreview: false }))
+        {
+            throw new InvalidOperationException(
+                "Навигация, строки формул, вспомогательные панели и редактор брифингов должны менять размер в реальном времени.");
+        }
+
+        if (window.FindName("SidebarColumn") is not ColumnDefinition { MinWidth: 220, MaxWidth: 520 } ||
+            window.FindName("FormulaPaneRow") is not RowDefinition { MinHeight: 60, MaxHeight: 240 } ||
+            window.FindName("TextsFormulaPaneRow") is not RowDefinition { MinHeight: 70, MaxHeight: 300 } ||
+            window.FindName("BriefingScenesColumn") is not ColumnDefinition { MinWidth: 170, MaxWidth: 520 } ||
+            window.FindName("BriefingTimelineColumn") is not ColumnDefinition { MinWidth: 300, MaxWidth: 900 })
+        {
+            throw new InvalidOperationException(
+                "Изменяемые панели должны иметь безопасные минимальные и максимальные размеры.");
+        }
+
         if (window.FindName("InterfaceScaleText") is not TextBlock scaleText ||
             window.FindName("ScaleDownButton") is not Button ||
             window.FindName("ScaleUpButton") is not Button ||
@@ -442,7 +471,24 @@ internal static class Program
             });
         store.RememberInterfaceScale(1.25);
         store.RememberSoundPaneHeight(420);
+        store.RememberLayout(new EditorLayoutState
+        {
+            SidebarWidth = 344,
+            DetailsPaneHeight = 438,
+            LocalizationPaneRatio = 0.62,
+            FormulaBarHeight = 118,
+            TextsFormulaBarHeight = 164,
+            BriefingScenesWidth = 288,
+            BriefingTimelineWidth = 612,
+            MainWindowWidth = 1730,
+            MainWindowHeight = 1030,
+            MainWindowMaximized = true,
+            LongTextEditorWidth = 1110,
+            LongTextEditorHeight = 790,
+            LongTextEditorMaximized = true,
+        });
         var reopenedStore = new EditorPreferencesStore(settingsPath);
+        EditorLayoutState reopenedLayout = reopenedStore.GetLayout();
         if (!string.Equals(
                 reopenedStore.GetLastDatabaseDirectory(),
                 Path.GetFullPath(databaseDirectory),
@@ -451,10 +497,32 @@ internal static class Program
             reopenedStore.GetColumnWidth("items.materials", "texts:title") != 211 ||
             reopenedStore.GetColumnWidth("items.materials", "invalid") is not null ||
             reopenedStore.GetInterfaceScale() != 1.25 ||
-            reopenedStore.GetSoundPaneHeight() != 420)
+            reopenedStore.GetSoundPaneHeight() != 438 ||
+            reopenedLayout.SidebarWidth != 344 ||
+            reopenedLayout.DetailsPaneHeight != 438 ||
+            reopenedLayout.LocalizationPaneRatio != 0.62 ||
+            reopenedLayout.FormulaBarHeight != 118 ||
+            reopenedLayout.TextsFormulaBarHeight != 164 ||
+            reopenedLayout.BriefingScenesWidth != 288 ||
+            reopenedLayout.BriefingTimelineWidth != 612 ||
+            reopenedLayout.MainWindowWidth != 1730 ||
+            reopenedLayout.MainWindowHeight != 1030 ||
+            !reopenedLayout.MainWindowMaximized ||
+            reopenedLayout.LongTextEditorWidth != 1110 ||
+            reopenedLayout.LongTextEditorHeight != 790 ||
+            !reopenedLayout.LongTextEditorMaximized)
         {
             throw new InvalidOperationException(
-                "Настройки должны сохранять последнюю папку, ширины колонок, масштаб интерфейса и высоту панели реплик.");
+                "Настройки должны сохранять последнюю папку, ширины колонок, масштаб и всю модульную раскладку редактора.");
+        }
+
+        reopenedStore.ResetLayout();
+        EditorLayoutState resetLayout = new EditorPreferencesStore(settingsPath).GetLayout();
+        if (resetLayout.SidebarWidth != 300 || resetLayout.DetailsPaneHeight != 360 ||
+            resetLayout.FormulaBarHeight != 60 || resetLayout.BriefingTimelineWidth != 460 ||
+            resetLayout.MainWindowMaximized || resetLayout.LongTextEditorMaximized)
+        {
+            throw new InvalidOperationException("Сброс макета должен возвращать проверенные размеры по умолчанию.");
         }
 
         reopenedStore.RememberDatabasePath(databasePath);
@@ -493,9 +561,12 @@ internal static class Program
         }
 
         RecoverySnapshot? reopened = store.FindLatest(sourcePath);
+        IReadOnlyList<RecoverySnapshot> available = store.FindAvailable();
         int completeSnapshotCount = Directory.EnumerateFiles(recoveryDirectory, "recovery.json", SearchOption.AllDirectories).Count();
         if (latest is null || reopened is null ||
             !string.Equals(latest.DatabasePath, reopened.DatabasePath, StringComparison.OrdinalIgnoreCase) ||
+            available.Count != 1 ||
+            !string.Equals(available[0].SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase) ||
             completeSnapshotCount != 2)
         {
             throw new InvalidOperationException(
@@ -506,7 +577,7 @@ internal static class Program
         {
             stream.WriteByte(5);
         }
-        if (store.FindLatest(sourcePath) is not null)
+        if (store.FindLatest(sourcePath) is not null || store.FindAvailable().Count != 0)
         {
             throw new InvalidOperationException(
                 "Аварийная копия не должна предлагаться после внешнего изменения исходного database.res.");
@@ -520,6 +591,86 @@ internal static class Program
         }
 
         Directory.Delete(root, recursive: true);
+    }
+
+    private static void VerifyStartupRecoveryPrompt()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "EI-Database-Studio-UiSmoke",
+            "startup-recovery-" + Guid.NewGuid().ToString("N"));
+        string sourceDirectory = Path.Combine(root, "source");
+        string recoveryDirectory = Path.Combine(root, "recovery");
+        Directory.CreateDirectory(sourceDirectory);
+        string sourcePath = Path.Combine(sourceDirectory, "database.res");
+        File.WriteAllBytes(sourcePath, [1, 2, 3, 4]);
+        var recoveryStore = new RecoverySnapshotStore(recoveryDirectory);
+        RecoverySnapshotDraft draft = recoveryStore.Prepare(sourcePath);
+        File.WriteAllBytes(draft.DatabasePath, [4, 3, 2, 1]);
+        recoveryStore.Complete(
+            sourcePath,
+            draft,
+            new SavePairCopyResult(
+                new SaveCopyResult(draft.DatabasePath, 4, "DB", true, 0),
+                null),
+            pendingSound: null);
+
+        var startupWindow = new MainWindow(
+            new EditorPreferencesStore(Path.Combine(root, "settings.json")),
+            recoveryStore);
+        bool promptSeen = false;
+        Exception? promptFailure = null;
+        startupWindow.Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() =>
+            {
+                RecoverySessionDialog? dialog = null;
+                try
+                {
+                    dialog = Application.Current.Windows.OfType<RecoverySessionDialog>().SingleOrDefault();
+                    if (dialog is null)
+                    {
+                        throw new InvalidOperationException(
+                            "Диалог аварийного восстановления не появился вместе с запуском окна.");
+                    }
+
+                    promptSeen = true;
+                    dialog.DialogResult = false;
+                }
+                catch (Exception exception)
+                {
+                    promptFailure = exception;
+                    if (dialog?.IsVisible is true)
+                    {
+                        dialog.DialogResult = false;
+                    }
+                }
+            }));
+
+        try
+        {
+            startupWindow.Show();
+            startupWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            if (promptFailure is not null)
+            {
+                throw new InvalidOperationException(
+                    "Не пройдена проверка предложения аварийной копии при запуске.",
+                    promptFailure);
+            }
+
+            if (!promptSeen ||
+                startupWindow.DataContext is not MainWindowViewModel startupViewModel ||
+                startupViewModel.DatabaseCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Аварийная копия должна предлагаться до ручного выбора database.res и не открываться после отказа.");
+            }
+        }
+        finally
+        {
+            startupWindow.Close();
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     private static void VerifyRealWorkspace(MainWindow window, string sourcePath, string? screenshotPath)
@@ -1742,6 +1893,34 @@ internal static class Program
                 "Изменение вычисляемого номера строки должно отклоняться до модификации модели.");
         }
 
+        SpreadsheetColumnViewModel computedFloat = materials.Columns.First(column =>
+            !column.IsEditable && column.Kind == "Float32" &&
+            materials.Records.Any(record => GetSpreadsheetText(record, column).Contains('.')));
+        RecordRowViewModel computedRow = materials.Records.First(record =>
+            GetSpreadsheetText(record, computedFloat).Contains('.'));
+        DataGridColumn computedGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, computedFloat));
+        string computedValue = GetSpreadsheetText(computedRow, computedFloat);
+        recordsGrid.CurrentCell = new DataGridCellInfo(computedRow, computedGridColumn);
+        if (!window.TryBuildPasteCells(
+                [[computedValue.Replace('.', ',')]],
+                out IReadOnlyList<SpreadsheetPasteCell> computedCells,
+                out string? computedError) ||
+            computedCells.Count != 0)
+        {
+            throw new InvalidOperationException(
+                $"Неизменное вычисляемое число с десятичной запятой из Excel должно пропускаться автоматически: {computedError}");
+        }
+
+        if (window.TryBuildPasteCells([["999999"]], out _, out computedError) ||
+            string.IsNullOrWhiteSpace(computedError) ||
+            !computedError.Contains(computedFloat.Title, StringComparison.Ordinal) ||
+            computedError.Contains(nameof(SpreadsheetColumnViewModel), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Ошибка вставки в вычисляемую колонку должна показывать короткое понятное название, а не внутреннее описание объекта.");
+        }
+
         _ = localizationTitleGridColumn;
         _ = localizationKeyGridColumn;
         _ = localizationDescriptionGridColumn;
@@ -2272,7 +2451,9 @@ internal static class Program
             "EI-Database-Studio-UiSmoke",
             "close-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(settingsRoot);
-        var closeWindow = new MainWindow(new EditorPreferencesStore(Path.Combine(settingsRoot, "settings.json")));
+        var closeWindow = new MainWindow(
+            new EditorPreferencesStore(Path.Combine(settingsRoot, "settings.json")),
+            new RecoverySnapshotStore(Path.Combine(settingsRoot, "recovery")));
         try
         {
             if (closeWindow.DataContext is not MainWindowViewModel closeViewModel)
@@ -2381,11 +2562,11 @@ internal static class Program
             localizationGrid.FontSize < 14 ||
             localizationGrid.RowHeight < 38 ||
             localizationGrid.ColumnHeaderHeight < 40 ||
-            Math.Abs(tableGap) > 1)
+            tableGap < 0 || tableGap > 8)
         {
             throw new InvalidOperationException(
                 "Основная и связанная таблицы должны использовать единую читаемую типографику, " +
-                "а строка формул должна непосредственно соединяться с заголовками таблицы. " +
+                "а строку формул должен отделять от таблицы только узкий рабочий разделитель. " +
                 $"records={recordsGrid.FontSize:0.#}/{recordsGrid.RowHeight:0.#}/{recordsGrid.ColumnHeaderHeight:0.#}, " +
                 $"texts={localizationGrid.FontSize:0.#}/{localizationGrid.RowHeight:0.#}/{localizationGrid.ColumnHeaderHeight:0.#}, " +
                 $"gap={tableGap:0.#}.");

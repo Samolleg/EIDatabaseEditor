@@ -82,33 +82,52 @@ internal sealed class RecoverySnapshotStore
                      .Where(File.Exists)
                      .OrderByDescending(File.GetLastWriteTimeUtc))
         {
-            try
+            RecoverySnapshot? snapshot = TryReadSnapshot(manifestPath, fullSourcePath);
+            if (snapshot is not null)
             {
-                RecoverySnapshotManifest? manifest = JsonSerializer.Deserialize<RecoverySnapshotManifest>(
-                    File.ReadAllBytes(manifestPath));
-                if (manifest is null ||
-                    !string.Equals(Path.GetFullPath(manifest.SourcePath), fullSourcePath, StringComparison.OrdinalIgnoreCase) ||
-                    !File.Exists(manifest.DatabasePath) ||
-                    manifest.SourceLastWriteUtc != File.GetLastWriteTimeUtc(fullSourcePath) ||
-                    (manifest.TextsPath is not null && !File.Exists(manifest.TextsPath)))
-                {
-                    continue;
-                }
-
-                return MapManifest(manifestPath, manifest);
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
-            catch (JsonException)
-            {
+                return snapshot;
             }
         }
 
         return null;
+    }
+
+    public IReadOnlyList<RecoverySnapshot> FindAvailable()
+    {
+        if (!Directory.Exists(_rootPath))
+        {
+            return [];
+        }
+
+        var snapshots = new List<RecoverySnapshot>();
+        try
+        {
+            foreach (DirectoryInfo sourceDirectory in new DirectoryInfo(_rootPath).EnumerateDirectories()
+                         .Where(directory => !directory.Attributes.HasFlag(FileAttributes.ReparsePoint)))
+            {
+                RecoverySnapshot? latest = sourceDirectory.EnumerateDirectories()
+                    .Where(directory => !directory.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                    .Select(directory => Path.Combine(directory.FullName, "recovery.json"))
+                    .Where(File.Exists)
+                    .OrderByDescending(File.GetLastWriteTimeUtc)
+                    .Select(manifestPath => TryReadSnapshot(manifestPath, expectedSourcePath: null))
+                    .FirstOrDefault(snapshot => snapshot is not null);
+                if (latest is not null)
+                {
+                    snapshots.Add(latest);
+                }
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        return snapshots
+            .OrderByDescending(snapshot => snapshot.CreatedUtc)
+            .ToArray();
     }
 
     public void Abandon(RecoverySnapshotDraft draft) => TryDeleteSnapshotDirectory(draft.DirectoryPath);
@@ -224,7 +243,50 @@ internal sealed class RecoverySnapshotStore
         }
     }
 
+    private static RecoverySnapshot? TryReadSnapshot(string manifestPath, string? expectedSourcePath)
+    {
+        try
+        {
+            RecoverySnapshotManifest? manifest = JsonSerializer.Deserialize<RecoverySnapshotManifest>(
+                File.ReadAllBytes(manifestPath));
+            if (manifest is null || string.IsNullOrWhiteSpace(manifest.SourcePath))
+            {
+                return null;
+            }
+
+            string sourcePath = Path.GetFullPath(manifest.SourcePath);
+            if ((expectedSourcePath is not null &&
+                 !string.Equals(sourcePath, expectedSourcePath, StringComparison.OrdinalIgnoreCase)) ||
+                !File.Exists(sourcePath) ||
+                !File.Exists(manifest.DatabasePath) ||
+                manifest.SourceLastWriteUtc != File.GetLastWriteTimeUtc(sourcePath) ||
+                (manifest.TextsPath is not null && !File.Exists(manifest.TextsPath)))
+            {
+                return null;
+            }
+
+            return MapManifest(manifestPath, manifest);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
     private static RecoverySnapshot MapManifest(string manifestPath, RecoverySnapshotManifest manifest) => new(
+        Path.GetFullPath(manifest.SourcePath),
         manifest.DatabasePath,
         manifest.TextsPath,
         manifest.CreatedUtc,
@@ -255,6 +317,7 @@ internal sealed class RecoverySnapshotStore
 internal sealed record RecoverySnapshotDraft(string DirectoryPath, string DatabasePath);
 
 internal sealed record RecoverySnapshot(
+    string SourcePath,
     string DatabasePath,
     string? TextsPath,
     DateTime CreatedUtc,

@@ -173,6 +173,57 @@ internal sealed class EditorPreferencesStore
         SaveSettings(settings);
     }
 
+    public EditorLayoutState GetLayout()
+    {
+        EditorPreferences settings = LoadSettings();
+        EditorLayoutState layout = NormalizeLayout(settings.Layout ?? new EditorLayoutState());
+        if (settings.SoundPaneHeight is double legacyHeight &&
+            IsValidSoundPaneHeight(legacyHeight) &&
+            settings.Layout is null)
+        {
+            layout.DetailsPaneHeight = legacyHeight;
+        }
+
+        return layout;
+    }
+
+    public void RememberLayout(EditorLayoutState layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        EditorPreferences settings = LoadSettings();
+        settings.Layout = NormalizeLayout(layout);
+        settings.SoundPaneHeight = settings.Layout.DetailsPaneHeight;
+        SaveSettings(settings);
+    }
+
+    public void ResetLayout()
+    {
+        EditorPreferences settings = LoadSettings();
+        settings.Layout = new EditorLayoutState();
+        settings.SoundPaneHeight = settings.Layout.DetailsPaneHeight;
+        SaveSettings(settings);
+    }
+
+    private static EditorLayoutState NormalizeLayout(EditorLayoutState source) => new()
+    {
+        SidebarWidth = Clamp(source.SidebarWidth, 220, 520, 300),
+        DetailsPaneHeight = Clamp(source.DetailsPaneHeight, 180, 900, 360),
+        LocalizationPaneRatio = Clamp(source.LocalizationPaneRatio, 0.2, 0.8, 0.45),
+        FormulaBarHeight = Clamp(source.FormulaBarHeight, 60, 240, 60),
+        TextsFormulaBarHeight = Clamp(source.TextsFormulaBarHeight, 70, 300, 86),
+        BriefingScenesWidth = Clamp(source.BriefingScenesWidth, 170, 520, 220),
+        BriefingTimelineWidth = Clamp(source.BriefingTimelineWidth, 300, 900, 460),
+        MainWindowWidth = Clamp(source.MainWindowWidth, 1180, 5000, 1440),
+        MainWindowHeight = Clamp(source.MainWindowHeight, 680, 3000, 900),
+        MainWindowMaximized = source.MainWindowMaximized,
+        LongTextEditorWidth = Clamp(source.LongTextEditorWidth, 640, 3000, 940),
+        LongTextEditorHeight = Clamp(source.LongTextEditorHeight, 440, 2200, 680),
+        LongTextEditorMaximized = source.LongTextEditorMaximized,
+    };
+
+    private static double Clamp(double value, double minimum, double maximum, double fallback) =>
+        double.IsFinite(value) ? Math.Clamp(value, minimum, maximum) : fallback;
+
     private EditorPreferences LoadSettings()
     {
         try
@@ -255,5 +306,36 @@ internal sealed class EditorPreferencesStore
         public double? SoundPaneHeight { get; set; }
 
         public Dictionary<string, Dictionary<string, double>> ColumnWidths { get; set; } = [];
+
+        public EditorLayoutState? Layout { get; set; }
     }
+}
+
+internal sealed class EditorLayoutState
+{
+    public double SidebarWidth { get; set; } = 300;
+
+    public double DetailsPaneHeight { get; set; } = 360;
+
+    public double LocalizationPaneRatio { get; set; } = 0.45;
+
+    public double FormulaBarHeight { get; set; } = 60;
+
+    public double TextsFormulaBarHeight { get; set; } = 86;
+
+    public double BriefingScenesWidth { get; set; } = 220;
+
+    public double BriefingTimelineWidth { get; set; } = 460;
+
+    public double MainWindowWidth { get; set; } = 1440;
+
+    public double MainWindowHeight { get; set; } = 900;
+
+    public bool MainWindowMaximized { get; set; }
+
+    public double LongTextEditorWidth { get; set; } = 940;
+
+    public double LongTextEditorHeight { get; set; } = 680;
+
+    public bool LongTextEditorMaximized { get; set; }
 }

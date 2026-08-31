@@ -385,7 +385,7 @@
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="300" />
+                        <ColumnDefinition x:Name="HeaderSidebarColumn" Width="300" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
@@ -414,6 +414,14 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button x:Name="ResetLayoutButton"
+                                Style="{StaticResource RoundedButton}"
+                                Content="Макет"
+                                MinHeight="0"
+                                Padding="10,5"
+                                Margin="0,0,8,0"
+                                Click="ResetLayoutButton_Click"
+                                ToolTip="Вернуть стандартные размеры панелей и вспомогательных окон" />
                         <Border x:Name="InterfaceScaleControl"
                                 Margin="0,0,8,0"
                                 Padding="3"
@@ -472,7 +480,8 @@
 
             <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="300" />
+                    <ColumnDefinition x:Name="SidebarColumn" Width="300" MinWidth="220" MaxWidth="520" />
+                    <ColumnDefinition Width="7" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
@@ -680,8 +689,22 @@
                     </Grid>
                 </Border>
 
+                <GridSplitter x:Name="SidebarSplitter"
+                              Grid.Column="1"
+                              Width="7"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Stretch"
+                              ResizeDirection="Columns"
+                              ResizeBehavior="PreviousAndNext"
+                              ShowsPreview="False"
+                              Background="{StaticResource StrongBorderBrush}"
+                              Cursor="SizeWE"
+                              DragDelta="SidebarSplitter_DragDelta"
+                              DragCompleted="LayoutSplitter_DragCompleted"
+                              ToolTip="Изменить ширину навигации" />
+
                 <!-- Workspace -->
-                <Grid Grid.Column="1">
+                <Grid Grid.Column="2">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="82" />
                         <RowDefinition Height="Auto" />
@@ -946,8 +969,8 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="8" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="0" />
+                                    <RowDefinition x:Name="TextsFormulaPaneRow" Height="86" MinHeight="70" MaxHeight="300" />
+                                    <RowDefinition Height="7" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="34" />
                                 </Grid.RowDefinitions>
@@ -1008,7 +1031,7 @@
                                         Padding="0">
                                     <Grid>
                                         <Grid.RowDefinitions>
-                                            <RowDefinition Height="86" />
+                                            <RowDefinition Height="*" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions>
@@ -1022,7 +1045,6 @@
                                         <TextBox x:Name="TextsFormulaAddressBox"
                                                  Grid.Column="0"
                                                  Style="{StaticResource FormulaTextBox}"
-                                                 Height="86"
                                                  Padding="8,6"
                                                  IsReadOnly="True"
                                                  Focusable="False"
@@ -1047,7 +1069,6 @@
                                         <TextBox x:Name="TextsFormulaEditorBox"
                                                  Grid.Column="2"
                                                  Style="{StaticResource FormulaTextBox}"
-                                                 Height="86"
                                                  Padding="10,8"
                                                  FontSize="14"
                                                  AcceptsReturn="True"
@@ -1067,7 +1088,6 @@
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="▤"
                                                 Width="44"
-                                                Height="86"
                                                 FontSize="17"
                                                 Margin="0"
                                                 IsEnabled="False"
@@ -1079,7 +1099,6 @@
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="×"
                                                 Width="36"
-                                                Height="86"
                                                 FontSize="17"
                                                 Margin="0"
                                                 Click="TextsFormulaCancelButton_Click"
@@ -1090,7 +1109,6 @@
                                                 Content="✓"
                                                 Foreground="{StaticResource LocalizationAccentBrush}"
                                                 Width="36"
-                                                Height="86"
                                                 FontSize="16"
                                                 Margin="0"
                                                 Click="TextsFormulaApplyButton_Click"
@@ -1106,6 +1124,18 @@
                                                    Visibility="Collapsed" />
                                     </Grid>
                                 </Border>
+                                <GridSplitter x:Name="TextsFormulaSplitter"
+                                              Grid.Row="3"
+                                              Height="7"
+                                              HorizontalAlignment="Stretch"
+                                              VerticalAlignment="Stretch"
+                                              ResizeDirection="Rows"
+                                              ResizeBehavior="PreviousAndNext"
+                                              ShowsPreview="False"
+                                              Background="{StaticResource LocalizationBorderBrush}"
+                                              Cursor="SizeNS"
+                                              DragCompleted="LayoutSplitter_DragCompleted"
+                                              ToolTip="Изменить высоту строки формул texts.res" />
                                 <Border Grid.Row="4" CornerRadius="0,0,10,10" ClipToBounds="True" BorderBrush="{StaticResource LocalizationBorderBrush}" BorderThickness="1">
                                     <DataGrid x:Name="TextsGrid"
                                               ItemsSource="{Binding TextsView}"
@@ -1165,8 +1195,8 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="10" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="0" />
+                                    <RowDefinition x:Name="FormulaPaneRow" Height="60" MinHeight="60" MaxHeight="240" />
+                                    <RowDefinition Height="7" />
                                     <RowDefinition Height="*" />
                                     <RowDefinition Height="34" />
                                 </Grid.RowDefinitions>
@@ -1280,7 +1310,7 @@
                                         Visibility="{Binding IsBriefingsTable, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
                                     <Grid>
                                         <Grid.RowDefinitions>
-                                            <RowDefinition Height="60" />
+                                            <RowDefinition Height="*" />
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions>
@@ -1294,7 +1324,6 @@
                                         <TextBox x:Name="FormulaAddressBox"
                                                  Grid.Column="0"
                                                  Style="{StaticResource FormulaTextBox}"
-                                                 Height="60"
                                                  Padding="8,6"
                                                  IsReadOnly="True"
                                                  Focusable="False"
@@ -1319,7 +1348,6 @@
                                         <TextBox x:Name="FormulaEditorBox"
                                                  Grid.Column="2"
                                                  Style="{StaticResource FormulaTextBox}"
-                                                 Height="60"
                                                  Padding="10,8"
                                                  FontSize="14"
                                                  AcceptsReturn="True"
@@ -1339,7 +1367,6 @@
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="▤"
                                                 Width="44"
-                                                Height="60"
                                                 FontSize="17"
                                                 Margin="0"
                                                 IsEnabled="False"
@@ -1351,7 +1378,6 @@
                                                 Style="{StaticResource FormulaActionButton}"
                                                 Content="×"
                                                 Width="36"
-                                                Height="60"
                                                 FontSize="17"
                                                 Margin="0"
                                                 Click="FormulaCancelButton_Click"
@@ -1362,7 +1388,6 @@
                                                 Content="✓"
                                                 Foreground="{StaticResource AccentBrush}"
                                                 Width="36"
-                                                Height="60"
                                                 FontSize="16"
                                                 Margin="0"
                                                 Click="FormulaApplyButton_Click"
@@ -1378,6 +1403,19 @@
                                                    Visibility="Collapsed" />
                                     </Grid>
                                 </Border>
+
+                                <GridSplitter x:Name="FormulaSplitter"
+                                              Grid.Row="3"
+                                              Height="7"
+                                              HorizontalAlignment="Stretch"
+                                              VerticalAlignment="Stretch"
+                                              ResizeDirection="Rows"
+                                              ResizeBehavior="PreviousAndNext"
+                                              ShowsPreview="False"
+                                              Background="{StaticResource StrongBorderBrush}"
+                                              Cursor="SizeNS"
+                                              DragCompleted="LayoutSplitter_DragCompleted"
+                                              ToolTip="Изменить высоту строки формул" />
 
                                 <Border x:Name="RecordsTableBorder" Grid.Row="4" CornerRadius="0,0,10,10" ClipToBounds="True" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
                                     <Grid>
@@ -1436,15 +1474,16 @@
                                                       Background="{StaticResource StrongBorderBrush}"
                                                       ResizeDirection="Rows"
                                                       ResizeBehavior="PreviousAndNext"
-                                                      ShowsPreview="True"
+                                                      ShowsPreview="False"
                                                       Cursor="SizeNS"
                                                       DragCompleted="DetailsPaneSplitter_DragCompleted"
                                                       ToolTip="Потяните, чтобы увеличить или уменьшить область русских текстов и реплик"
-                                                      Visibility="{Binding SelectedRecord.HasSoundReferences, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                      Visibility="{Binding SelectedRecordHasDetails, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         <Grid x:Name="DetailsPane" Grid.Row="2">
                                             <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="*" />
+                                                <RowDefinition x:Name="LocalizationPaneRow" Height="*" />
+                                                <RowDefinition Height="7" />
+                                                <RowDefinition x:Name="SoundPaneRow" Height="*" />
                                             </Grid.RowDefinitions>
                                         <Border x:Name="LocalizationPanel"
                                                 Grid.Row="0"
@@ -1452,7 +1491,6 @@
                                                 BorderBrush="{StaticResource LocalizationBorderBrush}"
                                                 BorderThickness="0,2,0,0"
                                                 Padding="12,10"
-                                                MaxHeight="280"
                                                 Visibility="{Binding SelectedRecord.HasLocalizationReferences, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid>
                                                 <Grid.RowDefinitions>
@@ -1559,8 +1597,20 @@
                                                 </DataGrid>
                                             </Grid>
                                         </Border>
+                                        <GridSplitter x:Name="LocalizationSoundSplitter"
+                                                      Grid.Row="1"
+                                                      Height="7"
+                                                      HorizontalAlignment="Stretch"
+                                                      VerticalAlignment="Stretch"
+                                                      ResizeDirection="Rows"
+                                                      ResizeBehavior="PreviousAndNext"
+                                                      ShowsPreview="False"
+                                                      Background="{StaticResource LocalizationBorderBrush}"
+                                                      Cursor="SizeNS"
+                                                      DragCompleted="LayoutSplitter_DragCompleted"
+                                                      ToolTip="Изменить соотношение русских текстов и связанных звуков" />
                                         <Border x:Name="SoundPanel"
-                                                Grid.Row="1"
+                                                Grid.Row="2"
                                                 Background="{StaticResource SoundSurfaceBrush}"
                                                 BorderBrush="{StaticResource SoundBorderBrush}"
                                                 BorderThickness="0,2,0,0"
@@ -1623,8 +1673,10 @@
                                     <Grid x:Name="BriefingWorkspace"
                                           Visibility="{Binding IsBriefingsTable, Converter={StaticResource BooleanToVisibilityConverter}}">
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="220" MinWidth="190" />
-                                            <ColumnDefinition Width="460" MinWidth="360" />
+                                            <ColumnDefinition x:Name="BriefingScenesColumn" Width="220" MinWidth="170" MaxWidth="520" />
+                                            <ColumnDefinition Width="7" />
+                                            <ColumnDefinition x:Name="BriefingTimelineColumn" Width="460" MinWidth="300" MaxWidth="900" />
+                                            <ColumnDefinition Width="7" />
                                             <ColumnDefinition Width="*" MinWidth="350" />
                                         </Grid.ColumnDefinitions>
 
@@ -1699,7 +1751,20 @@
                                             </Grid>
                                         </Border>
 
-                                        <Border Grid.Column="1"
+                                        <GridSplitter x:Name="BriefingScenesSplitter"
+                                                      Grid.Column="1"
+                                                      Width="7"
+                                                      HorizontalAlignment="Stretch"
+                                                      VerticalAlignment="Stretch"
+                                                      ResizeDirection="Columns"
+                                                      ResizeBehavior="PreviousAndNext"
+                                                      ShowsPreview="False"
+                                                      Background="{StaticResource StrongBorderBrush}"
+                                                      Cursor="SizeWE"
+                                                      DragCompleted="LayoutSplitter_DragCompleted"
+                                                      ToolTip="Изменить ширину списка брифингов" />
+
+                                        <Border Grid.Column="2"
                                                 Background="#151B19"
                                                 BorderBrush="{StaticResource StrongBorderBrush}"
                                                 BorderThickness="0,0,1,0">
@@ -1799,7 +1864,20 @@
                                             </Grid>
                                         </Border>
 
-                                        <Border Grid.Column="2" Background="#111615" Padding="18,14">
+                                        <GridSplitter x:Name="BriefingTimelineSplitter"
+                                                      Grid.Column="3"
+                                                      Width="7"
+                                                      HorizontalAlignment="Stretch"
+                                                      VerticalAlignment="Stretch"
+                                                      ResizeDirection="Columns"
+                                                      ResizeBehavior="PreviousAndNext"
+                                                      ShowsPreview="False"
+                                                      Background="{StaticResource StrongBorderBrush}"
+                                                      Cursor="SizeWE"
+                                                      DragCompleted="LayoutSplitter_DragCompleted"
+                                                      ToolTip="Изменить ширину сценария брифинга" />
+
+                                        <Border Grid.Column="4" Background="#111615" Padding="18,14">
                                             <Grid>
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />

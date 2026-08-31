@@ -1,0 +1,129 @@
+<Window x:Class="EvilIslands.DatabaseEditor.App.Dialogs.RecoverySessionDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="Аварийное восстановление"
+        Width="760"
+        Height="430"
+        MinWidth="620"
+        MinHeight="340"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        ResizeMode="CanResize"
+        ShowInTaskbar="False"
+        Background="Transparent">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            CornerRadius="0"
+                            GlassFrameThickness="0"
+                            ResizeBorderThickness="7"
+                            UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Border Background="{StaticResource WindowBrush}"
+            BorderBrush="{StaticResource StrongBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="12">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="50" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Border Background="{StaticResource SidebarBrush}"
+                    CornerRadius="12,12,0,0"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <TextBlock Text="Найдены аварийные копии"
+                               Margin="18,0"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center" />
+                    <Button HorizontalAlignment="Right"
+                            Width="46"
+                            Style="{StaticResource ChromeButton}"
+                            Content="×"
+                            Click="CancelButton_Click"
+                            ToolTip="Продолжить без восстановления"
+                            shell:WindowChrome.IsHitTestVisibleInChrome="True" />
+                </Grid>
+            </Border>
+
+            <StackPanel Grid.Row="1" Margin="20,17,20,12">
+                <TextBlock Text="Редактор завершил предыдущую сессию с несохранёнными изменениями. Выберите копию для безопасного открытия."
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           TextWrapping="Wrap" />
+                <TextBlock Text="Исходные игровые файлы не будут перезаписаны. После проверки сохраните восстановленную копию под нужным именем."
+                           Margin="0,6,0,0"
+                           Foreground="{StaticResource MutedTextBrush}"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <ListBox x:Name="RecoveryList"
+                     Grid.Row="2"
+                     Margin="20,0"
+                     Background="#151918"
+                     BorderBrush="{StaticResource StrongBorderBrush}"
+                     BorderThickness="1"
+                     SelectionChanged="RecoveryList_SelectionChanged">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Padding" Value="12,10" />
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                        <Style.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Background" Value="#23463B" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding DirectoryName}"
+                                           Margin="0,3,12,0"
+                                           Foreground="{StaticResource MutedTextBrush}"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding SourcePath}" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding CreatedText}"
+                                       Foreground="{StaticResource AccentBrush}"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Grid Grid.Row="3" Margin="20,14,20,18">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="1"
+                        Style="{StaticResource RoundedButton}"
+                        Content="Продолжить без восстановления"
+                        Padding="14,8"
+                        Margin="0,0,10,0"
+                        Click="CancelButton_Click" />
+                <Button x:Name="OpenButton"
+                        Grid.Column="2"
+                        Style="{StaticResource AccentButton}"
+                        Content="Открыть выбранную копию"
+                        Padding="14,8"
+                        Click="OpenButton_Click" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

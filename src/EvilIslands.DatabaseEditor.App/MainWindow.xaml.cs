@@ -31,12 +31,11 @@ public partial class MainWindow : Window
     private const string LocalizationDescriptionColumnIdentity = "texts:description";
     private const string SoundSummaryColumnIdentity = "sound:summary";
     private const string SoundPathColumnIdentity = "sound:path";
-    private const double DefaultSoundPaneHeight = 360;
     private static readonly double[] InterfaceScaleSteps = [1.0, 1.1, 1.25, 1.5];
     private static readonly IValueConverter ProjectionConverter = new SpreadsheetProjectionConverter();
     private readonly MainWindowViewModel _viewModel;
     private readonly EditorPreferencesStore _preferences;
-    private readonly RecoverySnapshotStore _recoveryStore = new();
+    private readonly RecoverySnapshotStore _recoveryStore;
     private readonly DispatcherTimer _recoveryTimer;
     private readonly Dictionary<DataGridColumn, SpreadsheetColumnViewModel> _spreadsheetColumns = [];
     private DataGridColumn? _localizationKeyColumn;
@@ -49,27 +48,31 @@ public partial class MainWindow : Window
     private MainWindowViewModel? _spreadsheetViewModel;
     private HwndSource? _windowSource;
     private string? _columnLayoutTableKey;
-    private double _preferredSoundPaneHeight;
+    private EditorLayoutState _layout;
     private bool _hasExplicitInterfaceScale;
     private bool _allowClose;
     private bool _closePromptPending;
     private bool _recoverySaveRunning;
+    private bool _startupRecoveryChecked;
     private readonly MediaPlayer _soundPreviewPlayer = new();
     private string? _soundPreviewPath;
 
-    public MainWindow() : this(new EditorPreferencesStore())
+    public MainWindow() : this(new EditorPreferencesStore(), new RecoverySnapshotStore())
     {
     }
 
-    internal MainWindow(EditorPreferencesStore preferences)
+    internal MainWindow(EditorPreferencesStore preferences, RecoverySnapshotStore? recoveryStore = null)
     {
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
+        _recoveryStore = recoveryStore ?? new RecoverySnapshotStore();
         InitializeComponent();
-        _preferredSoundPaneHeight = _preferences.GetSoundPaneHeight() ?? DefaultSoundPaneHeight;
+        _layout = _preferences.GetLayout();
+        ApplyStoredLayout();
         double? storedInterfaceScale = _preferences.GetInterfaceScale();
         _hasExplicitInterfaceScale = storedInterfaceScale.HasValue;
         SetInterfaceScale(storedInterfaceScale ?? 1.0, persist: false);
         SourceInitialized += Window_SourceInitialized;
+        ContentRendered += Window_ContentRendered;
         Closed += Window_Closed;
         RecordsGrid.CommandBindings.Add(new CommandBinding(
             ApplicationCommands.Copy,
@@ -131,6 +134,30 @@ public partial class MainWindow : Window
         finally
         {
             _recoverySaveRunning = false;
+        }
+    }
+
+    private async void Window_ContentRendered(object? sender, EventArgs e)
+    {
+        if (_startupRecoveryChecked)
+        {
+            return;
+        }
+
+        _startupRecoveryChecked = true;
+        IReadOnlyList<RecoverySnapshot> snapshots = _recoveryStore.FindAvailable();
+        if (snapshots.Count == 0)
+        {
+            return;
+        }
+
+        var dialog = new RecoverySessionDialog(snapshots)
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() is true && dialog.SelectedSnapshot is not null)
+        {
+            await OpenRecoverySnapshotAsync(dialog.SelectedSnapshot);
         }
     }
 
@@ -417,6 +444,7 @@ public partial class MainWindow : Window
         }
 
         PersistCurrentColumnWidths();
+        CaptureAndPersistLayout();
         ClearFormulaBar();
         RecordsGrid.FrozenColumnCount = 0;
         const int fixedColumnCount = 1;
@@ -1282,7 +1310,7 @@ public partial class MainWindow : Window
             Owner = this,
         };
 
-        if (dialog.ShowDialog() is true && dialog.WasApplied)
+        if (ShowLongTextEditorDialog(dialog) is true && dialog.WasApplied)
         {
             SetTextsFormulaError(null);
             TextsFormulaEditorBox.Text = context.ReadValue();
@@ -1635,7 +1663,7 @@ public partial class MainWindow : Window
             Owner = this,
         };
 
-        if (dialog.ShowDialog() is true && dialog.WasApplied)
+        if (ShowLongTextEditorDialog(dialog) is true && dialog.WasApplied)
         {
             SetFormulaError(null);
             FormulaEditorBox.Text = context.ReadValue();
@@ -1940,7 +1968,7 @@ public partial class MainWindow : Window
                 return true;
             }
 
-            if (string.Equals(value, GetClipboardCellText(record, column), StringComparison.Ordinal))
+            if (AreClipboardValuesEquivalent(value, GetClipboardCellText(record, column), descriptor: null))
             {
                 cell = null;
                 error = null;
@@ -1952,7 +1980,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (string.Equals(value, GetClipboardCellText(record, column), StringComparison.Ordinal))
+        if (AreClipboardValuesEquivalent(value, GetClipboardCellText(record, column), descriptor))
         {
             cell = null;
             error = null;
@@ -1960,9 +1988,75 @@ public partial class MainWindow : Window
         }
 
         cell = null;
-        string columnName = column.Header?.ToString() ?? "служебный столбец";
-        error = $"Столбец «{columnName}» вычисляется редактором и не может быть изменён. " +
-                "Если он попал в скопированный диапазон из Excel без изменений, вставка пропустит его автоматически.";
+        string columnName = descriptor?.Title ?? column.Header as string ?? "служебный столбец";
+        string address = GetSpreadsheetAddress(RecordsGrid, record, column);
+        error = $"Ячейка {address}, столбец «{columnName}»: значение вычисляется редактором и не может быть изменено. " +
+                "Если эта колонка попала в скопированный диапазон из Excel без изменений, вставка пропустит её автоматически.";
+        return false;
+    }
+
+    private static bool AreClipboardValuesEquivalent(
+        string incoming,
+        string current,
+        SpreadsheetColumnViewModel? descriptor)
+    {
+        if (string.Equals(incoming, current, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return descriptor?.Kind switch
+        {
+            "Float32" => TryParseSpreadsheetNumber(incoming, out double incomingNumber) &&
+                         TryParseSpreadsheetNumber(current, out double currentNumber) &&
+                         incomingNumber.Equals(currentNumber),
+            "Int32" => int.TryParse(incoming.Trim(), NumberStyles.Integer, CultureInfo.CurrentCulture, out int incomingInt) &&
+                       int.TryParse(current.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int currentInt) &&
+                       incomingInt == currentInt,
+            "UInt32" or "Byte" => uint.TryParse(incoming.Trim(), NumberStyles.Integer, CultureInfo.CurrentCulture, out uint incomingUInt) &&
+                                  uint.TryParse(current.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint currentUInt) &&
+                                  incomingUInt == currentUInt,
+            "Boolean" => TryParseSpreadsheetBoolean(incoming, out bool incomingBool) &&
+                         TryParseSpreadsheetBoolean(current, out bool currentBool) &&
+                         incomingBool == currentBool,
+            _ => false,
+        };
+    }
+
+    private static bool TryParseSpreadsheetNumber(string text, out double value)
+    {
+        string normalized = text.Trim().Replace('\u00A0', ' ');
+        if (double.TryParse(normalized, NumberStyles.Float, CultureInfo.CurrentCulture, out value) ||
+            double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+        {
+            return true;
+        }
+
+        return normalized.Contains(',') &&
+               !normalized.Contains('.') &&
+               double.TryParse(
+                   normalized.Replace(',', '.'),
+                   NumberStyles.Float,
+                   CultureInfo.InvariantCulture,
+                   out value);
+    }
+
+    private static bool TryParseSpreadsheetBoolean(string text, out bool value)
+    {
+        string normalized = text.Trim();
+        if (normalized is "1" or "TRUE" or "True" or "true" or "ИСТИНА" or "Истина" or "истина")
+        {
+            value = true;
+            return true;
+        }
+
+        if (normalized is "0" or "FALSE" or "False" or "false" or "ЛОЖЬ" or "Ложь" or "ложь")
+        {
+            value = false;
+            return true;
+        }
+
+        value = false;
         return false;
     }
 
@@ -2166,6 +2260,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        await OpenRecoverySnapshotAsync(snapshot);
+    }
+
+    private async Task OpenRecoverySnapshotAsync(RecoverySnapshot snapshot)
+    {
         await _viewModel.OpenPathAsync(snapshot.DatabasePath);
         if (_viewModel.HasDocument && string.Equals(
                 Path.GetFullPath(_viewModel.SourcePath),
@@ -2438,6 +2537,132 @@ public partial class MainWindow : Window
             ? 1.25
             : 1.0;
 
+    private void ApplyStoredLayout()
+    {
+        Rect workArea = SystemParameters.WorkArea;
+        Width = Math.Clamp(_layout.MainWindowWidth, MinWidth, Math.Max(MinWidth, workArea.Width));
+        Height = Math.Clamp(_layout.MainWindowHeight, MinHeight, Math.Max(MinHeight, workArea.Height));
+        SidebarColumn.Width = new GridLength(_layout.SidebarWidth, GridUnitType.Pixel);
+        HeaderSidebarColumn.Width = new GridLength(_layout.SidebarWidth + 7, GridUnitType.Pixel);
+        FormulaPaneRow.Height = new GridLength(_layout.FormulaBarHeight, GridUnitType.Pixel);
+        TextsFormulaPaneRow.Height = new GridLength(_layout.TextsFormulaBarHeight, GridUnitType.Pixel);
+        BriefingScenesColumn.Width = new GridLength(_layout.BriefingScenesWidth, GridUnitType.Pixel);
+        BriefingTimelineColumn.Width = new GridLength(_layout.BriefingTimelineWidth, GridUnitType.Pixel);
+        if (_layout.MainWindowMaximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    private bool? ShowLongTextEditorDialog(LongTextEditorDialog dialog)
+    {
+        Rect workArea = SystemParameters.WorkArea;
+        dialog.Width = Math.Clamp(_layout.LongTextEditorWidth, dialog.MinWidth, Math.Max(dialog.MinWidth, workArea.Width));
+        dialog.Height = Math.Clamp(_layout.LongTextEditorHeight, dialog.MinHeight, Math.Max(dialog.MinHeight, workArea.Height));
+        if (_layout.LongTextEditorMaximized)
+        {
+            dialog.Loaded += MaximizeLongTextEditorOnLoad;
+        }
+
+        bool? result = dialog.ShowDialog();
+        dialog.Loaded -= MaximizeLongTextEditorOnLoad;
+        Rect restoreBounds = dialog.RestoreBounds;
+        if (dialog.WindowState == WindowState.Normal)
+        {
+            _layout.LongTextEditorWidth = dialog.ActualWidth;
+            _layout.LongTextEditorHeight = dialog.ActualHeight;
+        }
+        else if (!restoreBounds.IsEmpty)
+        {
+            _layout.LongTextEditorWidth = restoreBounds.Width;
+            _layout.LongTextEditorHeight = restoreBounds.Height;
+        }
+
+        _layout.LongTextEditorMaximized = dialog.WindowState == WindowState.Maximized;
+        _preferences.RememberLayout(_layout);
+        return result;
+    }
+
+    private static void MaximizeLongTextEditorOnLoad(object sender, RoutedEventArgs e)
+    {
+        if (sender is Window window)
+        {
+            window.WindowState = WindowState.Maximized;
+        }
+    }
+
+    private void CaptureAndPersistLayout()
+    {
+        if (SidebarColumn.ActualWidth > 0)
+        {
+            _layout.SidebarWidth = SidebarColumn.ActualWidth;
+            HeaderSidebarColumn.Width = new GridLength(_layout.SidebarWidth + 7, GridUnitType.Pixel);
+        }
+
+        if (FormulaPaneRow.ActualHeight > 0)
+        {
+            _layout.FormulaBarHeight = FormulaPaneRow.ActualHeight;
+        }
+
+        if (TextsFormulaPaneRow.ActualHeight > 0)
+        {
+            _layout.TextsFormulaBarHeight = TextsFormulaPaneRow.ActualHeight;
+        }
+
+        if (BriefingScenesColumn.ActualWidth > 0)
+        {
+            _layout.BriefingScenesWidth = BriefingScenesColumn.ActualWidth;
+        }
+
+        if (BriefingTimelineColumn.ActualWidth > 0)
+        {
+            _layout.BriefingTimelineWidth = BriefingTimelineColumn.ActualWidth;
+        }
+
+        if (DetailsPane.ActualHeight >= 180 && _spreadsheetViewModel?.SelectedRecordHasDetails is true)
+        {
+            _layout.DetailsPaneHeight = DetailsPane.ActualHeight;
+        }
+
+        bool hasLocalization = _spreadsheetViewModel?.SelectedRecord?.HasLocalizationReferences is true;
+        bool hasSound = _spreadsheetViewModel?.SelectedRecordHasSoundReferences is true;
+        if (hasLocalization && hasSound && LocalizationPanel.ActualHeight > 0 && SoundPanel.ActualHeight > 0)
+        {
+            double combined = LocalizationPanel.ActualHeight + SoundPanel.ActualHeight;
+            _layout.LocalizationPaneRatio = LocalizationPanel.ActualHeight / combined;
+        }
+
+        if (WindowState == WindowState.Normal && ActualWidth >= MinWidth && ActualHeight >= MinHeight)
+        {
+            _layout.MainWindowWidth = ActualWidth;
+            _layout.MainWindowHeight = ActualHeight;
+        }
+
+        _layout.MainWindowMaximized = WindowState == WindowState.Maximized;
+        _preferences.RememberLayout(_layout);
+    }
+
+    private void LayoutSplitter_DragCompleted(object sender, DragCompletedEventArgs e) =>
+        CaptureAndPersistLayout();
+
+    private void SidebarSplitter_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (HeaderSidebarColumn is not null && SidebarColumn is not null)
+        {
+            HeaderSidebarColumn.Width = new GridLength(SidebarColumn.ActualWidth + 7, GridUnitType.Pixel);
+        }
+    }
+
+    private void ResetLayoutButton_Click(object sender, RoutedEventArgs e)
+    {
+        _preferences.ResetLayout();
+        _layout = _preferences.GetLayout();
+        WindowState = WindowState.Normal;
+        ApplyStoredLayout();
+        UpdateDetailsPaneLayout();
+        _viewModel.ReportLayoutReset();
+    }
+
     private void UpdateDetailsPaneLayout()
     {
         if (DetailsPaneRow is null || RecordsTableBorder is null)
@@ -2445,12 +2670,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool hasSound = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
-                        _spreadsheetViewModel.SelectedRecordHasSoundReferences;
-        if (!hasSound)
+        bool inRecords = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records;
+        bool hasLocalization = inRecords && _spreadsheetViewModel?.SelectedRecord?.HasLocalizationReferences is true;
+        bool hasSound = inRecords && _spreadsheetViewModel?.SelectedRecordHasSoundReferences is true;
+        if (!hasLocalization && !hasSound)
         {
             DetailsPaneRow.MinHeight = 0;
             DetailsPaneRow.Height = GridLength.Auto;
+            LocalizationPaneRow.Height = GridLength.Auto;
+            SoundPaneRow.Height = GridLength.Auto;
+            LocalizationSoundSplitter.Visibility = Visibility.Collapsed;
             return;
         }
 
@@ -2460,21 +2689,47 @@ public partial class MainWindow : Window
             : 640;
         DetailsPaneRow.MinHeight = minimumDetailsHeight;
         DetailsPaneRow.Height = new GridLength(
-            Math.Clamp(_preferredSoundPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
+            Math.Clamp(_layout.DetailsPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
             GridUnitType.Pixel);
+
+        if (hasLocalization && hasSound)
+        {
+            DetailsPaneRow.MinHeight = 240;
+            LocalizationPaneRow.MinHeight = 100;
+            SoundPaneRow.MinHeight = 120;
+            LocalizationPaneRow.Height = new GridLength(_layout.LocalizationPaneRatio, GridUnitType.Star);
+            SoundPaneRow.Height = new GridLength(1 - _layout.LocalizationPaneRatio, GridUnitType.Star);
+            LocalizationSoundSplitter.Visibility = Visibility.Visible;
+        }
+        else if (hasLocalization)
+        {
+            LocalizationPaneRow.MinHeight = 0;
+            SoundPaneRow.MinHeight = 0;
+            LocalizationPaneRow.Height = new GridLength(1, GridUnitType.Star);
+            SoundPaneRow.Height = new GridLength(0);
+            LocalizationSoundSplitter.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            LocalizationPaneRow.MinHeight = 0;
+            SoundPaneRow.MinHeight = 0;
+            LocalizationPaneRow.Height = new GridLength(0);
+            SoundPaneRow.Height = new GridLength(1, GridUnitType.Star);
+            LocalizationSoundSplitter.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void DetailsPaneSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
     {
-        if (_spreadsheetViewModel?.SelectedRecordHasSoundReferences is not true ||
+        if (_spreadsheetViewModel?.SelectedRecordHasDetails is not true ||
             !double.IsFinite(DetailsPane.ActualHeight) ||
             DetailsPane.ActualHeight < 180)
         {
             return;
         }
 
-        _preferredSoundPaneHeight = DetailsPane.ActualHeight;
-        _preferences.RememberSoundPaneHeight(_preferredSoundPaneHeight);
+        _layout.DetailsPaneHeight = DetailsPane.ActualHeight;
+        CaptureAndPersistLayout();
     }
 
     private void SoundLinksGrid_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
@@ -2719,6 +2974,7 @@ public partial class MainWindow : Window
     {
         _recoveryTimer.Stop();
         _recoveryTimer.Tick -= RecoveryTimer_Tick;
+        ContentRendered -= Window_ContentRendered;
         DataContextChanged -= MainWindow_DataContextChanged;
         if (_spreadsheetViewModel is not null)
         {

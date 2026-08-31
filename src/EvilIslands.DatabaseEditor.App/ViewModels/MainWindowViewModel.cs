@@ -453,6 +453,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(SelectedRecordHasTexts));
                 OnPropertyChanged(nameof(SelectedRecordTextCount));
                 OnPropertyChanged(nameof(SelectedRecordHasSoundReferences));
+                OnPropertyChanged(nameof(SelectedRecordHasDetails));
                 OnPropertyChanged(nameof(SelectedRecordSoundCount));
                 RefreshBriefingPhraseSelection();
                 (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -468,6 +469,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public int SelectedRecordTextCount => SelectedRecord?.RelatedTextCount ?? 0;
 
     public bool SelectedRecordHasSoundReferences => SelectedRecord?.HasSoundReferences is true;
+
+    public bool SelectedRecordHasDetails =>
+        SelectedRecord?.HasLocalizationReferences is true || SelectedRecordHasSoundReferences;
 
     public int SelectedRecordSoundCount => SelectedRecord?.ResolvedSoundCount ?? 0;
 
@@ -2394,6 +2398,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     internal void ReportSpreadsheetError(string message) => ShowError(message);
+
+    internal void ReportLayoutReset()
+    {
+        NotificationMessage = "Стандартная раскладка восстановлена.";
+        StatusText = "Размеры панелей и вспомогательных окон сброшены.";
+    }
 
     private void NavigateToDiagnostic(ValidationMessageViewModel? diagnostic)
     {
