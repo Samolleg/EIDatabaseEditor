@@ -24,6 +24,8 @@ namespace EvilIslands.DatabaseEditor.App;
 
 public partial class MainWindow : Window
 {
+    internal static TimeSpan RecoveryAutosaveInterval { get; } = TimeSpan.FromMinutes(5);
+
     private const int WmGetMinMaxInfo = 0x0024;
     private const uint MonitorDefaultToNearest = 0x00000002;
     private const string LocalizationKeyColumnIdentity = "texts:key";
@@ -54,6 +56,9 @@ public partial class MainWindow : Window
     private bool _closePromptPending;
     private bool _recoverySaveRunning;
     private bool _startupRecoveryChecked;
+    private DetachedDetailsWindow? _detailsWindow;
+    private bool _preserveDetailsDetachedState;
+    private bool _detailsDetachScheduled;
     private readonly MediaPlayer _soundPreviewPlayer = new();
     private string? _soundPreviewPath;
 
@@ -93,11 +98,13 @@ public partial class MainWindow : Window
         _viewModel.SearchFocusRequested += ViewModel_SearchFocusRequested;
         _recoveryTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromSeconds(30),
+            Interval = RecoveryAutosaveInterval,
         };
         _recoveryTimer.Tick += RecoveryTimer_Tick;
         _recoveryTimer.Start();
     }
+
+    internal bool IsDetailsPaneDetached => _detailsWindow is not null;
 
     private async void RecoveryTimer_Tick(object? sender, EventArgs e)
     {
@@ -1745,10 +1752,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            string text = SpreadsheetClipboardText.Serialize(matrix);
-            var data = new DataObject();
-            data.SetData(DataFormats.UnicodeText, text);
-            data.SetData(DataFormats.Text, text);
+            DataObject data = CreateSpreadsheetClipboardDataObject(matrix);
             SetClipboardDataWithRetry(data);
             _viewModel.ReportSpreadsheetCopy(matrix.Count, matrix.Max(row => row.Count));
         }
@@ -2093,6 +2097,18 @@ public partial class MainWindow : Window
         return Equals(column.Header, "#")
             ? record.Index.ToString(CultureInfo.InvariantCulture)
             : string.Empty;
+    }
+
+    internal static DataObject CreateSpreadsheetClipboardDataObject(
+        IReadOnlyList<IReadOnlyList<string>> matrix)
+    {
+        SpreadsheetClipboardPayload payload = SpreadsheetClipboardText.CreatePayload(matrix);
+        var data = new DataObject();
+        data.SetData(DataFormats.UnicodeText, payload.Text);
+        data.SetData(DataFormats.Text, payload.Text);
+        data.SetData(DataFormats.CommaSeparatedValue, payload.Csv);
+        data.SetData(DataFormats.Html, payload.Html);
+        return data;
     }
 
     private static void SetClipboardDataWithRetry(IDataObject data)
@@ -2619,9 +2635,16 @@ public partial class MainWindow : Window
             _layout.BriefingTimelineWidth = BriefingTimelineColumn.ActualWidth;
         }
 
-        if (DetailsPane.ActualHeight >= 180 && _spreadsheetViewModel?.SelectedRecordHasDetails is true)
+        if (_detailsWindow is null &&
+            DetailsPane.ActualHeight >= 180 &&
+            _spreadsheetViewModel?.SelectedRecordHasDetails is true)
         {
             _layout.DetailsPaneHeight = DetailsPane.ActualHeight;
+        }
+
+        else if (_detailsWindow is not null)
+        {
+            CaptureDetachedDetailsWindowLayout(_detailsWindow);
         }
 
         bool hasLocalization = _spreadsheetViewModel?.SelectedRecord?.HasLocalizationReferences is true;
@@ -2670,6 +2693,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_detailsWindow is not null)
+        {
+            _preserveDetailsDetachedState = false;
+            _detailsWindow.Close();
+        }
+
         _preferences.ResetLayout();
         _layout = _preferences.GetLayout();
         WindowState = WindowState.Normal;
@@ -2688,6 +2717,35 @@ public partial class MainWindow : Window
         bool inRecords = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records;
         bool hasLocalization = inRecords && _spreadsheetViewModel?.SelectedRecord?.HasLocalizationReferences is true;
         bool hasSound = inRecords && _spreadsheetViewModel?.SelectedRecordHasSoundReferences is true;
+        ConfigureDetailsPaneContents(hasLocalization, hasSound);
+
+        if (_detailsWindow is not null)
+        {
+            DetailsSplitterRow.Height = new GridLength(0);
+            DetailsPaneRow.MinHeight = 0;
+            DetailsPaneRow.Height = new GridLength(0);
+            UpdateDetailsDetachButtons();
+            return;
+        }
+
+        DetailsSplitterRow.Height = GridLength.Auto;
+        UpdateDetailsDetachButtons();
+
+        if (_layout.DetailsPaneDetached && (hasLocalization || hasSound) && !_detailsDetachScheduled && IsLoaded)
+        {
+            _detailsDetachScheduled = true;
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Loaded,
+                new Action(() =>
+                {
+                    _detailsDetachScheduled = false;
+                    if (_layout.DetailsPaneDetached && _detailsWindow is null)
+                    {
+                        DetachDetailsPane(persist: false);
+                    }
+                }));
+        }
+
         if (!hasLocalization && !hasSound)
         {
             DetailsPaneRow.MinHeight = 0;
@@ -2702,14 +2760,17 @@ public partial class MainWindow : Window
         double maximumDetailsHeight = RecordsTableBorder.ActualHeight > 0
             ? Math.Max(minimumDetailsHeight, RecordsTableBorder.ActualHeight - 160)
             : 640;
-        DetailsPaneRow.MinHeight = minimumDetailsHeight;
+        DetailsPaneRow.MinHeight = hasLocalization && hasSound ? 240 : minimumDetailsHeight;
         DetailsPaneRow.Height = new GridLength(
             Math.Clamp(_layout.DetailsPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
             GridUnitType.Pixel);
 
+    }
+
+    private void ConfigureDetailsPaneContents(bool hasLocalization, bool hasSound)
+    {
         if (hasLocalization && hasSound)
         {
-            DetailsPaneRow.MinHeight = 240;
             LocalizationPaneRow.MinHeight = 100;
             SoundPaneRow.MinHeight = 120;
             LocalizationPaneRow.Height = new GridLength(_layout.LocalizationPaneRatio, GridUnitType.Star);
@@ -2732,6 +2793,112 @@ public partial class MainWindow : Window
             SoundPaneRow.Height = new GridLength(1, GridUnitType.Star);
             LocalizationSoundSplitter.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void DetailsPaneDetachButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_detailsWindow is not null)
+        {
+            _preserveDetailsDetachedState = false;
+            _detailsWindow.Close();
+            return;
+        }
+
+        DetachDetailsPane(persist: true);
+    }
+
+    private void DetachDetailsPane(bool persist)
+    {
+        if (_detailsWindow is not null || DetailsPane.Parent is not Grid parent)
+        {
+            return;
+        }
+
+        if (persist)
+        {
+            CaptureAndPersistLayout();
+        }
+
+        parent.Children.Remove(DetailsPane);
+        Rect workArea = SystemParameters.WorkArea;
+        var window = new DetachedDetailsWindow
+        {
+            Owner = this,
+            DataContext = DataContext,
+            Width = Math.Clamp(_layout.DetailsWindowWidth, 720, Math.Max(720, workArea.Width)),
+            Height = Math.Clamp(_layout.DetailsWindowHeight, 420, Math.Max(420, workArea.Height)),
+        };
+        window.PaneContent = DetailsPane;
+        window.Closing += DetachedDetailsWindow_Closing;
+        _detailsWindow = window;
+        _layout.DetailsPaneDetached = true;
+        UpdateDetailsPaneLayout();
+
+        if (_layout.DetailsWindowMaximized)
+        {
+            window.Loaded += MaximizeDetachedDetailsWindowOnLoad;
+        }
+
+        window.Show();
+        if (persist)
+        {
+            _preferences.RememberLayout(_layout);
+        }
+    }
+
+    private static void MaximizeDetachedDetailsWindowOnLoad(object sender, RoutedEventArgs e)
+    {
+        if (sender is DetachedDetailsWindow window)
+        {
+            window.Loaded -= MaximizeDetachedDetailsWindowOnLoad;
+            window.WindowState = WindowState.Maximized;
+        }
+    }
+
+    private void DetachedDetailsWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (sender is not DetachedDetailsWindow window || !ReferenceEquals(window, _detailsWindow))
+        {
+            return;
+        }
+
+        CaptureDetachedDetailsWindowLayout(window);
+        window.Closing -= DetachedDetailsWindow_Closing;
+        window.PaneContent = null;
+        GenericRecordsWorkspace.Children.Add(DetailsPane);
+        Grid.SetRow(DetailsPane, 2);
+        _detailsWindow = null;
+        _layout.DetailsPaneDetached = _preserveDetailsDetachedState;
+        _preserveDetailsDetachedState = false;
+        UpdateDetailsPaneLayout();
+        _preferences.RememberLayout(_layout);
+    }
+
+    private void CaptureDetachedDetailsWindowLayout(DetachedDetailsWindow window)
+    {
+        Rect bounds = window.WindowState == WindowState.Normal
+            ? new Rect(window.Left, window.Top, window.ActualWidth, window.ActualHeight)
+            : window.RestoreBounds;
+        if (!bounds.IsEmpty && bounds.Width >= window.MinWidth && bounds.Height >= window.MinHeight)
+        {
+            _layout.DetailsWindowWidth = bounds.Width;
+            _layout.DetailsWindowHeight = bounds.Height;
+        }
+
+        _layout.DetailsWindowMaximized = window.WindowState == WindowState.Maximized;
+        _layout.DetailsPaneDetached = true;
+    }
+
+    private void UpdateDetailsDetachButtons()
+    {
+        string label = _detailsWindow is null ? "↗ Открепить" : "↙ Закрепить";
+        string toolTip = _detailsWindow is null
+            ? "Открыть связанные тексты и звук в отдельном окне"
+            : "Вернуть связанные тексты и звук под основную таблицу";
+        LocalizationDetachButton.Content = label;
+        LocalizationDetachButton.ToolTip = toolTip;
+        SoundDetachButton.Content = label;
+        SoundDetachButton.ToolTip = toolTip;
     }
 
     private void DetailsPaneSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
@@ -2784,6 +2951,22 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (Keyboard.Modifiers == ModifierKeys.Control &&
+            e.Key is Key.C or Key.V &&
+            _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
+            RecordsGrid.IsKeyboardFocusWithin)
+        {
+            RecordsGrid.CommitEdit(DataGridEditingUnit.Cell, exitEditingMode: true);
+            RecordsGrid.CommitEdit(DataGridEditingUnit.Row, exitEditingMode: true);
+            RoutedCommand clipboardCommand = e.Key == Key.C ? ApplicationCommands.Copy : ApplicationCommands.Paste;
+            if (clipboardCommand.CanExecute(null, RecordsGrid))
+            {
+                clipboardCommand.Execute(null, RecordsGrid);
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.Key == Key.F2 &&
             _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
             !FormulaEditorBox.IsKeyboardFocusWithin &&
@@ -2987,6 +3170,12 @@ public partial class MainWindow : Window
 
     private void DetachAndDispose()
     {
+        if (_detailsWindow is not null)
+        {
+            _preserveDetailsDetachedState = true;
+            _detailsWindow.Close();
+        }
+
         _recoveryTimer.Stop();
         _recoveryTimer.Tick -= RecoveryTimer_Tick;
         ContentRendered -= Window_ContentRendered;

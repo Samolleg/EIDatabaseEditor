@@ -67,6 +67,7 @@ internal static class Program
                 ValidateScreenshotPath(args[0], screenshotPath);
                 VerifyRealWorkspace(window, args[0], screenshotPath);
             }
+            VerifyDetachedDetailsWindow();
             window.Close();
             application.Shutdown();
             Console.WriteLine("PASS: MainWindow XAML загружен при культуре ru-RU.");
@@ -228,6 +229,12 @@ internal static class Program
 
     private static void VerifySpreadsheetGridDefinition(MainWindow window)
     {
+        if (MainWindow.RecoveryAutosaveInterval != TimeSpan.FromMinutes(5))
+        {
+            throw new InvalidOperationException(
+                "Аварийное автосохранение должно выполняться раз в пять минут, как в табличных редакторах.");
+        }
+
         if (window.FindName("RecordsGrid") is not DataGrid grid)
         {
             throw new InvalidOperationException("Экран таблицы обязан содержать Excel-подобный RecordsGrid.");
@@ -269,6 +276,13 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Сброс раскладки должен быть явно назван и предупреждать об обязательном подтверждении.");
+        }
+
+        if (window.FindName("LocalizationDetachButton") is not Button { Content: "↗ Открепить" } ||
+            window.FindName("SoundDetachButton") is not Button { Content: "↗ Открепить" })
+        {
+            throw new InvalidOperationException(
+                "Нижние связанные тексты и звук должны явно открепляться в отдельное окно.");
         }
 
         string[] splitterNames =
@@ -387,6 +401,54 @@ internal static class Program
             throw new InvalidOperationException(
                 "Excel-совместимый TSV должен сохранять строки, табуляции и кавычки без лишней последней строки.");
         }
+
+        DataObject data = MainWindow.CreateSpreadsheetClipboardDataObject(source);
+        string[] requiredFormats =
+        [
+            DataFormats.UnicodeText,
+            DataFormats.Text,
+            DataFormats.CommaSeparatedValue,
+            DataFormats.Html,
+        ];
+        if (requiredFormats.Any(format => !data.GetDataPresent(format, autoConvert: false)) ||
+            data.GetData(DataFormats.Html, autoConvert: false) is not string html)
+        {
+            throw new InvalidOperationException(
+                "Копирование диапазона должно публиковать текстовый, CSV и HTML-форматы Microsoft Excel.");
+        }
+
+        byte[] htmlBytes = System.Text.Encoding.UTF8.GetBytes(html);
+        int startFragment = ReadClipboardHtmlOffset(html, "StartFragment:");
+        int endFragment = ReadClipboardHtmlOffset(html, "EndFragment:");
+        if (startFragment < 0 || endFragment <= startFragment || endFragment > htmlBytes.Length)
+        {
+            throw new InvalidOperationException("HTML-буфер содержит неверные границы табличного фрагмента.");
+        }
+
+        string fragment = System.Text.Encoding.UTF8.GetString(
+            htmlBytes,
+            startFragment,
+            endFragment - startFragment);
+        if (!fragment.StartsWith("<table>", StringComparison.Ordinal) ||
+            !fragment.Contains("строка 1<br>строка 2", StringComparison.Ordinal) ||
+            !fragment.Contains("кавычка &quot; внутри", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "HTML-буфер должен передавать Excel настоящий прямоугольник ячеек с Unicode и переносами строк.");
+        }
+
+        static int ReadClipboardHtmlOffset(string value, string label)
+        {
+            int start = value.IndexOf(label, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                return -1;
+            }
+
+            start += label.Length;
+            int end = value.IndexOf("\r\n", start, StringComparison.Ordinal);
+            return end > start && int.TryParse(value[start..end], out int offset) ? offset : -1;
+        }
     }
 
     private static void VerifyNavigationRequery(Application application)
@@ -495,6 +557,10 @@ internal static class Program
             LongTextEditorWidth = 1110,
             LongTextEditorHeight = 790,
             LongTextEditorMaximized = true,
+            DetailsPaneDetached = true,
+            DetailsWindowWidth = 1240,
+            DetailsWindowHeight = 740,
+            DetailsWindowMaximized = true,
         });
         var reopenedStore = new EditorPreferencesStore(settingsPath);
         EditorLayoutState reopenedLayout = reopenedStore.GetLayout();
@@ -519,7 +585,11 @@ internal static class Program
             !reopenedLayout.MainWindowMaximized ||
             reopenedLayout.LongTextEditorWidth != 1110 ||
             reopenedLayout.LongTextEditorHeight != 790 ||
-            !reopenedLayout.LongTextEditorMaximized)
+            !reopenedLayout.LongTextEditorMaximized ||
+            !reopenedLayout.DetailsPaneDetached ||
+            reopenedLayout.DetailsWindowWidth != 1240 ||
+            reopenedLayout.DetailsWindowHeight != 740 ||
+            !reopenedLayout.DetailsWindowMaximized)
         {
             throw new InvalidOperationException(
                 "Настройки должны сохранять последнюю папку, ширины колонок, масштаб и всю модульную раскладку редактора.");
@@ -529,7 +599,9 @@ internal static class Program
         EditorLayoutState resetLayout = new EditorPreferencesStore(settingsPath).GetLayout();
         if (resetLayout.SidebarWidth != 300 || resetLayout.DetailsPaneHeight != 360 ||
             resetLayout.FormulaBarHeight != 60 || resetLayout.BriefingTimelineWidth != 460 ||
-            resetLayout.MainWindowMaximized || resetLayout.LongTextEditorMaximized)
+            resetLayout.MainWindowMaximized || resetLayout.LongTextEditorMaximized ||
+            resetLayout.DetailsPaneDetached || resetLayout.DetailsWindowWidth != 1080 ||
+            resetLayout.DetailsWindowHeight != 620 || resetLayout.DetailsWindowMaximized)
         {
             throw new InvalidOperationException("Сброс макета должен возвращать проверенные размеры по умолчанию.");
         }
@@ -574,7 +646,7 @@ internal static class Program
             bool cancelPromptSeen = false;
             Exception? promptFailure = null;
             resetWindow.Dispatcher.BeginInvoke(
-                DispatcherPriority.Background,
+                DispatcherPriority.Normal,
                 new Action(() =>
                 {
                     ConfirmDialog? dialog = null;
@@ -601,7 +673,6 @@ internal static class Program
                 }));
 
             resetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            resetWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             if (promptFailure is not null)
             {
                 throw new InvalidOperationException("Не пройдена отмена сброса раскладки.", promptFailure);
@@ -617,7 +688,7 @@ internal static class Program
 
             bool confirmPromptSeen = false;
             resetWindow.Dispatcher.BeginInvoke(
-                DispatcherPriority.Background,
+                DispatcherPriority.Normal,
                 new Action(() =>
                 {
                     ConfirmDialog? dialog = null;
@@ -644,7 +715,6 @@ internal static class Program
                 }));
 
             resetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            resetWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
             if (promptFailure is not null)
             {
                 throw new InvalidOperationException("Не пройден подтверждённый сброс раскладки.", promptFailure);
@@ -661,6 +731,71 @@ internal static class Program
         finally
         {
             resetWindow.Close();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void VerifyDetachedDetailsWindow()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "EI-Database-Studio-UiSmoke",
+            "detached-details-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string settingsPath = Path.Combine(root, "settings.json");
+        var window = new MainWindow(
+            new EditorPreferencesStore(settingsPath),
+            new RecoverySnapshotStore(Path.Combine(root, "recovery")));
+        DetachedDetailsWindow? detached = null;
+
+        try
+        {
+            window.Show();
+            window.UpdateLayout();
+            if (window.FindName("LocalizationDetachButton") is not Button detachButton ||
+                window.FindName("DetailsPane") is not Grid detailsPane ||
+                window.FindName("GenericRecordsWorkspace") is not Grid workspace ||
+                !workspace.Children.Contains(detailsPane))
+            {
+                throw new InvalidOperationException(
+                    "Не удалось подготовить нижнюю вспомогательную панель к откреплению.");
+            }
+
+            detachButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            detached = Application.Current.Windows
+                .OfType<DetachedDetailsWindow>()
+                .SingleOrDefault()
+                ?? throw new InvalidOperationException("Кнопка не открыла отдельное окно связанных данных.");
+            if (!window.IsDetailsPaneDetached || workspace.Children.Contains(detailsPane) ||
+                detached.PaneContent is not Grid ||
+                window.FindName("DetailsPaneRow") is not RowDefinition detailsRow ||
+                detailsRow.Height.Value != 0)
+            {
+                throw new InvalidOperationException(
+                    "Откреплённая панель должна физически покинуть основную таблицу и освободить ей место.");
+            }
+
+            detached.Width = 1260;
+            detached.Height = 760;
+            detached.Close();
+            EditorLayoutState saved = new EditorPreferencesStore(settingsPath).GetLayout();
+            if (window.IsDetailsPaneDetached || !workspace.Children.Contains(detailsPane) ||
+                saved.DetailsPaneDetached ||
+                Math.Abs(saved.DetailsWindowWidth - 1260) > 1 ||
+                Math.Abs(saved.DetailsWindowHeight - 760) > 1)
+            {
+                throw new InvalidOperationException(
+                    "Закрепление должно вернуть панель и запомнить размер отдельного окна.");
+            }
+        }
+        finally
+        {
+            if (detached?.IsVisible is true)
+            {
+                detached.Close();
+            }
+
+            window.Close();
             Directory.Delete(root, recursive: true);
         }
     }
@@ -750,37 +885,43 @@ internal static class Program
             recoveryStore);
         bool promptSeen = false;
         Exception? promptFailure = null;
-        startupWindow.Dispatcher.BeginInvoke(
-            DispatcherPriority.Background,
-            new Action(() =>
+        var promptCloser = new DispatcherTimer(DispatcherPriority.Normal, startupWindow.Dispatcher)
+        {
+            Interval = TimeSpan.FromMilliseconds(10),
+        };
+        promptCloser.Tick += (_, _) =>
+        {
+            RecoverySessionDialog? dialog = null;
+            try
             {
-                RecoverySessionDialog? dialog = null;
-                try
+                dialog = Application.Current.Windows.OfType<RecoverySessionDialog>().FirstOrDefault();
+                if (dialog is null)
                 {
-                    dialog = Application.Current.Windows.OfType<RecoverySessionDialog>().SingleOrDefault();
-                    if (dialog is null)
-                    {
-                        throw new InvalidOperationException(
-                            "Диалог аварийного восстановления не появился вместе с запуском окна.");
-                    }
+                    return;
+                }
 
+                if (ReferenceEquals(dialog.Owner, startupWindow))
+                {
                     promptSeen = true;
+                }
+                dialog.DialogResult = false;
+            }
+            catch (Exception exception)
+            {
+                promptFailure = exception;
+                promptCloser.Stop();
+                if (dialog?.IsVisible is true)
+                {
                     dialog.DialogResult = false;
                 }
-                catch (Exception exception)
-                {
-                    promptFailure = exception;
-                    if (dialog?.IsVisible is true)
-                    {
-                        dialog.DialogResult = false;
-                    }
-                }
-            }));
+            }
+        };
+        promptCloser.Start();
 
         try
         {
             startupWindow.Show();
-            startupWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            startupWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.Background);
             if (promptFailure is not null)
             {
                 throw new InvalidOperationException(
@@ -798,7 +939,15 @@ internal static class Program
         }
         finally
         {
+            promptCloser.Stop();
             startupWindow.Close();
+            foreach (MainWindow unexpectedWindow in Application.Current.Windows
+                         .OfType<MainWindow>()
+                         .Where(candidate => candidate.IsVisible)
+                         .ToArray())
+            {
+                unexpectedWindow.Close();
+            }
             Directory.Delete(root, recursive: true);
         }
     }

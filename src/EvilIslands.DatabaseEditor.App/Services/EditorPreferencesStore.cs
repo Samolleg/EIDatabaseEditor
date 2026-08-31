@@ -219,6 +219,10 @@ internal sealed class EditorPreferencesStore
         LongTextEditorWidth = Clamp(source.LongTextEditorWidth, 640, 3000, 940),
         LongTextEditorHeight = Clamp(source.LongTextEditorHeight, 440, 2200, 680),
         LongTextEditorMaximized = source.LongTextEditorMaximized,
+        DetailsPaneDetached = source.DetailsPaneDetached,
+        DetailsWindowWidth = Clamp(source.DetailsWindowWidth, 720, 3000, 1080),
+        DetailsWindowHeight = Clamp(source.DetailsWindowHeight, 420, 2200, 620),
+        DetailsWindowMaximized = source.DetailsWindowMaximized,
     };
 
     private static double Clamp(double value, double minimum, double maximum, double fallback) =>
@@ -338,4 +342,12 @@ internal sealed class EditorLayoutState
     public double LongTextEditorHeight { get; set; } = 680;
 
     public bool LongTextEditorMaximized { get; set; }
+
+    public bool DetailsPaneDetached { get; set; }
+
+    public double DetailsWindowWidth { get; set; } = 1080;
+
+    public double DetailsWindowHeight { get; set; } = 620;
+
+    public bool DetailsWindowMaximized { get; set; }
 }
