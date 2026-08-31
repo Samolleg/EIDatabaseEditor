@@ -63,6 +63,8 @@ try {
         -r $runtimeIdentifier `
         --self-contained true `
         --source $nugetSource `
+        -p:RestoreIgnoreFailedSources=true `
+        -p:NuGetAudit=false `
         --output $publishPath `
         -p:PublishSingleFile=true `
         -p:IncludeNativeLibrariesForSelfExtract=true `
