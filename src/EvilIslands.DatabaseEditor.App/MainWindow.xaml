@@ -864,6 +864,62 @@
                                         </Grid>
                                     </Border>
 
+                                    <Border Style="{StaticResource SurfaceCard}" Margin="0,0,0,16">
+                                        <StackPanel>
+                                            <TextBlock Text="Резервные копии RES" FontSize="16" FontWeight="SemiBold" />
+                                            <TextBlock Text="Для каждого подключённого файла показана последняя штатная .bak-копия. Перед восстановлением текущее состояние тоже сохраняется."
+                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                       TextWrapping="Wrap"
+                                                       Margin="0,5,0,10" />
+                                            <ItemsControl x:Name="ManagedBackupsList" ItemsSource="{Binding ManagedBackups}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid Margin="0,4,0,0" ToolTip="{Binding BackupToolTip}">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="150" />
+                                                                <ColumnDefinition Width="190" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0"
+                                                                       Text="{Binding TypeText}"
+                                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="1"
+                                                                       Text="{Binding FileName}"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       VerticalAlignment="Center"
+                                                                       Margin="8,0" />
+                                                            <TextBlock Grid.Column="2"
+                                                                       Text="{Binding BackupDetails}"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       VerticalAlignment="Center">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasBackup}" Value="False">
+                                                                                <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <Button Grid.Column="3"
+                                                                    Style="{StaticResource RoundedButton}"
+                                                                    Content="↻ Восстановить"
+                                                                    Padding="11,6"
+                                                                    Margin="12,0,0,0"
+                                                                    Command="{Binding DataContext.RestoreManagedBackupCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                                    CommandParameter="{Binding}" />
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />

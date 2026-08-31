@@ -147,10 +147,11 @@ internal static class Program
     {
         if (window.Title != "Редактор БД от Атамана — Preview" ||
             window.Icon is null ||
-            window.FindName("BrandIcon") is not Image { Source: not null })
+            window.FindName("BrandIcon") is not Image { Source: not null } ||
+            window.FindName("ManagedBackupsList") is not ItemsControl)
         {
             throw new InvalidOperationException(
-                "Окно должно использовать название и иконку «Редактор БД от Атамана».");
+                "Окно должно использовать бренд редактора и содержать управление резервными копиями RES.");
         }
     }
 
@@ -2734,6 +2735,7 @@ internal static class Program
             price.EditorText = originalPrice == "4" ? "5" : "4";
             LocalizationEntryViewModel text = material.RelatedTexts
                 .First(entry => entry.Prefix.Equals("MATERIAL", StringComparison.OrdinalIgnoreCase));
+            string originalTitle = text.Title;
             string editedTitle = text.Title + " тест";
             text.Title = editedTitle;
 
@@ -2755,6 +2757,53 @@ internal static class Program
                 !reopenedMaterial.RelatedTexts.Any(entry => entry.Title == editedTitle))
             {
                 throw new InvalidOperationException("Парное сохранение не восстановило изменения database.res и texts.res.");
+            }
+
+            ManagedBackupViewModel databaseBackup = saved.Workspace.ManagedBackups.Single(backup =>
+                backup.Kind == ManagedResKind.Database);
+            ManagedBackupViewModel textsBackup = saved.Workspace.ManagedBackups.Single(backup =>
+                backup.Kind == ManagedResKind.Texts);
+            if (!databaseBackup.HasBackup || !textsBackup.HasBackup)
+            {
+                throw new InvalidOperationException(
+                    "После парного сохранения обзор должен показать отдельные backup database.res и texts.res.");
+            }
+
+            RestoreManagedBackupResult restoredDatabase = service.RestoreManagedBackupAsync(
+                    databaseBackup,
+                    allowGameInstallationPath: false,
+                    CancellationToken.None)
+                .GetAwaiter().GetResult();
+            RecordRowViewModel databaseRestoredMaterial = restoredDatabase.Workspace.Databases
+                .SelectMany(group => group.Tables)
+                .Single(table => table.Key == "items.materials")
+                .Records.First();
+            if (databaseRestoredMaterial.GetCell(4)?.EditorText != originalPrice ||
+                !databaseRestoredMaterial.RelatedTexts.Any(entry => entry.Title == editedTitle))
+            {
+                throw new InvalidOperationException(
+                    "Отдельный откат database.res должен восстановить базу, не откатывая texts.res.");
+            }
+
+            ManagedBackupViewModel currentTextsBackup = restoredDatabase.Workspace.ManagedBackups.Single(backup =>
+                backup.Kind == ManagedResKind.Texts);
+            RestoreManagedBackupResult restoredTexts = service.RestoreManagedBackupAsync(
+                    currentTextsBackup,
+                    allowGameInstallationPath: false,
+                    CancellationToken.None)
+                .GetAwaiter().GetResult();
+            RecordRowViewModel fullyRestoredMaterial = restoredTexts.Workspace.Databases
+                .SelectMany(group => group.Tables)
+                .Single(table => table.Key == "items.materials")
+                .Records.First();
+            if (fullyRestoredMaterial.GetCell(4)?.EditorText != originalPrice ||
+                !fullyRestoredMaterial.RelatedTexts.Any(entry => entry.Title == originalTitle) ||
+                restoredTexts.Workspace.ManagedBackups
+                    .Where(backup => backup.Kind is ManagedResKind.Database or ManagedResKind.Texts)
+                    .Any(backup => !backup.HasBackup || backup.Backup?.BackupCount != 2))
+            {
+                throw new InvalidOperationException(
+                    "Раздельный откат texts.res должен восстановить текст и сохранить по две обратимые backup-копии.");
             }
 
             string copyPath = Path.Combine(root, "database.edited.res");
@@ -3708,6 +3757,12 @@ internal static class Program
 
         public Task<SaveSoundCurrentResult> SaveSoundCurrentAsync(
             PendingSoundEditViewModel edit,
+            bool allowGameInstallationPath,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<RestoreManagedBackupResult> RestoreManagedBackupAsync(
+            ManagedBackupViewModel backup,
             bool allowGameInstallationPath,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();

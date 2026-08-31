@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.IO;
 using System.Text;
 using EvilIslands.DatabaseEditor.App.Infrastructure;
 using EvilIslands.DatabaseEditor.Core;
@@ -1092,6 +1093,63 @@ internal sealed class SoundArchiveViewModel
     public int SoundResourceCount { get; }
 }
 
+internal sealed class ManagedBackupViewModel
+{
+    public ManagedBackupViewModel(
+        ManagedResKind kind,
+        string targetPath,
+        ManagedResBackupInfo? backup)
+    {
+        Kind = kind;
+        TargetPath = targetPath;
+        Backup = backup;
+    }
+
+    public ManagedResKind Kind { get; }
+
+    public string TargetPath { get; }
+
+    public ManagedResBackupInfo? Backup { get; }
+
+    public bool HasBackup => Backup is not null;
+
+    public string FileName => Path.GetFileName(TargetPath);
+
+    public string TypeText => Kind switch
+    {
+        ManagedResKind.Database => "База данных",
+        ManagedResKind.Texts => "Русские тексты",
+        ManagedResKind.Sound => "Звуковой архив",
+        _ => "RES",
+    };
+
+    public string BackupDetails => Backup is null
+        ? "Резервных копий пока нет"
+        : $"{Backup.LastWriteTimeUtc.ToLocalTime():g} · {FormatSize(Backup.FileLength)} · " +
+          $"копий: {Backup.BackupCount:N0}";
+
+    public string BackupToolTip => Backup is null
+        ? $"После сохранения {FileName} здесь появится проверенная .bak-копия."
+        : $"Текущий файл: {TargetPath}{Environment.NewLine}" +
+          $"Будет восстановлен: {Backup.BackupPath}";
+
+    private static string FormatSize(long bytes)
+    {
+        string[] units = ["Б", "КиБ", "МиБ", "ГиБ"];
+        double value = bytes;
+        var unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.Length - 1)
+        {
+            value /= 1024;
+            unitIndex++;
+        }
+
+        return unitIndex == 0
+            ? $"{bytes:N0} {units[unitIndex]}"
+            : $"{value:N1} {units[unitIndex]}";
+    }
+}
+
 internal sealed class PendingSoundEditViewModel
 {
     public PendingSoundEditViewModel(
@@ -1931,6 +1989,8 @@ internal sealed class WorkspaceSnapshot
     public IReadOnlyList<SoundArchiveViewModel> SoundArchives { get; init; } = [];
 
     public int SoundResourceCount { get; init; }
+
+    public IReadOnlyList<ManagedBackupViewModel> ManagedBackups { get; init; } = [];
 }
 
 internal sealed record SaveCopyResult(
@@ -1954,4 +2014,9 @@ internal sealed record SavePairCopyResult(
 internal sealed record SaveSoundCurrentResult(
     SoundArchiveCopyResult Save,
     IReadOnlyList<SoundArchiveViewModel> SoundArchives,
-    int SoundResourceCount);
+    int SoundResourceCount,
+    IReadOnlyList<ManagedBackupViewModel> ManagedBackups);
+
+internal sealed record RestoreManagedBackupResult(
+    ManagedResRestoreResult Restore,
+    WorkspaceSnapshot Workspace);

@@ -139,6 +139,29 @@ internal static class SafetyRegressionVerifier
                 thirdEditedText,
                 StringComparison.Ordinal),
             "Третье прямое сохранение с очисткой бэкапов повторно открывается.");
+
+        ManagedResBackupInfo latestBackup = ManagedResBackupManager.FindLatest(
+                workingPath,
+                ManagedResKind.Database)
+            ?? throw new InvalidOperationException("После прямого сохранения не найдена резервная копия database.res.");
+        FileSnapshot beforeRestore = await FileSnapshot.CaptureAsync(workingPath).ConfigureAwait(false);
+        ManagedResRestoreResult restored = await ManagedResBackupManager.RestoreLatestAsync(
+                latestBackup,
+                expectedCurrentSha256: reopenedThird.Sha256)
+            .ConfigureAwait(false);
+        DatabaseDocument reopenedRestored = DatabaseDocument.Open(workingPath);
+        FileSnapshot reverseBackup = await FileSnapshot.CaptureAsync(restored.CurrentStateBackupPath)
+            .ConfigureAwait(false);
+        log.Assert(
+            string.Equals(
+                FindField(FindPowerHit(reopenedRestored), "Price").EditorText,
+                secondEditedText,
+                StringComparison.Ordinal) &&
+            reverseBackup.ContentEquals(beforeRestore),
+            "Восстановление последнего backup возвращает предыдущую базу и сохраняет точный обратный backup текущего состояния.");
+        log.Assert(
+            ManagedResBackupManager.FindLatest(workingPath, ManagedResKind.Database)?.BackupCount == 2,
+            "После восстановления database.res остаются ровно две штатные резервные копии.");
         log.Assert(
             !Directory.EnumerateFiles(staging.RootPath, ".*.partial-*", SearchOption.TopDirectoryOnly).Any(),
             "После прямого сохранения не осталось незавершённых partial-файлов.");

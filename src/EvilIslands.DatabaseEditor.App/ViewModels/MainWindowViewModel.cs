@@ -177,6 +177,17 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         SavePendingSoundCurrentCommand = new RelayCommand(
             () => SavePendingSoundCurrentRequested?.Invoke(this, EventArgs.Empty),
             () => PendingSoundEdit is not null && !IsBusy);
+        RestoreManagedBackupCommand = new RelayCommand<ManagedBackupViewModel>(
+            backup =>
+            {
+                if (backup is not null)
+                {
+                    RestoreManagedBackupRequested?.Invoke(
+                        this,
+                        new ManagedBackupRestoreRequestedEventArgs(backup));
+                }
+            },
+            backup => backup?.HasBackup is true && HasDocument && !HasUnsavedWork && !IsBusy);
     }
 
     public event EventHandler? OpenFileRequested;
@@ -202,6 +213,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public event EventHandler? SavePendingSoundCopyRequested;
 
     public event EventHandler? SavePendingSoundCurrentRequested;
+
+    public event EventHandler<ManagedBackupRestoreRequestedEventArgs>? RestoreManagedBackupRequested;
 
     public ObservableCollection<NavigationItemViewModel> NavigationItems { get; }
 
@@ -292,6 +305,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand SavePendingSoundCopyCommand { get; }
 
     public ICommand SavePendingSoundCurrentCommand { get; }
+
+    public ICommand RestoreManagedBackupCommand { get; }
 
     public ICollectionView RecordsView
     {
@@ -856,6 +871,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ? $"♪ Звук · {SoundArchiveCount:N0} RES · {SoundResourceCount:N0} файлов"
         : "♪ Подключить звуковые RES…";
 
+    public IReadOnlyList<ManagedBackupViewModel> ManagedBackups => _workspace?.ManagedBackups ?? [];
+
     public int ResourceCount => Resources.Count;
 
     public int DatabaseCount => Databases.Count;
@@ -1121,11 +1138,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                     TextResources = _workspace.TextResources,
                     SoundArchives = result.SoundArchives,
                     SoundResourceCount = result.SoundResourceCount,
+                    ManagedBackups = result.ManagedBackups,
                 };
                 OnPropertyChanged(nameof(SoundArchiveCount));
                 OnPropertyChanged(nameof(SoundResourceCount));
                 OnPropertyChanged(nameof(SoundArchivePaths));
                 OnPropertyChanged(nameof(AttachSoundsButtonText));
+                OnPropertyChanged(nameof(ManagedBackups));
             }
 
             PendingSoundEdit = null;
@@ -1383,6 +1402,54 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         {
             ShowError($"Файл не сохранён: {UnwrapMessage(exception)}");
             StatusText = "Ошибка сохранения.";
+        }
+        finally
+        {
+            IsOperationCancelable = false;
+            IsBusy = false;
+            BusyText = string.Empty;
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+        }
+    }
+
+    public async Task RestoreManagedBackupAsync(
+        ManagedBackupViewModel backup,
+        bool allowGameInstallationPath)
+    {
+        ArgumentNullException.ThrowIfNull(backup);
+        if (_workspace is null || !backup.HasBackup || HasUnsavedWork || IsBusy)
+        {
+            return;
+        }
+
+        CancelValidation();
+        CancelOperation();
+        _operationCancellation = new CancellationTokenSource();
+        CancellationToken cancellationToken = _operationCancellation.Token;
+        IsBusy = true;
+        IsOperationCancelable = false;
+        BusyText = $"Проверка и восстановление {backup.FileName}…";
+        NotificationMessage = null;
+        StatusText = $"Восстановление {backup.FileName} из резервной копии…";
+        try
+        {
+            RestoreManagedBackupResult result = await _service.RestoreManagedBackupAsync(
+                backup,
+                allowGameInstallationPath,
+                cancellationToken);
+            ApplyWorkspace(result.Workspace);
+            LastSavedPath = result.Restore.TargetPath;
+            NotificationIsError = false;
+            NotificationMessage =
+                $"{backup.FileName} восстановлен и проверен. Состояние до отката сохранено в " +
+                $"{Path.GetFileName(result.Restore.CurrentStateBackupPath)}.";
+            StatusText = $"Восстановлено из резервной копии: {result.Restore.RestoredFromPath}";
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Резервная копия не восстановлена: {UnwrapMessage(exception)}");
+            StatusText = "Ошибка восстановления резервной копии.";
         }
         finally
         {
@@ -3341,6 +3408,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SoundResourceCount));
         OnPropertyChanged(nameof(SoundArchivePaths));
         OnPropertyChanged(nameof(AttachSoundsButtonText));
+        OnPropertyChanged(nameof(ManagedBackups));
         OnPropertyChanged(nameof(HasChanges));
     }
 
@@ -3385,6 +3453,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (CancelPendingSoundEditCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SavePendingSoundCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SavePendingSoundCurrentCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (RestoreManagedBackupCommand as RelayCommand<ManagedBackupViewModel>)?.RaiseCanExecuteChanged();
         RaiseBriefingCommandStates();
     }
 
@@ -3529,4 +3598,10 @@ internal sealed class SoundPreviewRequestedEventArgs(
     public SoundResourceInfo Resource { get; } = resource;
 
     public int PhraseNumber { get; } = phraseNumber;
+}
+
+internal sealed class ManagedBackupRestoreRequestedEventArgs(
+    ManagedBackupViewModel backup) : EventArgs
+{
+    public ManagedBackupViewModel Backup { get; } = backup;
 }

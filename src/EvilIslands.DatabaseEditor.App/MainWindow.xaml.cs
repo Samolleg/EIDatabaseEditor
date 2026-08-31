@@ -181,6 +181,7 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.ImportBriefingAudioRequested -= ViewModel_ImportBriefingAudioRequested;
             _spreadsheetViewModel.SavePendingSoundCopyRequested -= ViewModel_SavePendingSoundCopyRequested;
             _spreadsheetViewModel.SavePendingSoundCurrentRequested -= ViewModel_SavePendingSoundCurrentRequested;
+            _spreadsheetViewModel.RestoreManagedBackupRequested -= ViewModel_RestoreManagedBackupRequested;
         }
 
         _spreadsheetViewModel = e.NewValue as MainWindowViewModel;
@@ -193,6 +194,7 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.ImportBriefingAudioRequested += ViewModel_ImportBriefingAudioRequested;
             _spreadsheetViewModel.SavePendingSoundCopyRequested += ViewModel_SavePendingSoundCopyRequested;
             _spreadsheetViewModel.SavePendingSoundCurrentRequested += ViewModel_SavePendingSoundCurrentRequested;
+            _spreadsheetViewModel.RestoreManagedBackupRequested += ViewModel_RestoreManagedBackupRequested;
         }
 
         RebuildSpreadsheetColumns();
@@ -328,6 +330,41 @@ public partial class MainWindow : Window
 
         StopSoundPreview();
         await viewModel.SavePendingSoundCurrentAsync(isGamePath);
+    }
+
+    private async void ViewModel_RestoreManagedBackupRequested(
+        object? sender,
+        ManagedBackupRestoreRequestedEventArgs e)
+    {
+        MainWindowViewModel viewModel = _spreadsheetViewModel ?? _viewModel;
+        ManagedBackupViewModel backup = e.Backup;
+        if (!backup.HasBackup || viewModel.HasUnsavedWork)
+        {
+            return;
+        }
+
+        string targetPath = Path.GetFullPath(backup.TargetPath);
+        bool isGamePath = DatabaseSafetyPolicy.IsLikelyGameInstallationPath(targetPath);
+        var dialog = new ConfirmDialog(
+            isGamePath
+                ? $"Восстановить {backup.FileName} в установленном моде?"
+                : $"Восстановить предыдущий {backup.FileName}?",
+            "Текущий файл будет заменён выбранной проверенной .bak-копией.",
+            $"Точный файл: {targetPath}{Environment.NewLine}" +
+            $"Резервная копия: {backup.Backup!.BackupPath}{Environment.NewLine}" +
+            "Перед откатом редактор сохранит и проверит текущее состояние в новой .bak-копии.",
+            "Восстановить с резервной копией",
+            "↻")
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() is not true || !dialog.IsConfirmed)
+        {
+            return;
+        }
+
+        StopSoundPreview();
+        await viewModel.RestoreManagedBackupAsync(backup, isGamePath);
     }
 
     private void StopSoundPreview()
@@ -3433,6 +3470,7 @@ public partial class MainWindow : Window
             _spreadsheetViewModel.ImportBriefingAudioRequested -= ViewModel_ImportBriefingAudioRequested;
             _spreadsheetViewModel.SavePendingSoundCopyRequested -= ViewModel_SavePendingSoundCopyRequested;
             _spreadsheetViewModel.SavePendingSoundCurrentRequested -= ViewModel_SavePendingSoundCurrentRequested;
+            _spreadsheetViewModel.RestoreManagedBackupRequested -= ViewModel_RestoreManagedBackupRequested;
             _spreadsheetViewModel = null;
         }
 

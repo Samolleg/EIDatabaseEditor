@@ -717,6 +717,27 @@ internal static class Program
             soundBackups.Length == 2 && soundBackups.All(path => new FileInfo(path).Length > 0),
             "После трёх прямых сохранений звукового RES остаются ровно две непустые штатные backup-копии.");
 
+        SoundArchiveCatalog beforeSoundRestore = await SoundArchiveCatalog.OpenAsync([inPlaceSourcePath])
+            .ConfigureAwait(false);
+        string beforeSoundRestoreSha256 = ComputeFileSha256(inPlaceSourcePath);
+        ManagedResBackupInfo latestSoundBackup = ManagedResBackupManager.FindLatest(
+                inPlaceSourcePath,
+                ManagedResKind.Sound)
+            ?? throw new InvalidOperationException("После сохранения звукового RES не найден backup.");
+        ManagedResRestoreResult restoredSound = await ManagedResBackupManager.RestoreLatestAsync(
+                latestSoundBackup,
+                expectedCurrentSha256: beforeSoundRestoreSha256)
+            .ConfigureAwait(false);
+        SoundArchiveCatalog afterSoundRestore = await SoundArchiveCatalog.OpenAsync([inPlaceSourcePath])
+            .ConfigureAwait(false);
+        log.Assert(
+            afterSoundRestore.Resources.Count == beforeSoundRestore.Resources.Count - 1 &&
+            ComputeFileSha256(restoredSound.CurrentStateBackupPath).Equals(
+                beforeSoundRestoreSha256,
+                StringComparison.Ordinal) &&
+            ManagedResBackupManager.FindLatest(inPlaceSourcePath, ManagedResKind.Sound)?.BackupCount == 2,
+            "Восстановление звукового backup возвращает предыдущий RES и сохраняет точную обратную копию.");
+
         string changedSourcePath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-sound-conflict.res");
         File.Copy(smallestArchive.SourcePath, changedSourcePath, overwrite: false);
         SoundArchiveCatalog changedCatalog = await SoundArchiveCatalog.OpenAsync([changedSourcePath])

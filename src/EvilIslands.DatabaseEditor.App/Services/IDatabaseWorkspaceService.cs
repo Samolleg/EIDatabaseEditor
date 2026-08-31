@@ -47,6 +47,11 @@ internal interface IDatabaseWorkspaceService
         bool allowGameInstallationPath,
         CancellationToken cancellationToken);
 
+    Task<RestoreManagedBackupResult> RestoreManagedBackupAsync(
+        ManagedBackupViewModel backup,
+        bool allowGameInstallationPath,
+        CancellationToken cancellationToken);
+
     Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
         CancellationToken cancellationToken);

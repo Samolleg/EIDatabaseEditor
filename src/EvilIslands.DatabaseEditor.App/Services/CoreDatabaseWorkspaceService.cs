@@ -155,6 +155,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                 .Select(archive => new SoundArchiveViewModel(archive))
                 .ToArray() ?? [],
             SoundResourceCount = soundCatalog?.Resources.Count ?? 0,
+            ManagedBackups = BuildManagedBackups(document, textsDocument, soundCatalog),
         };
         cancellationToken.ThrowIfCancellationRequested();
         _document = document;
@@ -392,7 +393,8 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         return new SaveSoundCurrentResult(
             result,
             refreshedCatalog.Archives.Select(archive => new SoundArchiveViewModel(archive)).ToArray(),
-            refreshedCatalog.Resources.Count);
+            refreshedCatalog.Resources.Count,
+            BuildManagedBackups(RequireDocument(), _textsDocument, refreshedCatalog));
     }
 
     public async Task<SaveCurrentResult> SaveCurrentAsync(
@@ -451,6 +453,97 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             textsResult is null ? null : MapSaveResult(textsResult),
             textsResult?.BackupPath);
     }
+
+    public async Task<RestoreManagedBackupResult> RestoreManagedBackupAsync(
+        ManagedBackupViewModel backup,
+        bool allowGameInstallationPath,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(backup);
+        ManagedResBackupInfo backupInfo = backup.Backup
+            ?? throw new InvalidOperationException("Для выбранного RES нет резервной копии.");
+        if (backupInfo.Kind != backup.Kind ||
+            !backupInfo.TargetPath.Equals(backup.TargetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Сведения о резервной копии не относятся к выбранному RES.");
+        }
+
+        DatabaseDocument document = RequireDocument();
+        string databasePath = document.SourcePath;
+        string? textsPath = _textsDocument?.SourcePath;
+        string[] soundPaths = _soundCatalog?.Archives
+            .Select(archive => archive.SourcePath)
+            .ToArray() ?? [];
+
+        string? expectedSha256 = null;
+        long? expectedLength = null;
+        DateTime? expectedLastWriteTimeUtc = null;
+        switch (backup.Kind)
+        {
+            case ManagedResKind.Database when backup.TargetPath.Equals(
+                databasePath,
+                StringComparison.OrdinalIgnoreCase):
+                expectedSha256 = document.Sha256;
+                break;
+            case ManagedResKind.Texts when _textsDocument is not null && backup.TargetPath.Equals(
+                _textsDocument.SourcePath,
+                StringComparison.OrdinalIgnoreCase):
+                expectedSha256 = _textsDocument.Sha256;
+                break;
+            case ManagedResKind.Sound:
+                SoundArchiveInfo archive = _soundCatalog?.Archives.FirstOrDefault(candidate =>
+                    candidate.SourcePath.Equals(backup.TargetPath, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new InvalidOperationException("Выбранный звуковой RES больше не подключён.");
+                expectedLength = archive.FileLength;
+                expectedLastWriteTimeUtc = archive.LastWriteTimeUtc;
+                break;
+            default:
+                throw new InvalidOperationException("Выбранная резервная копия не относится к текущей рабочей области.");
+        }
+
+        ManagedResRestoreResult restore = await ManagedResBackupManager.RestoreLatestAsync(
+            backupInfo,
+            expectedSha256,
+            expectedLength,
+            expectedLastWriteTimeUtc,
+            allowGameInstallationPath,
+            cancellationToken).ConfigureAwait(false);
+
+        // The target file has already been replaced. Always finish rebuilding the
+        // in-memory workspace so the UI cannot remain attached to the old bytes.
+        WorkspaceSnapshot workspace = await OpenInternalAsync(
+            databasePath,
+            textsPath,
+            soundPaths,
+            CancellationToken.None).ConfigureAwait(false);
+        return new RestoreManagedBackupResult(restore, workspace);
+    }
+
+    private static IReadOnlyList<ManagedBackupViewModel> BuildManagedBackups(
+        DatabaseDocument document,
+        TextsDocument? textsDocument,
+        SoundArchiveCatalog? soundCatalog)
+    {
+        var backups = new List<ManagedBackupViewModel>
+        {
+            CreateManagedBackup(ManagedResKind.Database, document.SourcePath),
+        };
+        if (textsDocument is not null)
+        {
+            backups.Add(CreateManagedBackup(ManagedResKind.Texts, textsDocument.SourcePath));
+        }
+
+        if (soundCatalog is not null)
+        {
+            backups.AddRange(soundCatalog.Archives.Select(archive =>
+                CreateManagedBackup(ManagedResKind.Sound, archive.SourcePath)));
+        }
+
+        return backups;
+    }
+
+    private static ManagedBackupViewModel CreateManagedBackup(ManagedResKind kind, string sourcePath) =>
+        new(kind, sourcePath, ManagedResBackupManager.FindLatest(sourcePath, kind));
 
     public async Task<SavePairCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken)
     {
