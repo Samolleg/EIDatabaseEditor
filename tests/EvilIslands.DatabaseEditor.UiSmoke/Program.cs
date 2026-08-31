@@ -3262,8 +3262,14 @@ internal static class Program
             [originalRelated[1][0] + " Excel", originalRelated[1][1] + " Excel"],
         ];
         localizationGrid.SelectedCells.Clear();
-        localizationGrid.SelectedCells.Add(new DataGridCellInfo(relatedRows[0], localizationTitle));
-        localizationGrid.CurrentCell = new DataGridCellInfo(relatedRows[0], localizationTitle);
+        foreach (LocalizationEntryViewModel row in relatedRows)
+        {
+            localizationGrid.SelectedCells.Add(new DataGridCellInfo(row, localizationTitle));
+            localizationGrid.SelectedCells.Add(new DataGridCellInfo(row, localizationDescription));
+        }
+        // Reproduce a backwards/drag selection: WPF may keep the active cell at the
+        // bottom-right even though Excel semantics require paste to start at top-left.
+        localizationGrid.CurrentCell = new DataGridCellInfo(relatedRows[1], localizationDescription);
         if (!window.TryBuildLocalizationPasteCells(
                 localizationGrid,
                 relatedPaste,

@@ -1941,9 +1941,7 @@ public partial class MainWindow : Window
             .Where(column => column.Visibility == Visibility.Visible)
             .OrderBy(column => column.DisplayIndex)
             .ToArray();
-        int anchorRow = Array.FindIndex(rows, row => ReferenceEquals(row, grid.CurrentCell.Item));
-        int anchorColumn = Array.FindIndex(columns, column => ReferenceEquals(column, grid.CurrentCell.Column));
-        if (anchorRow < 0 || anchorColumn < 0)
+        if (!TryResolvePasteAnchor(grid, rows, columns, matrix, out int anchorRow, out int anchorColumn))
         {
             error = "Выберите начальную ячейку для вставки.";
             return false;
@@ -2031,9 +2029,7 @@ public partial class MainWindow : Window
             .Where(column => column.Visibility == Visibility.Visible)
             .OrderBy(column => column.DisplayIndex)
             .ToArray();
-        int anchorRow = Array.FindIndex(rows, row => ReferenceEquals(row, RecordsGrid.CurrentCell.Item));
-        int anchorColumn = Array.FindIndex(columns, column => ReferenceEquals(column, RecordsGrid.CurrentCell.Column));
-        if (anchorRow < 0 || anchorColumn < 0)
+        if (!TryResolvePasteAnchor(RecordsGrid, rows, columns, matrix, out int anchorRow, out int anchorColumn))
         {
             error = "Выберите начальную ячейку для вставки.";
             return false;
@@ -2096,6 +2092,53 @@ public partial class MainWindow : Window
         }
 
         cells = result;
+        return true;
+    }
+
+    private static bool TryResolvePasteAnchor<T>(
+        DataGrid grid,
+        T[] rows,
+        DataGridColumn[] columns,
+        IReadOnlyList<IReadOnlyList<string>> matrix,
+        out int anchorRow,
+        out int anchorColumn)
+        where T : class
+    {
+        anchorRow = Array.FindIndex(rows, row => ReferenceEquals(row, grid.CurrentCell.Item));
+        anchorColumn = Array.FindIndex(columns, column => ReferenceEquals(column, grid.CurrentCell.Column));
+        if (anchorRow < 0 || anchorColumn < 0)
+        {
+            return false;
+        }
+
+        int matrixWidth = matrix.Count == 0 ? 0 : matrix.Max(row => row.Count);
+        if (matrix.Count == 0 || matrixWidth == 0 || grid.SelectedCells.Count <= 1)
+        {
+            return true;
+        }
+
+        (int Row, int Column)[] selected = grid.SelectedCells
+            .Where(cell => cell.Item is T && columns.Contains(cell.Column))
+            .Select(cell => (
+                Array.FindIndex(rows, row => ReferenceEquals(row, cell.Item)),
+                Array.FindIndex(columns, column => ReferenceEquals(column, cell.Column))))
+            .Where(cell => cell.Item1 >= 0 && cell.Item2 >= 0)
+            .Distinct()
+            .ToArray();
+        int[] selectedRows = selected.Select(cell => cell.Row).Distinct().Order().ToArray();
+        int[] selectedColumns = selected.Select(cell => cell.Column).Distinct().Order().ToArray();
+        bool isMatchingRectangle =
+            selectedRows.Length == matrix.Count &&
+            selectedColumns.Length == matrixWidth &&
+            selected.Length == matrix.Count * matrixWidth &&
+            selectedRows.SequenceEqual(Enumerable.Range(selectedRows[0], selectedRows.Length)) &&
+            selectedColumns.SequenceEqual(Enumerable.Range(selectedColumns[0], selectedColumns.Length));
+        if (isMatchingRectangle)
+        {
+            anchorRow = selectedRows[0];
+            anchorColumn = selectedColumns[0];
+        }
+
         return true;
     }
 
