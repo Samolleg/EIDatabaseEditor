@@ -58,6 +58,7 @@ internal static class Program
             VerifyNavigationRequery(application);
             VerifyDatabaseTableNavigation();
             VerifyPreferencesStore();
+            VerifyLayoutResetConfirmation();
             VerifyRecoverySnapshotStore();
             VerifyStartupRecoveryPrompt();
             if (args.Length > 0)
@@ -260,6 +261,14 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Команда добавления должна называться «Новая строка» и объяснять безопасное клонирование выбранной строки.");
+        }
+
+        if (window.FindName("ResetLayoutButton") is not Button resetLayoutButton ||
+            !Equals(resetLayoutButton.Content, "Сбросить макет") ||
+            resetLayoutButton.ToolTip?.ToString()?.Contains("После подтверждения", StringComparison.OrdinalIgnoreCase) is not true)
+        {
+            throw new InvalidOperationException(
+                "Сброс раскладки должен быть явно назван и предупреждать об обязательном подтверждении.");
         }
 
         string[] splitterNames =
@@ -533,6 +542,127 @@ internal static class Program
         }
 
         Directory.Delete(root, recursive: true);
+    }
+
+    private static void VerifyLayoutResetConfirmation()
+    {
+        string root = Path.Combine(
+            Path.GetTempPath(),
+            "EI-Database-Studio-UiSmoke",
+            "layout-reset-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string settingsPath = Path.Combine(root, "settings.json");
+        var preferences = new EditorPreferencesStore(settingsPath);
+        preferences.RememberLayout(new EditorLayoutState { SidebarWidth = 344 });
+        var resetWindow = new MainWindow(
+            preferences,
+            new RecoverySnapshotStore(Path.Combine(root, "recovery")));
+
+        try
+        {
+            resetWindow.Show();
+            resetWindow.UpdateLayout();
+            if (resetWindow.FindName("SidebarColumn") is not ColumnDefinition sidebarColumn ||
+                resetWindow.FindName("ResetLayoutButton") is not Button resetButton ||
+                resetWindow.DataContext is not MainWindowViewModel viewModel ||
+                Math.Abs(sidebarColumn.Width.Value - 344) > 0.01)
+            {
+                throw new InvalidOperationException(
+                    "Layout-reset regression не смогла подготовить сохранённую пользовательскую раскладку.");
+            }
+
+            bool cancelPromptSeen = false;
+            Exception? promptFailure = null;
+            resetWindow.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() =>
+                {
+                    ConfirmDialog? dialog = null;
+                    try
+                    {
+                        dialog = Application.Current.Windows.OfType<ConfirmDialog>().SingleOrDefault();
+                        if (dialog?.FindName("HeadingText") is not TextBlock { Text: "Сбросить раскладку?" })
+                        {
+                            throw new InvalidOperationException(
+                                "Кнопка сброса не открыла понятное подтверждение раскладки.");
+                        }
+
+                        cancelPromptSeen = true;
+                        dialog.DialogResult = false;
+                    }
+                    catch (Exception exception)
+                    {
+                        promptFailure = exception;
+                        if (dialog?.IsVisible is true)
+                        {
+                            dialog.DialogResult = false;
+                        }
+                    }
+                }));
+
+            resetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            resetWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            if (promptFailure is not null)
+            {
+                throw new InvalidOperationException("Не пройдена отмена сброса раскладки.", promptFailure);
+            }
+
+            if (!cancelPromptSeen || Math.Abs(sidebarColumn.Width.Value - 344) > 0.01 ||
+                new EditorPreferencesStore(settingsPath).GetLayout().SidebarWidth != 344 ||
+                viewModel.NotificationMessage == "Стандартная раскладка восстановлена.")
+            {
+                throw new InvalidOperationException(
+                    "Отмена подтверждения не должна менять или забывать пользовательскую раскладку.");
+            }
+
+            bool confirmPromptSeen = false;
+            resetWindow.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() =>
+                {
+                    ConfirmDialog? dialog = null;
+                    try
+                    {
+                        dialog = Application.Current.Windows.OfType<ConfirmDialog>().SingleOrDefault();
+                        if (dialog?.FindName("ConfirmButton") is not Button confirmButton)
+                        {
+                            throw new InvalidOperationException(
+                                "Подтверждение сброса не содержит основной кнопки.");
+                        }
+
+                        confirmPromptSeen = true;
+                        confirmButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    }
+                    catch (Exception exception)
+                    {
+                        promptFailure = exception;
+                        if (dialog?.IsVisible is true)
+                        {
+                            dialog.DialogResult = false;
+                        }
+                    }
+                }));
+
+            resetButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            resetWindow.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
+            if (promptFailure is not null)
+            {
+                throw new InvalidOperationException("Не пройден подтверждённый сброс раскладки.", promptFailure);
+            }
+
+            if (!confirmPromptSeen || Math.Abs(sidebarColumn.Width.Value - 300) > 0.01 ||
+                new EditorPreferencesStore(settingsPath).GetLayout().SidebarWidth != 300 ||
+                viewModel.NotificationMessage != "Стандартная раскладка восстановлена.")
+            {
+                throw new InvalidOperationException(
+                    "Раскладка должна сбрасываться только после явного подтверждения.");
+            }
+        }
+        finally
+        {
+            resetWindow.Close();
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     private static void VerifyRecoverySnapshotStore()

@@ -2655,6 +2655,21 @@ public partial class MainWindow : Window
 
     private void ResetLayoutButton_Click(object sender, RoutedEventArgs e)
     {
+        var dialog = new ConfirmDialog(
+            "Сбросить раскладку?",
+            "Размеры всех панелей и вспомогательных окон вернутся к стандартным.",
+            "Данные database.res и texts.res, несохранённые изменения и ширина колонок таблиц не изменятся.",
+            "Сбросить раскладку",
+            "↺")
+        {
+            Owner = this,
+        };
+
+        if (dialog.ShowDialog() != true || !dialog.IsConfirmed)
+        {
+            return;
+        }
+
         _preferences.ResetLayout();
         _layout = _preferences.GetLayout();
         WindowState = WindowState.Normal;
