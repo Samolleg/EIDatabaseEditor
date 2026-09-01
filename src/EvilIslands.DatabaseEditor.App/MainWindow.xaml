@@ -503,6 +503,13 @@
                                     <TextBlock Text="  Открыть database.res…" Foreground="White" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+                            <Button x:Name="OpenResFileManagerButton"
+                                    Style="{StaticResource RoundedButton}"
+                                    Content="▦  Открыть любой RES как архив…"
+                                    ToolTip="Посмотреть, извлечь, добавить, заменить или убрать файлы внутри любого RES"
+                                    Margin="0,8,0,0"
+                                    Padding="12,8"
+                                    Click="OpenResFileManagerButton_Click" />
                             <Button Style="{StaticResource RoundedButton}"
                                     Command="{Binding AttachTextsCommand}"
                                     Content="{Binding AttachTextsButtonText}"

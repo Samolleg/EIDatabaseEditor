@@ -55,6 +55,7 @@ internal static class Program
             VerifyLongTextEditorDialog();
             VerifyStructuredStringListEditorDialog();
             VerifyDatabaseComparisonDialog();
+            VerifyResFileManagerDialog();
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
             VerifySpreadsheetClipboardText();
@@ -150,6 +151,7 @@ internal static class Program
         if (window.Title != "Редактор БД от Атамана — Preview" ||
             window.Icon is null ||
             window.FindName("BrandIcon") is not Image { Source: not null } ||
+            window.FindName("OpenResFileManagerButton") is not Button ||
             window.FindName("ManagedBackupsList") is not ItemsControl ||
             window.FindName("CompareDatabaseButton") is not Button)
         {
@@ -2622,6 +2624,32 @@ internal static class Program
         }
 
         VerifyUnsavedChangesClose(sourcePath);
+    }
+
+    private static void VerifyResFileManagerDialog()
+    {
+        string unopenedArchivePath = Path.Combine(Path.GetTempPath(), $"ui-smoke-{Guid.NewGuid():N}.res");
+        var dialog = new ResFileManagerDialog(unopenedArchivePath);
+        if (dialog.ResizeMode != ResizeMode.CanResize ||
+            dialog.FindName("FoldersTree") is not TreeView ||
+            dialog.FindName("FilesGrid") is not DataGrid
+            {
+                IsReadOnly: true,
+                SelectionMode: DataGridSelectionMode.Extended,
+                ClipboardCopyMode: DataGridClipboardCopyMode.IncludeHeader,
+            } filesGrid ||
+            filesGrid.Columns.Count != 5 ||
+            dialog.FindName("AddFilesButton") is not Button ||
+            dialog.FindName("AddFolderButton") is not Button ||
+            dialog.FindName("ExtractButton") is not Button ||
+            dialog.FindName("SaveCopyButton") is not Button ||
+            dialog.FindName("SaveCurrentButton") is not Button)
+        {
+            throw new InvalidOperationException(
+                "RES-менеджер обязан содержать дерево папок, файловую таблицу и безопасные команды добавления, извлечения и сохранения.");
+        }
+
+        dialog.Close();
     }
 
     private static void VerifyDatabaseComparisonDialog()

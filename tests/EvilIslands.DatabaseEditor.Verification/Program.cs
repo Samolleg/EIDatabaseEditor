@@ -611,6 +611,119 @@ internal static class Program
         await File.WriteAllBytesAsync(probeInputPath, CreateProbeWav()).ConfigureAwait(false);
         SoundImportAsset probeAsset = await SoundArchiveCopyEditor.LoadImportAsync(probeInputPath)
             .ConfigureAwait(false);
+        ResFileManagerArchive fileManagerArchive = await ResFileManagerArchive.OpenAsync(smallestArchive.SourcePath)
+            .ConfigureAwait(false);
+        ResEntry[] fileManagerOriginals = fileManagerArchive.Entries
+            .OrderBy(entry => entry.Size)
+            .Take(3)
+            .ToArray();
+        if (fileManagerOriginals.Length < 3)
+        {
+            throw new InvalidOperationException("Для проверки универсального RES-менеджера нужно не меньше трёх файлов.");
+        }
+
+        ResImportedFile importedProbe = await ResFileManagerArchive.InspectImportAsync(probeInputPath)
+            .ConfigureAwait(false);
+        string genericAddedName = $@"verification\manager-{Guid.NewGuid():N}\added.wav";
+        string genericCopyPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-res-manager.res");
+        ResFileManagerSaveResult genericCopy = await log.MeasureAsync(
+            "Универсальный RES-менеджер: добавить/заменить/удалить",
+            () => fileManagerArchive.SaveCopyAsync(
+            [
+                new ResFileEdit(ResFileEditKind.AddOrReplace, genericAddedName, importedProbe),
+                new ResFileEdit(
+                    ResFileEditKind.AddOrReplace,
+                    fileManagerOriginals[0].Name,
+                    importedProbe),
+                new ResFileEdit(ResFileEditKind.Delete, fileManagerOriginals[1].Name),
+            ],
+            genericCopyPath)).ConfigureAwait(false);
+        log.Assert(
+            genericCopy.AddedCount == 1 && genericCopy.ReplacedCount == 1 && genericCopy.DeletedCount == 1 &&
+            genericCopy.ResourceCount == fileManagerArchive.Entries.Count,
+            "Универсальная потоковая пересборка применила ровно одно добавление, замену и удаление.");
+
+        ResFileManagerArchive reopenedManagerCopy = await ResFileManagerArchive.OpenAsync(genericCopyPath)
+            .ConfigureAwait(false);
+        log.Assert(
+            reopenedManagerCopy.Contains(genericAddedName) &&
+            reopenedManagerCopy.Contains(fileManagerOriginals[0].Name) &&
+            !reopenedManagerCopy.Contains(fileManagerOriginals[1].Name),
+            "Повторно открытый RES содержит добавленный и заменённый файлы, а удалённый путь отсутствует.");
+        ResArchiveDocument independentlyParsedManagerCopy = ResArchiveDocument.Open(genericCopyPath);
+        SoundArchiveCatalog independentlyIndexedManagerCopy = SoundArchiveCatalog.Open([genericCopyPath]);
+        log.Assert(
+            independentlyParsedManagerCopy.Entries.Count == reopenedManagerCopy.Entries.Count &&
+            independentlyParsedManagerCopy.Validate().All(diagnostic => !diagnostic.IsBlocking) &&
+            independentlyIndexedManagerCopy.FindExact(genericAddedName).Count == 1,
+            "Пересобранный RES независимо открывается общим парсером и звуковым каталогом без блокирующих ошибок.");
+        string extractedAddedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-extracted-added.wav");
+        string extractedReplacementPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-extracted-replaced.wav");
+        await reopenedManagerCopy.ExtractAsync(genericAddedName, extractedAddedPath).ConfigureAwait(false);
+        await reopenedManagerCopy.ExtractAsync(fileManagerOriginals[0].Name, extractedReplacementPath)
+            .ConfigureAwait(false);
+        log.Assert(
+            await FileByteComparer.AreEqualAsync(probeInputPath, extractedAddedPath).ConfigureAwait(false) &&
+            await FileByteComparer.AreEqualAsync(probeInputPath, extractedReplacementPath).ConfigureAwait(false),
+            "Добавленный и заменённый файлы извлекаются из RES побайтово без изменений.");
+
+        string originalUnchangedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-original-unchanged.bin");
+        string rebuiltUnchangedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-rebuilt-unchanged.bin");
+        await fileManagerArchive.ExtractAsync(fileManagerOriginals[2].Name, originalUnchangedPath)
+            .ConfigureAwait(false);
+        await reopenedManagerCopy.ExtractAsync(fileManagerOriginals[2].Name, rebuiltUnchangedPath)
+            .ConfigureAwait(false);
+        log.Assert(
+            await FileByteComparer.AreEqualAsync(originalUnchangedPath, rebuiltUnchangedPath).ConfigureAwait(false),
+            "Неизменённый файл универсальной пересборки побайтово совпадает с исходным RES.");
+
+        string managerCurrentPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-res-manager-current.res");
+        File.Copy(smallestArchive.SourcePath, managerCurrentPath, overwrite: false);
+        ResFileManagerArchive managerCurrent = await ResFileManagerArchive.OpenAsync(managerCurrentPath)
+            .ConfigureAwait(false);
+        string managerCurrentOriginalSha = ComputeFileSha256(managerCurrentPath);
+        string managerCurrentAddedName = $@"verification\manager-current-{Guid.NewGuid():N}.wav";
+        ResFileManagerSaveResult managerCurrentResult = await managerCurrent.SaveInPlaceAsync(
+        [
+            new ResFileEdit(ResFileEditKind.AddOrReplace, managerCurrentAddedName, importedProbe),
+        ]).ConfigureAwait(false);
+        ResFileManagerArchive reopenedManagerCurrent = await ResFileManagerArchive.OpenAsync(managerCurrentPath)
+            .ConfigureAwait(false);
+        log.Assert(
+            reopenedManagerCurrent.Contains(managerCurrentAddedName) &&
+            managerCurrentResult.BackupPath is not null &&
+            File.Exists(managerCurrentResult.BackupPath) &&
+            ComputeFileSha256(managerCurrentResult.BackupPath).Equals(managerCurrentOriginalSha, StringComparison.Ordinal),
+            "Сохранение универсального менеджера в текущий RES создаёт точную .bak-копию и повторно открывается.");
+
+        string managerConflictPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-res-manager-conflict.res");
+        File.Copy(smallestArchive.SourcePath, managerConflictPath, overwrite: false);
+        ResFileManagerArchive managerConflict = await ResFileManagerArchive.OpenAsync(managerConflictPath)
+            .ConfigureAwait(false);
+        File.SetLastWriteTimeUtc(managerConflictPath, managerConflict.LastWriteTimeUtc.AddSeconds(2));
+        string managerConflictSha = ComputeFileSha256(managerConflictPath);
+        bool managerConflictRejected = false;
+        try
+        {
+            await managerConflict.SaveCopyAsync(
+            [
+                new ResFileEdit(
+                    ResFileEditKind.AddOrReplace,
+                    $@"verification\conflict-{Guid.NewGuid():N}.wav",
+                    importedProbe),
+            ],
+            staging.GetNewOutputPath($"{Guid.NewGuid():N}-must-not-exist.res")).ConfigureAwait(false);
+        }
+        catch (IOException exception) when (exception.Message.Contains("изменился", StringComparison.OrdinalIgnoreCase))
+        {
+            managerConflictRejected = true;
+        }
+
+        log.Assert(
+            managerConflictRejected &&
+            ComputeFileSha256(managerConflictPath).Equals(managerConflictSha, StringComparison.Ordinal),
+            "RES-менеджер отвергает изменившийся после открытия источник и не перезаписывает его.");
+
         var additionTarget = new BriefingSoundImportTarget(
             smallestArchive,
             "verification-scene",

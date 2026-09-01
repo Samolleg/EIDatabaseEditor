@@ -228,6 +228,49 @@ public partial class MainWindow : Window
 
     private void ViewModel_StopBriefingAudioRequested(object? sender, EventArgs e) => StopSoundPreview();
 
+    private void OpenResFileManagerButton_Click(object sender, RoutedEventArgs e)
+    {
+        var fileDialog = new OpenFileDialog
+        {
+            Title = "Открыть любой RES как архив",
+            Filter = "Evil Islands RES-контейнер (*.res)|*.res|Все файлы (*.*)|*.*",
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Multiselect = false,
+            RestoreDirectory = true,
+            InitialDirectory = _viewModel.HasDocument && Directory.Exists(_viewModel.SourceDirectory)
+                ? _viewModel.SourceDirectory
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+        if (fileDialog.ShowDialog(this) is not true)
+        {
+            return;
+        }
+
+        var writeLockedPaths = new List<string>();
+        if (_viewModel.HasDocument)
+        {
+            writeLockedPaths.Add(_viewModel.SourcePath);
+            if (File.Exists(_viewModel.TextsPath))
+            {
+                writeLockedPaths.Add(_viewModel.TextsPath);
+            }
+
+            if (_viewModel.HasSoundArchives)
+            {
+                writeLockedPaths.AddRange(_viewModel.SoundArchivePaths.Split(
+                    [Environment.NewLine],
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            }
+        }
+
+        var manager = new ResFileManagerDialog(fileDialog.FileName, writeLockedPaths)
+        {
+            Owner = this,
+        };
+        manager.ShowDialog();
+    }
+
     private async void ViewModel_ImportBriefingAudioRequested(object? sender, EventArgs e)
     {
         MainWindowViewModel viewModel = _spreadsheetViewModel ?? _viewModel;
