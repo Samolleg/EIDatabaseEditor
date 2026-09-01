@@ -53,6 +53,7 @@ internal static class Program
             var window = new MainWindow(preferences, recoveryStore);
             VerifyBranding(window);
             VerifyLongTextEditorDialog();
+            VerifyStructuredStringListEditorDialog();
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
             VerifySpreadsheetClipboardText();
@@ -3239,8 +3240,9 @@ internal static class Program
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
         ScrollViewer formulaContentHost = FindVisualChild<ScrollViewer>(editorBox)
             ?? throw new InvalidOperationException("Строка формул должна содержать ScrollViewer PART_ContentHost.");
-         if (editorBox.Text != longValueField.EditorText ||
+        if (editorBox.Text != longValueField.EditorText ||
              !openEditorButton.IsEnabled ||
+             !Equals(openEditorButton.ToolTip, "Открыть структурный редактор списка") ||
              editorBox.TextWrapping != TextWrapping.Wrap ||
             editorBox.LineCount < 2 ||
             formulaContentHost.ComputedHorizontalScrollBarVisibility != Visibility.Collapsed ||
@@ -3255,6 +3257,40 @@ internal static class Program
                 $"V={formulaContentHost.ComputedVerticalScrollBarVisibility}, " +
                 $"viewport={formulaContentHost.ViewportHeight:0.##}, font={editorBox.FontSize:0.##}, " +
                 $"horizontal={formulaContentHost.ScrollableWidth:0.##}.");
+        }
+
+        string originalListText = longValueField.EditorText;
+        if (window.TryApplyFormulaValue(originalListText + "[", out string? malformedListError) ||
+            string.IsNullOrWhiteSpace(malformedListError) ||
+            longValueField.EditorText != originalListText ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Сырая строка StringList с незакрытой скобкой должна отклоняться без изменения поля и Undo-журнала.");
+        }
+
+        if (!longValueField.TryGetStringListValues(out IReadOnlyList<string> originalValues) || originalValues.Count == 0)
+        {
+            throw new InvalidOperationException("Для проверки структурного редактора не удалось прочитать элементы StringList.");
+        }
+
+        string[] changedValues = originalValues.ToArray();
+        changedValues[0] += " codex-probe";
+        if (!longValueField.TrySetStringListValues(changedValues, out string? listError) ||
+            listError is not null ||
+            viewModel.ChangeCount != 1 ||
+            !viewModel.UndoCommand.CanExecute(null))
+        {
+            throw new InvalidOperationException(
+                $"Структурное применение StringList должно создавать одну общую Undo-операцию: {listError}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (longValueField.EditorText != originalListText || viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Один Undo должен полностью восстановить StringList после структурного применения.");
         }
 
         viewModel.SelectTableCommand.Execute(materials);
@@ -3521,6 +3557,83 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Встроенный редактор не должен закрывать применение при ошибке общего валидатора.");
+        }
+    }
+
+    private static void VerifyStructuredStringListEditorDialog()
+    {
+        const string embeddedMagic = "2h metal battle axe.astral metall[lightning{it;e3;e2;m3;im3}]";
+        if (!StringListEditorCodec.TryParseEditorText(
+                $"first value; {embeddedMagic}; last value",
+                out IReadOnlyList<string> parsed,
+                out string? parseError) ||
+            parseError is not null ||
+            parsed.Count != 3 ||
+            parsed[1] != embeddedMagic)
+        {
+            throw new InvalidOperationException(
+                $"Строковый список должен сохранять разделители вложенной магии внутри одного элемента: {parseError}");
+        }
+
+        if (StringListEditorCodec.TryParseEditorText(
+                "first; weapon.material[lightning{it;e3}; last",
+                out _,
+                out string? bracketError) ||
+            string.IsNullOrWhiteSpace(bracketError))
+        {
+            throw new InvalidOperationException(
+                "Несбалансированные квадратные/фигурные скобки должны блокировать применение до изменения TLV-границ.");
+        }
+
+        IReadOnlyList<string>? appliedValues = null;
+        var dialog = new StructuredStringListEditorDialog(
+            "AX1",
+            "Гарантированный лут",
+            ["first value", embeddedMagic],
+            ["long sword.mithrill", "light metal axe.astral metall"],
+            values =>
+            {
+                appliedValues = values.ToArray();
+                return (true, null);
+            });
+
+        var itemsGrid = dialog.FindName("ItemsGrid") as DataGrid;
+        if (dialog.Width < 1000 ||
+            dialog.Height < 680 ||
+            itemsGrid is null ||
+            dialog.FindName("RawEditorBox") is not TextBox ||
+            dialog.Items.Count != 2 ||
+            itemsGrid.Items.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "Структурный редактор списка должен открываться крупным и содержать табличный и сырой режимы. " +
+                $"width={dialog.Width}, height={dialog.Height}, grid={itemsGrid is not null}, " +
+                $"raw={dialog.FindName("RawEditorBox") is TextBox}, model={dialog.Items.Count}, visual={itemsGrid?.Items.Count ?? -1}.");
+        }
+
+        dialog.Items[0].Value = "long sword.mithrill";
+        if (!dialog.TryCommit() ||
+            !dialog.WasApplied ||
+            appliedValues is null ||
+            appliedValues.Count != 2 ||
+            appliedValues[0] != "long sword.mithrill" ||
+            appliedValues[1] != embeddedMagic)
+        {
+            throw new InvalidOperationException(
+                "Структурный редактор обязан передавать исходные элементы напрямую, без повторного деления вложенной магии.");
+        }
+
+        var rejectingDialog = new StructuredStringListEditorDialog(
+            "AX1",
+            "Гарантированный лут",
+            ["weapon.material[lightning{it;e3}]"],
+            [],
+            _ => (true, null));
+        rejectingDialog.Items[0].Value = "weapon.material[lightning{it;e3}";
+        if (rejectingDialog.TryCommit() || rejectingDialog.WasApplied)
+        {
+            throw new InvalidOperationException(
+                "Структурный редактор не должен применять элемент с незакрытой квадратной скобкой.");
         }
     }
 

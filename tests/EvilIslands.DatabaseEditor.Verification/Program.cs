@@ -1011,6 +1011,14 @@ internal static class Program
             originalState.IsEquivalentTo(field.CaptureState()),
             "Повторное применение StringList с рунами не меняет границы TLV-элементов.");
 
+        bool malformedAccepted = field.TrySetValue(field.EditorText + "[", out string? malformedError);
+        log.Assert(
+            !malformedAccepted && !string.IsNullOrWhiteSpace(malformedError),
+            "StringList с незакрытой скобкой отклоняется до деления текста на TLV-элементы.");
+        log.Assert(
+            originalState.IsEquivalentTo(field.CaptureState()),
+            "Отклонённая скобка не меняет payload и границы исходного StringList.");
+
         int nestedIndex = originalValues.ToList().IndexOf(nestedValue);
         string[] fragments = nestedValue.Split(';', StringSplitOptions.None);
         var splitValues = new List<string>(originalValues.Count + fragments.Length - 1);

@@ -1072,7 +1072,12 @@ internal static class DatabaseValueCodec
         out byte[] encoded,
         out string? error)
     {
-        string[] tokens = SplitStringListText(text);
+        if (!StringListEditorCodec.TryParseEditorText(text, out IReadOnlyList<string> tokens, out error))
+        {
+            encoded = [];
+            return false;
+        }
+
         return TryEncodeStringListValues(
             tokens,
             original,
@@ -1133,7 +1138,17 @@ internal static class DatabaseValueCodec
                 return false;
             }
 
-            byte[] bytes = Windows1251.GetBytes(value);
+            byte[] bytes;
+            try
+            {
+                bytes = Windows1251.GetBytes(value);
+            }
+            catch (EncoderFallbackException)
+            {
+                encoded = [];
+                error = $"Элемент {index + 1}: текст содержит символы вне Windows-1251.";
+                return false;
+            }
             ChunkSlice? template = originalChunks.Count == 0
                 ? null
                 : originalChunks[Math.Min(index, originalChunks.Count - 1)];
@@ -1219,88 +1234,6 @@ internal static class DatabaseValueCodec
         string.IsNullOrWhiteSpace(text)
             ? []
             : text.Split([',', ';', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-
-    private static string[] SplitStringListText(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return [];
-        }
-
-        if (!HasBalancedEmbeddedDelimiters(text))
-        {
-            return text.Split(
-                [',', ';', '\r', '\n'],
-                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        }
-
-        var values = new List<string>();
-        var token = new StringBuilder();
-        var delimiters = new Stack<char>();
-        foreach (char character in text)
-        {
-            bool isTopLevelSeparator = delimiters.Count == 0 &&
-                character is ',' or ';' or '\r' or '\n';
-            if (isTopLevelSeparator)
-            {
-                AddStringListToken(values, token);
-                continue;
-            }
-
-            token.Append(character);
-            UpdateEmbeddedDelimiterStack(delimiters, character);
-        }
-
-        AddStringListToken(values, token);
-        return values.ToArray();
-    }
-
-    private static bool HasBalancedEmbeddedDelimiters(string text)
-    {
-        var delimiters = new Stack<char>();
-        foreach (char character in text)
-        {
-            if (!UpdateEmbeddedDelimiterStack(delimiters, character))
-            {
-                return false;
-            }
-        }
-
-        return delimiters.Count == 0;
-    }
-
-    private static bool UpdateEmbeddedDelimiterStack(Stack<char> delimiters, char character)
-    {
-        if (character is '[' or '{')
-        {
-            delimiters.Push(character);
-            return true;
-        }
-
-        if (character is not (']' or '}'))
-        {
-            return true;
-        }
-
-        char expected = character == ']' ? '[' : '{';
-        if (delimiters.Count == 0 || delimiters.Peek() != expected)
-        {
-            return false;
-        }
-
-        delimiters.Pop();
-        return true;
-    }
-
-    private static void AddStringListToken(ICollection<string> values, StringBuilder token)
-    {
-        string value = token.ToString().Trim();
-        token.Clear();
-        if (value.Length > 0)
-        {
-            values.Add(value);
-        }
-    }
 
     private static bool TryEncodeHex(string text, out byte[] encoded, out string? error)
     {

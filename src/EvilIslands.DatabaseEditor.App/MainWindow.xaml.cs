@@ -1393,7 +1393,7 @@ public partial class MainWindow : Window
             Owner = this,
         };
 
-        if (ShowLongTextEditorDialog(dialog) is true && dialog.WasApplied)
+        if (ShowResizableEditorDialog(dialog) is true && dialog.WasApplied)
         {
             SetTextsFormulaError(null);
             TextsFormulaEditorBox.Text = context.ReadValue();
@@ -1497,6 +1497,15 @@ public partial class MainWindow : Window
         FormulaApplyButton.IsEnabled = context.IsEditable;
         FormulaCancelButton.IsEnabled = context.IsEditable;
         FormulaOpenEditorButton.IsEnabled = context.CanOpenLongTextEditor;
+        FormulaOpenEditorButton.Content = context.CanOpenStructuredListEditor ? "☷" : "▤";
+        FormulaOpenEditorButton.ToolTip = context.CanOpenStructuredListEditor
+            ? "Открыть структурный редактор списка"
+            : "Открыть во встроенном редакторе большого текста";
+        AutomationProperties.SetName(
+            FormulaOpenEditorButton,
+            context.CanOpenStructuredListEditor
+                ? "Открыть структурный редактор списка"
+                : "Открыть большой текст во встроенном редакторе");
         SetFormulaError(null);
     }
 
@@ -1546,7 +1555,8 @@ public partial class MainWindow : Window
                 () => field.EditorText,
                 writeValue,
                 () => field.ErrorMessage,
-                SupportsLongTextEditor: IsLongTextKind(descriptor.Kind));
+                SupportsLongTextEditor: IsLongTextKind(descriptor.Kind),
+                StructuredListField: descriptor.Kind is "StringList" or "FixedStringList" ? field : null);
             return true;
         }
 
@@ -1663,6 +1673,8 @@ public partial class MainWindow : Window
         FormulaApplyButton.IsEnabled = false;
         FormulaCancelButton.IsEnabled = false;
         FormulaOpenEditorButton.IsEnabled = false;
+        FormulaOpenEditorButton.Content = "▤";
+        FormulaOpenEditorButton.ToolTip = "Открыть во встроенном редакторе большого текста";
         SetFormulaError(null);
     }
 
@@ -1733,6 +1745,34 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (context.CanOpenStructuredListEditor &&
+            context.StructuredListField is RecordFieldViewModel listField &&
+            listField.TryGetStringListValues(out IReadOnlyList<string> values))
+        {
+            var structuredDialog = new StructuredStringListEditorDialog(
+                context.Address,
+                context.Label,
+                values,
+                BuildReferenceSuggestions(),
+                updatedValues =>
+                {
+                    bool success = listField.TrySetStringListValues(updatedValues, out string? error);
+                    return (success, error);
+                })
+            {
+                Owner = this,
+            };
+
+            if (ShowResizableEditorDialog(structuredDialog) is true && structuredDialog.WasApplied)
+            {
+                SetFormulaError(null);
+                FormulaEditorBox.Text = context.ReadValue();
+                RecordsGrid.Focus();
+            }
+
+            return;
+        }
+
         var dialog = new LongTextEditorDialog(
             context.Address,
             context.Label,
@@ -1746,13 +1786,23 @@ public partial class MainWindow : Window
             Owner = this,
         };
 
-        if (ShowLongTextEditorDialog(dialog) is true && dialog.WasApplied)
+        if (ShowResizableEditorDialog(dialog) is true && dialog.WasApplied)
         {
             SetFormulaError(null);
             FormulaEditorBox.Text = context.ReadValue();
             RecordsGrid.Focus();
         }
     }
+
+    private IReadOnlyList<string> BuildReferenceSuggestions() =>
+        _viewModel.Databases
+            .SelectMany(database => database.Tables)
+            .SelectMany(table => table.Records)
+            .Select(record => record.DisplayName.Trim())
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+            .ToArray();
 
     private void CancelFormulaEdit()
     {
@@ -2867,7 +2917,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private bool? ShowLongTextEditorDialog(LongTextEditorDialog dialog)
+    private bool? ShowResizableEditorDialog(Window dialog)
     {
         Rect workArea = SystemParameters.WorkArea;
         dialog.Width = Math.Clamp(_layout.LongTextEditorWidth, dialog.MinWidth, Math.Max(dialog.MinWidth, workArea.Width));
@@ -3535,11 +3585,15 @@ public partial class MainWindow : Window
         Func<string> ReadValue,
         Action<string>? WriteValue = null,
         Func<string?>? ReadError = null,
-        bool SupportsLongTextEditor = false)
+        bool SupportsLongTextEditor = false,
+        RecordFieldViewModel? StructuredListField = null)
     {
         public bool IsEditable => WriteValue is not null;
 
         public bool CanOpenLongTextEditor => IsEditable && SupportsLongTextEditor;
+
+        public bool CanOpenStructuredListEditor =>
+            CanOpenLongTextEditor && StructuredListField?.CanEditStringList is true;
     }
 
     private sealed class SpreadsheetRecordComparer(

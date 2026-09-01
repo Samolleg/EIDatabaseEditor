@@ -1649,6 +1649,54 @@ internal sealed class RecordFieldViewModel : ObservableObject
     public bool CanEditProjection(DatabaseFieldProjection projection) =>
         CanEdit && _field.CanEditProjection(projection);
 
+    public bool CanEditStringList =>
+        CanEdit && Kind is "StringList" or "FixedStringList";
+
+    public bool TryGetStringListValues(out IReadOnlyList<string> values) =>
+        _field.TryGetStringListValues(out values);
+
+    public bool TrySetStringListValues(
+        IReadOnlyList<string> values,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(values);
+        error = null;
+        if (!CanEditStringList)
+        {
+            error = "Это поле списка доступно только для чтения.";
+            ErrorMessage = error;
+            return false;
+        }
+
+        DatabaseFieldState beforeState = _field.CaptureState();
+        try
+        {
+            if (!_field.TrySetStringListValues(values, out error))
+            {
+                ErrorMessage = error ?? "Список не принят.";
+                return false;
+            }
+        }
+        catch (Exception exception)
+        {
+            error = exception.Message;
+            ErrorMessage = error;
+            return false;
+        }
+
+        ErrorMessage = null;
+        SetProperty(ref _editorText, _field.EditorText, nameof(EditorText));
+        OnPropertyChanged(nameof(IsModified));
+        OnPropertyChanged(nameof(ProjectionSource));
+        DatabaseFieldState afterState = _field.CaptureState();
+        if (!beforeState.IsEquivalentTo(afterState))
+        {
+            ValueCommitted?.Invoke(this, new FieldValueCommittedEventArgs(beforeState, afterState));
+        }
+
+        return true;
+    }
+
     public bool TrySetProjectedText(
         DatabaseFieldProjection projection,
         string value,
@@ -1752,6 +1800,7 @@ internal sealed class RecordFieldViewModel : ObservableObject
             if (SetProperty(ref _isEditMode, value))
             {
                 OnPropertyChanged(nameof(CanEdit));
+                OnPropertyChanged(nameof(CanEditStringList));
             }
         }
     }
