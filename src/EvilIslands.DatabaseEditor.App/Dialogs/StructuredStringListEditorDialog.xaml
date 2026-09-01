@@ -50,6 +50,14 @@
             <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
             <Setter Property="Margin" Value="1,0,0,5" />
         </Style>
+        <Style x:Key="MagicComboBox" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="MinHeight" Value="34" />
+        </Style>
         <Style x:Key="ReferenceResultItem" TargetType="ListBoxItem">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="Background" Value="Transparent" />
@@ -211,7 +219,11 @@
                                                ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                                 </StackPanel>
                                 <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,13" />
-                                <StackPanel>
+                                <Button x:Name="OpenMagicConstructorButton" Style="{StaticResource RoundedButton}"
+                                        Content="✦ Собрать предмет с магией" Click="OpenMagicConstructorButton_Click"
+                                        HorizontalAlignment="Stretch" Padding="11,7" Margin="0,0,0,11"
+                                        Visibility="Collapsed" />
+                                <StackPanel x:Name="GenericElementEditorPanel">
                                     <TextBlock x:Name="PrimaryValueLabel" Text="Значение элемента" Style="{StaticResource DetailLabel}" />
                                     <TextBox x:Name="PrimaryValueBox" Style="{StaticResource DarkTextBox}" Padding="9,7" />
                                     <StackPanel x:Name="SpellCodePanel" Margin="0,11,0,0">
@@ -222,6 +234,56 @@
                                         <TextBlock Text="Модификаторы / параметры (через ;)" Style="{StaticResource DetailLabel}" />
                                         <TextBox x:Name="ModifiersBox" Style="{StaticResource DarkTextBox}" Padding="9,7" />
                                     </StackPanel>
+                                </StackPanel>
+                                <StackPanel x:Name="MagicConstructorPanel" Visibility="Collapsed">
+                                    <TextBlock Text="Форма оружия или доспеха" Style="{StaticResource DetailLabel}" />
+                                    <ComboBox x:Name="MagicShapeComboBox" Style="{StaticResource MagicComboBox}"
+                                              DisplayMemberPath="DisplayText" SelectionChanged="MagicShapeComboBox_SelectionChanged" />
+                                    <TextBlock Text="Материал" Style="{StaticResource DetailLabel}" Margin="1,11,0,5" />
+                                    <ComboBox x:Name="MagicMaterialComboBox" Style="{StaticResource MagicComboBox}"
+                                              DisplayMemberPath="DisplayText" SelectionChanged="MagicSelection_Changed" />
+                                    <TextBlock x:Name="MagicItemRussianNameText" Margin="1,6,0,0"
+                                               Foreground="{StaticResource LocalizationAccentBrush}" TextWrapping="Wrap" />
+                                    <TextBlock Text="Заклинание" Style="{StaticResource DetailLabel}" Margin="1,11,0,5" />
+                                    <ComboBox x:Name="MagicSpellComboBox" Style="{StaticResource MagicComboBox}"
+                                              DisplayMemberPath="DisplayText" SelectionChanged="MagicSelection_Changed" />
+                                    <TextBlock Text="Руны и модификаторы" Style="{StaticResource DetailLabel}" Margin="1,11,0,5" />
+                                    <ItemsControl x:Name="MagicModifiersList">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,0,0,5">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}"
+                                                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                                            CornerRadius="5" Padding="8,6">
+                                                        <TextBlock Text="{Binding DisplayText}" TextWrapping="Wrap" />
+                                                    </Border>
+                                                    <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Content="×"
+                                                            ToolTip="Удалить эту руну" Margin="6,0,0,0" Padding="9,5"
+                                                            CommandParameter="{Binding}" Click="RemoveMagicModifierButton_Click" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="MagicModifierComboBox" Grid.Column="0" Style="{StaticResource MagicComboBox}"
+                                                  DisplayMemberPath="DisplayText" />
+                                        <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Content="＋ Добавить"
+                                                Click="AddMagicModifierButton_Click" Margin="7,0,0,0" Padding="10,6" />
+                                    </Grid>
+                                    <Border Margin="0,12,0,0" Padding="10,8" CornerRadius="6"
+                                            Background="{StaticResource DatabaseSurfaceBrush}"
+                                            BorderBrush="{StaticResource DatabaseBorderBrush}" BorderThickness="1">
+                                        <StackPanel>
+                                            <TextBlock x:Name="MagicCapacityText" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock x:Name="MagicValidationText" Margin="0,4,0,0"
+                                                       Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
                                 <StackPanel Margin="0,12,0,0">
                                     <Button x:Name="UpdateElementButton" Style="{StaticResource AccentButton}"

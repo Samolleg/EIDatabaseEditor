@@ -198,6 +198,7 @@ internal static class Program
                 () => CoreDocumentAdapter.OpenAsync(sourcePath)).ConfigureAwait(false);
             AssertCoreValidation(coreDocument, log, "Исходный DatabaseDocument", sourceBefore.Sha256);
             AssertDatabaseCatalog(coreDocument, boundaries, sourceBefore.Sha256, log);
+            AssertEmbeddedMagicCatalog(coreDocument.GetDatabases(), log);
             log.Assert(coreDocument.ContainsPowerHit(), "В spells.sdb найдена запись CodeName=powerhit.");
 
             string noOpPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-noop.res");
@@ -1192,6 +1193,48 @@ internal static class Program
             "RES-каталог помечает поддерживаемыми ровно восемь распознаваемых DB-ресурсов.");
         KnownDatabaseBaseline.TryGet(sourceSha256, out KnownDatabaseBaseline? baseline);
         AssertCorrectedSchemas(tables, baseline, log);
+    }
+
+    private static void AssertEmbeddedMagicCatalog(
+        IReadOnlyList<DatabaseGroup> groups,
+        VerificationLog log)
+    {
+        EmbeddedMagicCatalog catalog = EmbeddedMagicCatalog.Create(groups.SelectMany(group => group.Tables));
+        log.Assert(
+            catalog.Shapes.Count > 0 && catalog.Materials.Count > 0 &&
+            catalog.Spells.Count > 0 && catalog.Modifiers.Count > 0,
+            "Конструктор вложенной магии получил формы, материалы, заклинания и модификаторы из database.res.");
+
+        EmbeddedMagicShapeOption shape = catalog.Shapes[0];
+        EmbeddedMagicMaterialOption? material = catalog.GetCompatibleMaterials(shape.Value).FirstOrDefault();
+        EmbeddedMagicSpellOption spell = catalog.Spells[0];
+        EmbeddedMagicModifierOption? itemRune = catalog.Modifiers.FirstOrDefault(modifier =>
+            modifier.Value.Equals("it", StringComparison.OrdinalIgnoreCase) ||
+            modifier.Value.Equals("ic", StringComparison.OrdinalIgnoreCase));
+        if (material is null || itemRune is null)
+        {
+            log.Skip("В базе нет совместимого материала или руны it/ic для вычислительной проверки конструктора.");
+            return;
+        }
+
+        EmbeddedMagicEvaluation evaluation = catalog.Evaluate(
+            $"{shape.Value}.{material.Value}",
+            spell.Value,
+            [itemRune.Value]);
+        log.Assert(
+            evaluation.IsRecognized && evaluation.CanCalculate &&
+            evaluation.RequiredComplexity == spell.BaseComplexity + itemRune.Complexity &&
+            evaluation.AvailableComplexity == shape.Slots + material.Slots,
+            "Конструктор использует ту же сумму сложности формы, материала, заклинания и рун, что семантическая проверка.");
+
+        EmbeddedMagicEvaluation unknownModifier = catalog.Evaluate(
+            $"{shape.Value}.{material.Value}",
+            spell.Value,
+            ["__missing_modifier__"]);
+        log.Assert(
+            !unknownModifier.IsAllowedForManualInsertion &&
+            unknownModifier.Issues.Any(issue => issue.Contains("не найден", StringComparison.OrdinalIgnoreCase)),
+            "Неизвестный модификатор блокируется конструктором до записи в RES.");
     }
 
     private static void AssertCorrectedSchemas(

@@ -1791,7 +1791,10 @@ public partial class MainWindow : Window
                     string? scalarError = context.ReadError?.Invoke();
                     return (string.IsNullOrWhiteSpace(scalarError), scalarError);
                 },
-                singleValueMode: context.StructuredEditorIsSingleValue)
+                singleValueMode: context.StructuredEditorIsSingleValue,
+                magicContext: SupportsEmbeddedMagicConstructor(context)
+                    ? BuildEmbeddedMagicEditorContext()
+                    : null)
             {
                 Owner = this,
             };
@@ -1836,6 +1839,54 @@ public partial class MainWindow : Window
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+
+    private EmbeddedMagicEditorContext? BuildEmbeddedMagicEditorContext()
+    {
+        Dictionary<string, IReadOnlyList<DatabaseRecord>> recordsByTable = _viewModel.Databases
+            .SelectMany(database => database.Tables)
+            .ToDictionary(
+                table => table.Key,
+                table => (IReadOnlyList<DatabaseRecord>)table.Records
+                    .Select(record => record.CoreRecord)
+                    .ToArray(),
+                StringComparer.Ordinal);
+        if (!recordsByTable.ContainsKey("items.weapons") ||
+            !recordsByTable.ContainsKey("items.armors") ||
+            !recordsByTable.ContainsKey("items.materials") ||
+            !recordsByTable.ContainsKey("spells.prototypes") ||
+            !recordsByTable.ContainsKey("spells.modifiers"))
+        {
+            return null;
+        }
+
+        Dictionary<string, string> localizedTitles = _viewModel.TextResources
+            .Where(resource => !string.IsNullOrWhiteSpace(resource.Title))
+            .GroupBy(resource => resource.ResourceName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.First().Title,
+                StringComparer.OrdinalIgnoreCase);
+        return new EmbeddedMagicEditorContext(
+            EmbeddedMagicCatalog.Create(recordsByTable),
+            localizedTitles);
+    }
+
+    private static bool SupportsEmbeddedMagicConstructor(FormulaCellContext context)
+    {
+        if (context.Item is not RecordRowViewModel record ||
+            context.StructuredField is not RecordFieldViewModel field)
+        {
+            return false;
+        }
+
+        return (record.TableKey, field.Id) switch
+        {
+            ("units.prototypes", 29 or 32 or 33 or 42) => true,
+            ("units.npcs", 9) => true,
+            ("quests.briefings", 3 or 5) => true,
+            _ => false,
+        };
+    }
 
     private void CancelFormulaEdit()
     {

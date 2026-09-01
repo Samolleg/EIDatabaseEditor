@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using EvilIslands.DatabaseEditor.App.Models;
 using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.App.Dialogs;
@@ -12,10 +13,14 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 {
     private readonly Func<IReadOnlyList<string>, (bool Success, string? Error)> _tryApply;
     private readonly IReadOnlyList<string> _referenceSuggestions;
+    private readonly IReadOnlyList<string> _initialValues;
     private readonly string _fieldName;
     private readonly bool _singleValueMode;
+    private readonly EmbeddedMagicEditorContext? _magicContext;
+    private readonly ObservableCollection<EmbeddedMagicChoice> _selectedMagicModifiers = [];
     private StructuredStringListItemViewModel? _selectedItem;
     private bool _syncingTabs;
+    private bool _syncingMagicConstructor;
     private bool _isRawMode;
 
     internal StructuredStringListEditorDialog(
@@ -24,12 +29,15 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         IReadOnlyList<string> initialValues,
         IReadOnlyList<string> referenceSuggestions,
         Func<IReadOnlyList<string>, (bool Success, string? Error)> tryApply,
-        bool singleValueMode = false)
+        bool singleValueMode = false,
+        EmbeddedMagicEditorContext? magicContext = null)
     {
         _tryApply = tryApply ?? throw new ArgumentNullException(nameof(tryApply));
         _referenceSuggestions = referenceSuggestions ?? [];
+        _initialValues = initialValues.ToArray();
         _fieldName = fieldName ?? string.Empty;
         _singleValueMode = singleValueMode;
+        _magicContext = magicContext;
         Items = new ObservableCollection<StructuredStringListItemViewModel>(
             initialValues.Select(CreateItem));
         foreach (StructuredStringListItemViewModel item in Items)
@@ -40,6 +48,13 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         InitializeComponent();
         DataContext = this;
         ItemsGrid.ItemsSource = Items;
+        MagicModifiersList.ItemsSource = _selectedMagicModifiers;
+        if (_magicContext is not null)
+        {
+            MagicShapeComboBox.ItemsSource = _magicContext.Shapes;
+            MagicSpellComboBox.ItemsSource = _magicContext.Spells;
+            MagicModifierComboBox.ItemsSource = _magicContext.Modifiers;
+        }
         AddressText.Text = string.IsNullOrWhiteSpace(address) ? "—" : address;
         FieldNameText.Text = fieldName;
         if (_singleValueMode)
@@ -110,6 +125,30 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
                 SelectedItem = Items[index];
                 ItemsGrid.ScrollIntoView(Items[index]);
                 return false;
+            }
+
+            if (_magicContext is not null &&
+                (index >= _initialValues.Count ||
+                 !values[index].Equals(_initialValues[index], StringComparison.Ordinal)))
+            {
+                StringListElementAnalysis analysis = StringListEditorCodec.AnalyzeElement(values[index], _fieldName);
+                if (analysis.Kind == "Предмет с магией")
+                {
+                    EmbeddedMagicEvaluation evaluation = _magicContext.Catalog.Evaluate(
+                        analysis.PrimaryValue,
+                        analysis.SpellCode,
+                        analysis.Modifiers);
+                    if (!evaluation.IsAllowedForManualInsertion)
+                    {
+                        SetError(
+                            $"Элемент {index + 1} не проходит ограничения ручной вставки:" +
+                            Environment.NewLine + evaluation.StatusText);
+                        SetEditorMode(useRawMode: false);
+                        SelectedItem = Items[index];
+                        ItemsGrid.ScrollIntoView(Items[index]);
+                        return false;
+                    }
+                }
             }
         }
 
@@ -235,6 +274,17 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         SpellCodeBox.IsEnabled = SelectedItem is not null && isItemMagic;
         ModifiersBox.IsEnabled = SelectedItem is not null && (isItemMagic || isStandaloneSpell);
         UpdateElementButton.IsEnabled = SelectedItem is not null;
+        bool useMagicConstructor = isItemMagic && _magicContext is not null;
+        OpenMagicConstructorButton.Visibility = _magicContext is not null &&
+            SelectedItem is not null && !isItemMagic
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        GenericElementEditorPanel.Visibility = useMagicConstructor ? Visibility.Collapsed : Visibility.Visible;
+        MagicConstructorPanel.Visibility = useMagicConstructor ? Visibility.Visible : Visibility.Collapsed;
+        if (useMagicConstructor)
+        {
+            LoadMagicConstructor(analysis);
+        }
         SetElementError(analysis.Error);
     }
 
@@ -246,10 +296,16 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         }
 
         StringListElementAnalysis previous = StringListEditorCodec.AnalyzeElement(SelectedItem.Value, _fieldName);
-        string primary = PrimaryValueBox.Text.Trim();
-        string spell = SpellCodeBox.Text.Trim();
-        string[] modifiers = ModifiersBox.Text
-            .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        bool useMagicConstructor = previous.Kind == "Предмет с магией" && _magicContext is not null;
+        string primary = useMagicConstructor
+            ? BuildSelectedItemValue()
+            : PrimaryValueBox.Text.Trim();
+        string spell = useMagicConstructor
+            ? (MagicSpellComboBox.SelectedItem as EmbeddedMagicChoice)?.Value ?? string.Empty
+            : SpellCodeBox.Text.Trim();
+        string[] modifiers = useMagicConstructor
+            ? _selectedMagicModifiers.Select(choice => choice.Value).ToArray()
+            : ModifiersBox.Text.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         string value = previous.Kind switch
         {
             "Предмет с магией" => $"{primary}[{BuildSpellValue(spell, modifiers)}]",
@@ -263,8 +319,190 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
             return;
         }
 
+        if (useMagicConstructor)
+        {
+            EmbeddedMagicEvaluation evaluation = _magicContext!.Catalog.Evaluate(primary, spell, modifiers);
+            if (!evaluation.IsAllowedForManualInsertion)
+            {
+                SetElementError(evaluation.StatusText);
+                RefreshMagicEvaluation();
+                return;
+            }
+        }
+
         SelectedItem.Value = value;
         SetElementError(null);
+    }
+
+    private void OpenMagicConstructorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_magicContext is null || SelectedItem is null)
+        {
+            return;
+        }
+
+        EmbeddedMagicModifierOption? itemRune = _magicContext.Catalog.Modifiers.FirstOrDefault(modifier =>
+            modifier.Value.Equals("it", StringComparison.OrdinalIgnoreCase) ||
+            modifier.Value.Equals("ic", StringComparison.OrdinalIgnoreCase));
+        if (itemRune is null)
+        {
+            SetElementError("В таблице модификаторов не найдена обязательная руна it или ic.");
+            return;
+        }
+        foreach (EmbeddedMagicShapeOption shape in _magicContext.Catalog.Shapes)
+        {
+            foreach (EmbeddedMagicMaterialOption material in _magicContext.Catalog.GetCompatibleMaterials(shape.Value))
+            {
+                foreach (EmbeddedMagicSpellOption spell in _magicContext.Catalog.Spells)
+                {
+                    string[] modifiers = [itemRune.Value];
+                    string item = $"{shape.Value}.{material.Value}";
+                    EmbeddedMagicEvaluation evaluation = _magicContext.Catalog.Evaluate(item, spell.Value, modifiers);
+                    if (!evaluation.IsAllowedForManualInsertion)
+                    {
+                        continue;
+                    }
+
+                    SelectedItem.Value = $"{item}[{BuildSpellValue(spell.Value, modifiers)}]";
+                    return;
+                }
+            }
+        }
+
+        SetElementError(
+            "В этой базе не нашлось готовой комбинации, проходящей ограничения ручной вставки. " +
+            "Проверьте наличие формы, материала, заклинания и руны it/ic.");
+    }
+
+    private void LoadMagicConstructor(StringListElementAnalysis analysis)
+    {
+        if (_magicContext is null)
+        {
+            return;
+        }
+
+        _syncingMagicConstructor = true;
+        try
+        {
+            SplitItemValue(analysis.PrimaryValue, out string shapeValue, out string materialValue);
+            MagicShapeComboBox.SelectedItem = FindChoice(_magicContext.Shapes, shapeValue);
+            RefreshMaterialChoices(materialValue);
+            MagicSpellComboBox.SelectedItem = FindChoice(_magicContext.Spells, analysis.SpellCode);
+            _selectedMagicModifiers.Clear();
+            foreach (string modifier in analysis.Modifiers)
+            {
+                EmbeddedMagicChoice? choice = FindChoice(_magicContext.Modifiers, modifier);
+                _selectedMagicModifiers.Add(choice ?? new EmbeddedMagicChoice(modifier, $"Не найден: {modifier}"));
+            }
+            MagicModifierComboBox.SelectedIndex = _magicContext.Modifiers.Count > 0 ? 0 : -1;
+        }
+        finally
+        {
+            _syncingMagicConstructor = false;
+        }
+
+        RefreshMagicEvaluation();
+    }
+
+    private void MagicShapeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingMagicConstructor || _magicContext is null)
+        {
+            return;
+        }
+
+        _syncingMagicConstructor = true;
+        try
+        {
+            RefreshMaterialChoices(null);
+        }
+        finally
+        {
+            _syncingMagicConstructor = false;
+        }
+        RefreshMagicEvaluation();
+    }
+
+    private void MagicSelection_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_syncingMagicConstructor)
+        {
+            RefreshMagicEvaluation();
+        }
+    }
+
+    private void AddMagicModifierButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (MagicModifierComboBox.SelectedItem is EmbeddedMagicChoice choice)
+        {
+            _selectedMagicModifiers.Add(choice);
+            RefreshMagicEvaluation();
+        }
+    }
+
+    private void RemoveMagicModifierButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { CommandParameter: EmbeddedMagicChoice choice })
+        {
+            _selectedMagicModifiers.Remove(choice);
+            RefreshMagicEvaluation();
+        }
+    }
+
+    private void RefreshMaterialChoices(string? preferredValue)
+    {
+        if (_magicContext is null)
+        {
+            return;
+        }
+
+        string? shape = (MagicShapeComboBox.SelectedItem as EmbeddedMagicChoice)?.Value;
+        IReadOnlyList<EmbeddedMagicChoice> materials = _magicContext.GetMaterials(shape);
+        MagicMaterialComboBox.ItemsSource = materials;
+        MagicMaterialComboBox.SelectedItem = FindChoice(materials, preferredValue) ?? materials.FirstOrDefault();
+    }
+
+    private void RefreshMagicEvaluation()
+    {
+        if (_magicContext is null || MagicCapacityText is null || MagicValidationText is null)
+        {
+            return;
+        }
+
+        string itemValue = BuildSelectedItemValue();
+        string spell = (MagicSpellComboBox.SelectedItem as EmbeddedMagicChoice)?.Value ?? string.Empty;
+        string[] modifiers = _selectedMagicModifiers.Select(choice => choice.Value).ToArray();
+        EmbeddedMagicEvaluation evaluation = _magicContext.Catalog.Evaluate(itemValue, spell, modifiers);
+        MagicItemRussianNameText.Text = _magicContext.GetItemRussianName(
+            (MagicShapeComboBox.SelectedItem as EmbeddedMagicChoice)?.Value,
+            (MagicMaterialComboBox.SelectedItem as EmbeddedMagicChoice)?.Value);
+        MagicCapacityText.Text = evaluation.CanCalculate
+            ? $"Сложность: {evaluation.RequiredComplexity} / {evaluation.AvailableComplexity} · " +
+              $"энергия: {evaluation.RequiredMana:R} / {evaluation.AvailableMana:R}"
+            : "Сложность и энергия будут рассчитаны после выбора всех частей.";
+        MagicValidationText.Text = evaluation.StatusText;
+        MagicValidationText.Foreground = evaluation.IsAllowedForManualInsertion
+            ? (System.Windows.Media.Brush)FindResource("DatabaseAccentBrush")
+            : (System.Windows.Media.Brush)FindResource("DangerBrush");
+    }
+
+    private string BuildSelectedItemValue()
+    {
+        string shape = (MagicShapeComboBox.SelectedItem as EmbeddedMagicChoice)?.Value ?? string.Empty;
+        string material = (MagicMaterialComboBox.SelectedItem as EmbeddedMagicChoice)?.Value ?? string.Empty;
+        return shape.Length == 0 || material.Length == 0 ? shape : $"{shape}.{material}";
+    }
+
+    private static EmbeddedMagicChoice? FindChoice(
+        IEnumerable<EmbeddedMagicChoice> choices,
+        string? value) =>
+        choices.FirstOrDefault(choice => choice.Value.Equals(value?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private static void SplitItemValue(string value, out string shape, out string material)
+    {
+        int separator = value.IndexOf('.');
+        shape = separator > 0 ? value[..separator].Trim() : value.Trim();
+        material = separator > 0 ? value[(separator + 1)..].Trim() : string.Empty;
     }
 
     private void ReferenceSearchBox_TextChanged(object sender, TextChangedEventArgs e) => RefreshReferenceResults();

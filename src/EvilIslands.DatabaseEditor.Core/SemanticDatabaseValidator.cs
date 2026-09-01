@@ -1073,23 +1073,26 @@ internal static class SemanticDatabaseValidator
             return;
         }
 
-        float baseMana = (float)baseManaValue;
-        float requiredMana = baseMana;
-        long requiredComplexity = baseComplexity;
-        foreach (string runeCode in runeCodes)
+        var shapeOption = new EmbeddedMagicShapeOption(
+            shapeName,
+            isWeapon ? "items.weapons" : "items.armors",
+            isWeapon ? "Оружие" : "Доспех",
+            requiredMaterialType,
+            shapeManaValue,
+            shapeSlots);
+        var materialOption = new EmbeddedMagicMaterialOption(
+            material.Name,
+            actualMaterialType,
+            materialManaValue,
+            materialSlots);
+        var spellOption = new EmbeddedMagicSpellOption(
+            spellCode,
+            spell.Name,
+            baseManaValue,
+            baseComplexity);
+        var modifierOptions = new Dictionary<string, EmbeddedMagicModifierOption>(StringComparer.OrdinalIgnoreCase);
+        foreach ((string code, DatabaseRecord modifier) in modifierByCode)
         {
-            if (runeCode.Equals("xa0", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            // The native parser reports an unknown rune and skips it, but keeps
-            // all other valid runes in the same descriptor.
-            if (!modifierByCode.TryGetValue(runeCode, out DatabaseRecord? modifier))
-            {
-                continue;
-            }
-
             if (!TryGetDouble(FindField(modifier, 4)?.Value, out double fixedManaValue) ||
                 !TryGetDouble(FindField(modifier, 5)?.Value, out double multiplierValue) ||
                 !TryGetInt32(FindField(modifier, 6)?.Value, out int complexityValue))
@@ -1097,19 +1100,25 @@ internal static class SemanticDatabaseValidator
                 return;
             }
 
-            if (runeCode.Length > 0 && char.ToLowerInvariant(runeCode[0]) == 'm')
-            {
-                requiredMana += baseMana * (float)multiplierValue;
-                requiredMana = MathF.Max(0.0f, requiredMana);
-            }
-
-            requiredMana += (float)fixedManaValue;
-            requiredComplexity += complexityValue;
+            modifierOptions[code] = new EmbeddedMagicModifierOption(
+                code,
+                modifier.Name,
+                modifier.RecordIndex,
+                fixedManaValue,
+                multiplierValue,
+                complexityValue);
         }
 
-        requiredMana = MathF.Max(baseMana, requiredMana);
-        float availableMana = (float)shapeManaValue + (float)materialManaValue;
-        long availableComplexity = (long)shapeSlots + materialSlots;
+        EmbeddedMagicCapacity capacity = EmbeddedMagicComputation.Calculate(
+            shapeOption,
+            materialOption,
+            spellOption,
+            runeCodes,
+            modifierOptions);
+        float requiredMana = capacity.RequiredMana;
+        float availableMana = capacity.AvailableMana;
+        long requiredComplexity = capacity.RequiredComplexity;
+        long availableComplexity = capacity.AvailableComplexity;
         if (requiredComplexity > availableComplexity)
         {
             AddWarning(

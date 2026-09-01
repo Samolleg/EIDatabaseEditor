@@ -1035,6 +1035,7 @@ internal static class Program
         }
 
         string companionTexts = Path.Combine(Path.GetDirectoryName(sourcePath)!, "texts.res");
+        VerifyEmbeddedMagicConstructor(viewModel);
         if (File.Exists(companionTexts))
         {
             if (!viewModel.HasTextsDocument || viewModel.TextResourceCount < 100)
@@ -2607,6 +2608,82 @@ internal static class Program
         VerifyUnsavedChangesClose(sourcePath);
     }
 
+    private static void VerifyEmbeddedMagicConstructor(MainWindowViewModel viewModel)
+    {
+        Dictionary<string, IReadOnlyList<DatabaseRecord>> recordsByTable = viewModel.Databases
+            .SelectMany(database => database.Tables)
+            .ToDictionary(
+                table => table.Key,
+                table => (IReadOnlyList<DatabaseRecord>)table.Records
+                    .Select(record => record.CoreRecord)
+                    .ToArray(),
+                StringComparer.Ordinal);
+        var titles = viewModel.TextResources
+            .Where(resource => !string.IsNullOrWhiteSpace(resource.Title))
+            .GroupBy(resource => resource.ResourceName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
+        var context = new EmbeddedMagicEditorContext(EmbeddedMagicCatalog.Create(recordsByTable), titles);
+        EmbeddedMagicShapeOption shape = context.Catalog.Shapes.First();
+        EmbeddedMagicMaterialOption material = context.Catalog.GetCompatibleMaterials(shape.Value).First();
+        EmbeddedMagicSpellOption spell = context.Catalog.Spells.First();
+        EmbeddedMagicModifierOption modifier = context.Catalog.Modifiers.First(option =>
+            option.Value.Equals("it", StringComparison.OrdinalIgnoreCase) ||
+            option.Value.Equals("ic", StringComparison.OrdinalIgnoreCase));
+        string value = $"{shape.Value}.{material.Value}[{spell.Value}{{{modifier.Value}}}]";
+        var dialog = new StructuredStringListEditorDialog(
+            "AX1",
+            "Гарантированный лут",
+            [value],
+            [],
+            _ => (true, null),
+            magicContext: context);
+
+        if (dialog.FindName("MagicConstructorPanel") is not StackPanel magicPanel ||
+            magicPanel.Visibility != Visibility.Visible ||
+            dialog.FindName("GenericElementEditorPanel") is not StackPanel genericPanel ||
+            genericPanel.Visibility != Visibility.Collapsed ||
+            dialog.FindName("MagicShapeComboBox") is not ComboBox { SelectedItem: EmbeddedMagicChoice } ||
+            dialog.FindName("MagicMaterialComboBox") is not ComboBox { SelectedItem: EmbeddedMagicChoice } ||
+            dialog.FindName("MagicSpellComboBox") is not ComboBox { SelectedItem: EmbeddedMagicChoice } ||
+            dialog.FindName("MagicModifiersList") is not ItemsControl { Items.Count: 1 } ||
+            dialog.FindName("MagicCapacityText") is not TextBlock capacity ||
+            !capacity.Text.Contains("Сложность:", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Вложенная магия должна открываться типизированным конструктором формы, материала, заклинания и отдельных рун.");
+        }
+
+        dialog.Items[0].Value = $"{shape.Value}.{material.Value}[{spell.Value}{{__missing_modifier__}}]";
+        if (dialog.TryCommit() || dialog.WasApplied)
+        {
+            throw new InvalidOperationException(
+                "Изменённая комбинация с неизвестной руной должна блокироваться до записи в RES.");
+        }
+
+
+        var blankDialog = new StructuredStringListEditorDialog(
+            "AX2",
+            "Гарантированный лут",
+            [string.Empty],
+            [],
+            _ => (true, null),
+            magicContext: context);
+        if (blankDialog.FindName("OpenMagicConstructorButton") is not Button constructorButton ||
+            constructorButton.Visibility != Visibility.Visible)
+        {
+            throw new InvalidOperationException(
+                "Для пустого нового элемента должно быть видно явное действие создания предмета с магией.");
+        }
+
+        constructorButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (blankDialog.Items[0].Kind != "Предмет с магией" ||
+            blankDialog.FindName("MagicConstructorPanel") is not StackPanel { Visibility: Visibility.Visible })
+        {
+            throw new InvalidOperationException(
+                "Кнопка создания должна переводить пустую строку в типизированный конструктор вложенной магии.");
+        }
+    }
+
     private static void VerifyBriefingSoundStaging(
         MainWindow window,
         MainWindowViewModel viewModel,
@@ -3651,6 +3728,12 @@ internal static class Program
             dialog.FindName("StructuredPanel") is not Grid ||
             dialog.FindName("RawPanel") is not Grid ||
             dialog.FindName("StructuredModeButton") is not System.Windows.Controls.Primitives.ToggleButton ||
+            dialog.FindName("MagicConstructorPanel") is not StackPanel ||
+            dialog.FindName("MagicShapeComboBox") is not ComboBox ||
+            dialog.FindName("MagicMaterialComboBox") is not ComboBox ||
+            dialog.FindName("MagicSpellComboBox") is not ComboBox ||
+            dialog.FindName("MagicModifiersList") is not ItemsControl ||
+            dialog.FindName("MagicCapacityText") is not TextBlock ||
             dialog.Items.Count != 2 ||
             itemsGrid.Items.Count != 2)
         {
