@@ -3597,6 +3597,15 @@ internal static class Program
                 "Пути steps\\… должны разбираться как блоки звука шага, а не как предметы или заклинания.");
         }
 
+        StringListElementAnalysis nonMagicBlock = StringListEditorCodec.AnalyzeElement(
+            "animation{walk;fast}",
+            "Блоки анимации");
+        if (nonMagicBlock.Kind == "Заклинание" || nonMagicBlock.SpellCode is not null)
+        {
+            throw new InvalidOperationException(
+                "Фигурные параметры неизвестного немагического списка не должны автоматически называться заклинанием.");
+        }
+
         IReadOnlyList<string>? appliedValues = null;
         var dialog = new StructuredStringListEditorDialog(
             "AX1",
