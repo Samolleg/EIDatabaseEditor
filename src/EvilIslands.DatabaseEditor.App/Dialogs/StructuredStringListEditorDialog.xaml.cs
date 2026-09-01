@@ -12,8 +12,10 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 {
     private readonly Func<IReadOnlyList<string>, (bool Success, string? Error)> _tryApply;
     private readonly IReadOnlyList<string> _referenceSuggestions;
+    private readonly string _fieldName;
     private StructuredStringListItemViewModel? _selectedItem;
     private bool _syncingTabs;
+    private bool _isRawMode;
 
     internal StructuredStringListEditorDialog(
         string address,
@@ -24,6 +26,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
     {
         _tryApply = tryApply ?? throw new ArgumentNullException(nameof(tryApply));
         _referenceSuggestions = referenceSuggestions ?? [];
+        _fieldName = fieldName ?? string.Empty;
         Items = new ObservableCollection<StructuredStringListItemViewModel>(
             initialValues.Select(CreateItem));
         foreach (StructuredStringListItemViewModel item in Items)
@@ -40,6 +43,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         RenumberItems();
         RefreshReferenceResults();
         SelectedItem = Items.FirstOrDefault();
+        SetEditorMode(useRawMode: false);
         Loaded += (_, _) => ItemsGrid.Focus();
     }
 
@@ -73,7 +77,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
     {
         ItemsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
         ItemsGrid.CommitEdit(DataGridEditingUnit.Row, true);
-        if (ReferenceEquals(EditorTabs.SelectedItem, RawTab) && !TryLoadRawTextIntoItems())
+        if (_isRawMode && !TryLoadRawTextIntoItems())
         {
             return false;
         }
@@ -84,7 +88,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
             if (!StringListEditorCodec.TryValidateElement(values[index], out string? validationError))
             {
                 SetError($"Элемент {index + 1}: {validationError}");
-                StructuredTab.IsSelected = true;
+                SetEditorMode(useRawMode: false);
                 SelectedItem = Items[index];
                 ItemsGrid.ScrollIntoView(Items[index]);
                 return false;
@@ -103,7 +107,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         return true;
     }
 
-    private StructuredStringListItemViewModel CreateItem(string value) => new(value);
+    private StructuredStringListItemViewModel CreateItem(string value) => new(value, _fieldName);
 
     private void AddButton_Click(object sender, RoutedEventArgs e) => InsertValue(string.Empty);
 
@@ -191,14 +195,28 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 
     private void RefreshElementDetails()
     {
-        StringListElementAnalysis analysis = StringListEditorCodec.AnalyzeElement(SelectedItem?.Value);
+        StringListElementAnalysis analysis = StringListEditorCodec.AnalyzeElement(SelectedItem?.Value, _fieldName);
+        bool isItemMagic = analysis.Kind == "Предмет с магией";
+        bool isStandaloneSpell = analysis.Kind == "Заклинание";
         ElementKindText.Text = SelectedItem is null ? "Элемент не выбран" : analysis.Kind;
+        ElementSummaryText.Text = SelectedItem is null ? "Выберите строку слева." : analysis.Summary;
+        PrimaryValueLabel.Text = analysis.Kind switch
+        {
+            "Предмет с магией" => "Предмет / форма / материал",
+            "Заклинание" => "Код заклинания",
+            "Звук шага" => "Путь блока звука шага",
+            "Путь к ресурсу" => "Путь к ресурсу",
+            _ => "Значение элемента",
+        };
         PrimaryValueBox.Text = SelectedItem is null ? string.Empty : analysis.PrimaryValue;
         SpellCodeBox.Text = analysis.SpellCode ?? string.Empty;
         ModifiersBox.Text = string.Join(";", analysis.Modifiers);
         PrimaryValueBox.IsEnabled = SelectedItem is not null;
-        SpellCodeBox.IsEnabled = SelectedItem is not null && analysis.Kind is "Предмет с магией" or "Заклинание";
-        ModifiersBox.IsEnabled = SpellCodeBox.IsEnabled;
+        SpellCodePanel.Visibility = isItemMagic ? Visibility.Visible : Visibility.Collapsed;
+        ModifiersPanel.Visibility = isItemMagic || isStandaloneSpell ? Visibility.Visible : Visibility.Collapsed;
+        SpellCodeBox.IsEnabled = SelectedItem is not null && isItemMagic;
+        ModifiersBox.IsEnabled = SelectedItem is not null && (isItemMagic || isStandaloneSpell);
+        UpdateElementButton.IsEnabled = SelectedItem is not null;
         SetElementError(analysis.Error);
     }
 
@@ -209,16 +227,15 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
             return;
         }
 
-        StringListElementAnalysis previous = StringListEditorCodec.AnalyzeElement(SelectedItem.Value);
+        StringListElementAnalysis previous = StringListEditorCodec.AnalyzeElement(SelectedItem.Value, _fieldName);
         string primary = PrimaryValueBox.Text.Trim();
         string spell = SpellCodeBox.Text.Trim();
         string[] modifiers = ModifiersBox.Text
             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        string magic = modifiers.Length == 0 ? spell : $"{spell}{{{string.Join(";", modifiers)}}}";
         string value = previous.Kind switch
         {
-            "Предмет с магией" => $"{primary}[{magic}]",
-            "Заклинание" => magic,
+            "Предмет с магией" => $"{primary}[{BuildSpellValue(spell, modifiers)}]",
+            "Заклинание" => $"{primary}{{{string.Join(";", modifiers)}}}",
             _ => primary,
         };
 
@@ -266,18 +283,49 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         }
     }
 
-    private void EditorTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private static string BuildSpellValue(string spell, IReadOnlyList<string> modifiers) =>
+        modifiers.Count == 0 ? spell : $"{spell}{{{string.Join(";", modifiers)}}}";
+
+    private void StructuredModeButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_syncingTabs || e.Source != EditorTabs || RawEditorBox is null)
+        if (_syncingTabs)
         {
             return;
         }
 
-        if (ReferenceEquals(EditorTabs.SelectedItem, StructuredTab) && !TryLoadRawTextIntoItems())
+        if (_isRawMode && !TryLoadRawTextIntoItems())
         {
-            _syncingTabs = true;
-            RawTab.IsSelected = true;
-            _syncingTabs = false;
+            SetEditorMode(useRawMode: true);
+            return;
+        }
+
+        SetEditorMode(useRawMode: false);
+    }
+
+    private void RawModeButton_Click(object sender, RoutedEventArgs e) => SetEditorMode(useRawMode: true);
+
+    private void SetEditorMode(bool useRawMode)
+    {
+        _isRawMode = useRawMode;
+        if (StructuredPanel is null || RawPanel is null || StructuredModeButton is null || RawModeButton is null)
+        {
+            return;
+        }
+
+        _syncingTabs = true;
+        StructuredPanel.Visibility = useRawMode ? Visibility.Collapsed : Visibility.Visible;
+        RawPanel.Visibility = useRawMode ? Visibility.Visible : Visibility.Collapsed;
+        StructuredModeButton.IsChecked = !useRawMode;
+        RawModeButton.IsChecked = useRawMode;
+        _syncingTabs = false;
+
+        if (useRawMode)
+        {
+            RawEditorBox.Focus();
+        }
+        else
+        {
+            ItemsGrid.Focus();
         }
     }
 
@@ -403,12 +451,14 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 
 public sealed class StructuredStringListItemViewModel : INotifyPropertyChanged
 {
+    private readonly string _fieldName;
     private int _number;
     private string _value;
 
-    public StructuredStringListItemViewModel(string value)
+    public StructuredStringListItemViewModel(string value, string fieldName = "")
     {
         _value = value;
+        _fieldName = fieldName;
         RefreshAnalysis();
     }
 
@@ -447,10 +497,14 @@ public sealed class StructuredStringListItemViewModel : INotifyPropertyChanged
 
     public string Summary { get; private set; } = string.Empty;
 
+    public string Kind { get; private set; } = string.Empty;
+
     private void RefreshAnalysis()
     {
-        StringListElementAnalysis analysis = StringListEditorCodec.AnalyzeElement(_value);
+        StringListElementAnalysis analysis = StringListEditorCodec.AnalyzeElement(_value, _fieldName);
+        Kind = analysis.Kind;
         Summary = analysis.Error is null ? analysis.Summary : $"⚠ {analysis.Error}";
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Kind)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Summary)));
     }
 }

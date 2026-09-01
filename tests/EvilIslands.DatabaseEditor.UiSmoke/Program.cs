@@ -3585,6 +3585,18 @@ internal static class Program
                 "Несбалансированные квадратные/фигурные скобки должны блокировать применение до изменения TLV-границ.");
         }
 
+        StringListElementAnalysis stepSound = StringListEditorCodec.AnalyzeElement(
+            @"steps\Human\Grass",
+            "Звуки шагов");
+        if (stepSound.Kind != "Звук шага" ||
+            stepSound.SpellCode is not null ||
+            !stepSound.Summary.Contains("модель: Human", StringComparison.Ordinal) ||
+            !stepSound.Summary.Contains("поверхность: Grass", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Пути steps\\… должны разбираться как блоки звука шага, а не как предметы или заклинания.");
+        }
+
         IReadOnlyList<string>? appliedValues = null;
         var dialog = new StructuredStringListEditorDialog(
             "AX1",
@@ -3602,6 +3614,9 @@ internal static class Program
             dialog.Height < 680 ||
             itemsGrid is null ||
             dialog.FindName("RawEditorBox") is not TextBox ||
+            dialog.FindName("StructuredPanel") is not Grid ||
+            dialog.FindName("RawPanel") is not Grid ||
+            dialog.FindName("StructuredModeButton") is not System.Windows.Controls.Primitives.ToggleButton ||
             dialog.Items.Count != 2 ||
             itemsGrid.Items.Count != 2)
         {
@@ -3609,6 +3624,23 @@ internal static class Program
                 "Структурный редактор списка должен открываться крупным и содержать табличный и сырой режимы. " +
                 $"width={dialog.Width}, height={dialog.Height}, grid={itemsGrid is not null}, " +
                 $"raw={dialog.FindName("RawEditorBox") is TextBox}, model={dialog.Items.Count}, visual={itemsGrid?.Items.Count ?? -1}.");
+        }
+
+
+        var stepSoundDialog = new StructuredStringListEditorDialog(
+            "BC1",
+            "Звуки шагов",
+            [@"steps\Human\Grass"],
+            [],
+            _ => (true, null));
+        if (stepSoundDialog.Items[0].Kind != "Звук шага" ||
+            stepSoundDialog.FindName("SpellCodePanel") is not StackPanel spellPanel ||
+            spellPanel.Visibility != Visibility.Collapsed ||
+            stepSoundDialog.FindName("PrimaryValueLabel") is not TextBlock primaryLabel ||
+            primaryLabel.Text != "Путь блока звука шага")
+        {
+            throw new InvalidOperationException(
+                "Контекстная форма звука шага не должна показывать поля заклинания и модификаторов.");
         }
 
         dialog.Items[0].Value = "long sword.mithrill";

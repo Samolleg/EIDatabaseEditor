@@ -2,29 +2,83 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="Структурный редактор списка"
-        Width="1120"
-        Height="720"
-        MinWidth="760"
-        MinHeight="520"
-        ResizeMode="CanResize"
-        WindowStyle="None"
-        ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner"
-        Background="Transparent"
+        Title="Структурный редактор списка" Width="1280" Height="780"
+        MinWidth="920" MinHeight="620" ResizeMode="CanResize" WindowStyle="None"
+        ShowInTaskbar="False" WindowStartupLocation="CenterOwner" Background="Transparent"
         PreviewKeyDown="Window_PreviewKeyDown">
     <shell:WindowChrome.WindowChrome>
-        <shell:WindowChrome CaptionHeight="0"
-                            CornerRadius="0"
-                            GlassFrameThickness="0"
-                            ResizeBorderThickness="7"
-                            UseAeroCaptionButtons="False" />
+        <shell:WindowChrome CaptionHeight="0" CornerRadius="0" GlassFrameThickness="0"
+                            ResizeBorderThickness="7" UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
 
-    <Border Background="{StaticResource WindowBrush}"
-            BorderBrush="{StaticResource StrongBorderBrush}"
-            BorderThickness="1"
-            CornerRadius="12">
+    <Window.Resources>
+        <Style x:Key="EditorModeButton" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="14,7" />
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="ModeBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ModeBorder" Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="ModeBorder" Property="Background" Value="{StaticResource DatabaseSurfaceBrush}" />
+                                <Setter TargetName="ModeBorder" Property="BorderBrush" Value="{StaticResource DatabaseBorderBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource DatabaseTextBrush}" />
+                                <Setter Property="FontWeight" Value="SemiBold" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="DetailLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="Margin" Value="1,0,0,5" />
+        </Style>
+        <Style x:Key="ReferenceResultItem" TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="9,6" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="ResultBorder" Background="{TemplateBinding Background}"
+                                CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ResultBorder" Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="ResultBorder" Property="Background" Value="{StaticResource RowSelectedBrush}" />
+                                <Setter Property="Foreground" Value="White" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource StrongBorderBrush}"
+            BorderThickness="1" CornerRadius="12">
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="50" />
@@ -33,211 +87,213 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Border Grid.Row="0"
-                    Background="{StaticResource SidebarBrush}"
-                    CornerRadius="12,12,0,0"
+            <Border Grid.Row="0" Background="{StaticResource SidebarBrush}" CornerRadius="12,12,0,0"
                     MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="46" />
-                    </Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="46" /></Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="18,0" VerticalAlignment="Center">
                         <TextBlock Text="☷" Foreground="{StaticResource AccentBrush}" FontSize="20" VerticalAlignment="Center" />
-                        <TextBlock Text="Структурный редактор списка" Margin="10,0,0,0" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        <TextBlock Text="Структурный редактор списка" Margin="10,0,0,0" FontSize="15"
+                                   FontWeight="SemiBold" VerticalAlignment="Center" />
                     </StackPanel>
-                    <Button Grid.Column="1"
-                            Style="{StaticResource ChromeButton}"
-                            Content="×"
-                            Click="CancelButton_Click"
-                            ToolTip="Закрыть без применения"
+                    <Button Grid.Column="1" Style="{StaticResource ChromeButton}" Content="×"
+                            Click="CancelButton_Click" ToolTip="Закрыть без применения"
                             shell:WindowChrome.IsHitTestVisibleInChrome="True" />
                 </Grid>
             </Border>
 
             <Grid Grid.Row="1" Margin="20,16,20,12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Border Grid.Column="0"
-                        Background="{StaticResource LocalizationSurfaceBrush}"
-                        BorderBrush="{StaticResource LocalizationBorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="7"
-                        Padding="10,6">
-                    <TextBlock x:Name="AddressText"
-                               FontFamily="Cascadia Mono, Consolas"
-                               FontWeight="SemiBold"
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="{StaticResource LocalizationSurfaceBrush}"
+                        BorderBrush="{StaticResource LocalizationBorderBrush}" BorderThickness="1"
+                        CornerRadius="7" Padding="10,6">
+                    <TextBlock x:Name="AddressText" FontFamily="Cascadia Mono, Consolas" FontWeight="SemiBold"
                                Foreground="{StaticResource LocalizationAccentBrush}" />
                 </Border>
                 <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                     <TextBlock x:Name="FieldNameText" FontSize="15" FontWeight="SemiBold" />
-                    <TextBlock Text="Каждая строка ниже — отдельный элемент RES. Неверные скобки блокируют применение."
-                               Margin="0,3,0,0"
-                               FontSize="11"
-                               Foreground="{StaticResource MutedTextBrush}" />
+                    <TextBlock Text="Одна строка таблицы — один физический элемент RES. Весь список применяется одной операцией Undo."
+                               Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
                 </StackPanel>
             </Grid>
 
-            <TabControl x:Name="EditorTabs"
-                        Grid.Row="2"
-                        Margin="20,0,20,14"
-                        SelectionChanged="EditorTabs_SelectionChanged">
-                <TabItem x:Name="StructuredTab" Header="Структура">
-                    <Grid Margin="0,10,0,0">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid Grid.Row="0" Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="24" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Button Grid.Column="0" Style="{StaticResource RoundedButton}" Content="+ Элемент" Click="AddButton_Click" />
-                            <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Content="Дублировать" Click="DuplicateButton_Click" Margin="8,0,0,0" />
-                            <Button Grid.Column="2" Style="{StaticResource RoundedButton}" Content="↑" Click="MoveUpButton_Click" Margin="8,0,0,0" MinWidth="42" />
-                            <Button Grid.Column="3" Style="{StaticResource RoundedButton}" Content="↓" Click="MoveDownButton_Click" Margin="8,0,0,0" MinWidth="42" />
-                            <Button Grid.Column="4" Style="{StaticResource RoundedButton}" Content="Удалить" Click="DeleteButton_Click" Margin="8,0,0,0" />
-                            <TextBox x:Name="ReferenceSearchBox"
-                                     Grid.Column="6"
-                                     Style="{StaticResource DarkTextBox}"
-                                     MinWidth="180"
-                                     Padding="10,6"
-                                     TextChanged="ReferenceSearchBox_TextChanged"
-                                     ToolTip="Поиск технического имени среди записей database.res" />
-                            <Button Grid.Column="7" Style="{StaticResource RoundedButton}" Content="+ Ссылка" Click="AddReferenceButton_Click" Margin="8,0,0,0" />
-                        </Grid>
+            <Grid Grid.Row="2" Margin="20,0,20,14">
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}"
+                        BorderThickness="1" CornerRadius="9" Padding="4" HorizontalAlignment="Left" Margin="0,0,0,10">
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton x:Name="StructuredModeButton" Style="{StaticResource EditorModeButton}"
+                                      Content="☷  Структура" IsChecked="True" Click="StructuredModeButton_Click" />
+                        <ToggleButton x:Name="RawModeButton" Style="{StaticResource EditorModeButton}"
+                                      Content="≡  Сырой текст" Margin="3,0,0,0" Click="RawModeButton_Click" />
+                    </StackPanel>
+                </Border>
 
-                        <Grid Grid.Row="1">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2*" MinWidth="390" />
-                                <ColumnDefinition Width="8" />
-                                <ColumnDefinition Width="*" MinWidth="260" />
-                            </Grid.ColumnDefinitions>
-                            <DataGrid x:Name="ItemsGrid"
-                                      Grid.Column="0"
-                                      AutoGenerateColumns="False"
-                                      CanUserAddRows="False"
-                                      CanUserDeleteRows="False"
-                                      CanUserSortColumns="False"
-                                      CanUserReorderColumns="False"
-                                      SelectionMode="Single"
-                                      SelectionUnit="FullRow"
+                <Grid x:Name="StructuredPanel" Grid.Row="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,10">
+                        <StackPanel Orientation="Horizontal">
+                            <Button Style="{StaticResource RoundedButton}" Content="＋ Элемент" Click="AddButton_Click" Padding="11,6" />
+                            <Button Style="{StaticResource RoundedButton}" Content="Дублировать" Click="DuplicateButton_Click" Margin="7,0,0,0" Padding="11,6" />
+                            <Button Style="{StaticResource RoundedButton}" Content="↑" Click="MoveUpButton_Click" Margin="7,0,0,0" MinWidth="40" Padding="8,6" ToolTip="Поднять выбранный элемент" />
+                            <Button Style="{StaticResource RoundedButton}" Content="↓" Click="MoveDownButton_Click" Margin="7,0,0,0" MinWidth="40" Padding="8,6" ToolTip="Опустить выбранный элемент" />
+                            <Button Style="{StaticResource RoundedButton}" Content="Удалить" Click="DeleteButton_Click" Margin="7,0,0,0" Padding="11,6" />
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="5*" MinWidth="500" /><ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="3*" MinWidth="300" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="8" ClipToBounds="True">
+                            <DataGrid x:Name="ItemsGrid" BorderThickness="0" AutoGenerateColumns="False"
+                                      CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False"
+                                      CanUserReorderColumns="False" SelectionMode="Single" SelectionUnit="FullRow"
                                       SelectionChanged="ItemsGrid_SelectionChanged">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="#" Binding="{Binding Number}" IsReadOnly="True" Width="52" />
+                                    <DataGridTextColumn Header="#" Binding="{Binding Number}" IsReadOnly="True" Width="54">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="HorizontalAlignment" Value="Center" />
+                                                <Setter Property="VerticalAlignment" Value="Center" />
+                                                <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
                                     <DataGridTextColumn Header="Элемент списка"
                                                         Binding="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                        Width="2*" MinWidth="260" />
-                                    <DataGridTextColumn Header="Разбор"
-                                                        Binding="{Binding Summary}"
-                                                        IsReadOnly="True"
-                                                        Width="*" MinWidth="190" />
+                                                        Width="*" MinWidth="330">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                <Setter Property="ToolTip" Value="{Binding Value}" />
+                                                <Setter Property="VerticalAlignment" Value="Center" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
+                                    <DataGridTextColumn Header="Тип блока" Binding="{Binding Kind}" IsReadOnly="True" Width="160">
+                                        <DataGridTextColumn.ElementStyle>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                                <Setter Property="Foreground" Value="{StaticResource DatabaseAccentBrush}" />
+                                                <Setter Property="VerticalAlignment" Value="Center" />
+                                            </Style>
+                                        </DataGridTextColumn.ElementStyle>
+                                    </DataGridTextColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
+                        </Border>
 
-                            <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="Transparent" />
+                        <GridSplitter Grid.Column="1" Width="10" HorizontalAlignment="Stretch"
+                                      Background="Transparent" Cursor="SizeWE" />
 
-                            <Border Grid.Column="2"
-                                    Background="{StaticResource SidebarBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="8"
-                                    Padding="14">
-                                <Grid>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="Auto" />
-                                        <RowDefinition Height="*" />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Text="Разбор выбранного элемента" FontSize="14" FontWeight="SemiBold" />
-                                    <TextBlock x:Name="ElementKindText" Grid.Row="1" Margin="0,6,0,12" Foreground="{StaticResource MutedTextBrush}" />
-                                    <StackPanel Grid.Row="2">
-                                        <TextBlock Text="Предмет / ссылка" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
-                                        <TextBox x:Name="PrimaryValueBox" Style="{StaticResource DarkTextBox}" Margin="0,4,0,10" Padding="9,6" />
-                                        <TextBlock Text="Код заклинания" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
-                                        <TextBox x:Name="SpellCodeBox" Style="{StaticResource DarkTextBox}" Margin="0,4,0,10" Padding="9,6" />
-                                        <TextBlock Text="Модификаторы / параметры (через ;)" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
-                                        <TextBox x:Name="ModifiersBox" Style="{StaticResource DarkTextBox}" Margin="0,4,0,10" Padding="9,6" />
+                        <Border Grid.Column="2" Background="{StaticResource SidebarBrush}"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="16">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Grid.Row="0">
+                                    <TextBlock Text="Выбранный элемент" FontSize="15" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="ElementKindText" Margin="0,5,0,0"
+                                               Foreground="{StaticResource DatabaseAccentBrush}" FontWeight="SemiBold" />
+                                    <TextBlock x:Name="ElementSummaryText" Margin="0,5,0,0"
+                                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" MaxHeight="48"
+                                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+                                </StackPanel>
+                                <Border Grid.Row="1" Height="1" Background="{StaticResource BorderBrush}" Margin="0,13" />
+                                <StackPanel Grid.Row="2">
+                                    <TextBlock x:Name="PrimaryValueLabel" Text="Значение элемента" Style="{StaticResource DetailLabel}" />
+                                    <TextBox x:Name="PrimaryValueBox" Style="{StaticResource DarkTextBox}" Padding="9,7" />
+                                    <StackPanel x:Name="SpellCodePanel" Margin="0,11,0,0">
+                                        <TextBlock Text="Код заклинания" Style="{StaticResource DetailLabel}" />
+                                        <TextBox x:Name="SpellCodeBox" Style="{StaticResource DarkTextBox}" Padding="9,7" />
                                     </StackPanel>
-                                    <Button Grid.Row="3" Style="{StaticResource AccentButton}" Content="Обновить элемент" Click="UpdateElementButton_Click" HorizontalAlignment="Left" />
-                                    <TextBlock x:Name="ElementErrorText"
-                                               Grid.Row="4"
-                                               Margin="0,10,0,0"
-                                               Foreground="{StaticResource DangerBrush}"
-                                               TextWrapping="Wrap"
+                                    <StackPanel x:Name="ModifiersPanel" Margin="0,11,0,0">
+                                        <TextBlock Text="Модификаторы / параметры (через ;)" Style="{StaticResource DetailLabel}" />
+                                        <TextBox x:Name="ModifiersBox" Style="{StaticResource DarkTextBox}" Padding="9,7" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <StackPanel Grid.Row="3" Margin="0,12,0,0">
+                                    <Button x:Name="UpdateElementButton" Style="{StaticResource AccentButton}"
+                                            Content="Обновить элемент" Click="UpdateElementButton_Click"
+                                            HorizontalAlignment="Left" Padding="12,7" />
+                                    <TextBlock x:Name="ElementErrorText" Margin="0,9,0,0"
+                                               Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap"
                                                Visibility="Collapsed" />
-                                    <StackPanel Grid.Row="5" Margin="0,14,0,0">
-                                        <TextBlock Text="Найденные ссылки" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
-                                        <ListBox x:Name="ReferenceResultsList"
-                                                 Margin="0,5,0,0"
-                                                 MinHeight="80"
-                                                 MaxHeight="170"
+                                </StackPanel>
+                                <Border Grid.Row="4" Height="1" Background="{StaticResource BorderBrush}" Margin="0,13" />
+                                <Grid Grid.Row="5" MinHeight="120">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="Ссылки на записи БД" FontSize="13" FontWeight="SemiBold" />
+                                    <TextBlock Grid.Row="1"
+                                               Text="Необязательно: найдите техническое имя и добавьте его отдельным элементом."
+                                               Margin="0,3,0,7" FontSize="10.5" Foreground="{StaticResource MutedTextBrush}"
+                                               TextWrapping="Wrap" />
+                                    <Grid Grid.Row="2">
+                                        <TextBox x:Name="ReferenceSearchBox" Style="{StaticResource DarkTextBox}"
+                                                 Padding="28,7,9,7" TextChanged="ReferenceSearchBox_TextChanged"
+                                                 ToolTip="Поиск технического имени среди записей database.res" />
+                                        <TextBlock Text="⌕" Margin="9,0,0,1" FontSize="16"
+                                                   Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center"
+                                                   HorizontalAlignment="Left" IsHitTestVisible="False" />
+                                    </Grid>
+                                    <Grid Grid.Row="3" Margin="0,7,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <ListBox x:Name="ReferenceResultsList" Grid.Column="0" MinHeight="64" MaxHeight="120"
+                                                 Background="{StaticResource WindowBrush}"
+                                                 Foreground="{StaticResource TextBrush}"
+                                                 BorderBrush="{StaticResource BorderBrush}"
+                                                 BorderThickness="1"
+                                                 ItemContainerStyle="{StaticResource ReferenceResultItem}"
                                                  MouseDoubleClick="ReferenceResultsList_MouseDoubleClick" />
-                                    </StackPanel>
+                                        <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Content="Добавить →"
+                                                Click="AddReferenceButton_Click" Margin="8,0,0,0" Padding="10,6"
+                                                VerticalAlignment="Top" />
+                                    </Grid>
                                 </Grid>
-                            </Border>
-                        </Grid>
-
-                        <TextBlock x:Name="StructuredStatisticsText"
-                                   Grid.Row="2"
-                                   Margin="2,8,0,0"
-                                   FontSize="11"
-                                   Foreground="{StaticResource MutedTextBrush}" />
+                            </Grid>
+                        </Border>
                     </Grid>
-                </TabItem>
+                    <TextBlock x:Name="StructuredStatisticsText" Grid.Row="2" Margin="2,8,0,0"
+                               FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
+                </Grid>
 
-                <TabItem x:Name="RawTab" Header="Сырой текст">
-                    <Grid Margin="0,10,0,0">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBox x:Name="RawEditorBox"
-                                 Grid.Row="0"
-                                 Style="{StaticResource DarkTextBox}"
-                                 AcceptsReturn="True"
-                                 AcceptsTab="True"
-                                 TextWrapping="Wrap"
-                                 VerticalScrollBarVisibility="Auto"
-                                 HorizontalScrollBarVisibility="Disabled"
-                                 FontFamily="Cascadia Mono, Consolas"
-                                 FontSize="14"
-                                 Padding="14,12"
-                                 VerticalContentAlignment="Top"
-                                 TextChanged="RawEditorBox_TextChanged" />
-                        <TextBlock Grid.Row="1"
-                                   Margin="2,8,0,0"
-                                   Text="Разделители верхнего уровня: запятая, точка с запятой или новая строка. Внутри [ ] и { } разделители сохраняются."
-                                   FontSize="11"
-                                   Foreground="{StaticResource MutedTextBrush}"
-                                   TextWrapping="Wrap" />
-                    </Grid>
-                </TabItem>
-            </TabControl>
+                <Grid x:Name="RawPanel" Grid.Row="1" Visibility="Collapsed">
+                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Border Grid.Row="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                            CornerRadius="8" ClipToBounds="True">
+                        <TextBox x:Name="RawEditorBox" Style="{StaticResource DarkTextBox}" BorderThickness="0"
+                                 AcceptsReturn="True" AcceptsTab="True" TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                 FontFamily="Cascadia Mono, Consolas" FontSize="14" Padding="15,13"
+                                 VerticalContentAlignment="Top" TextChanged="RawEditorBox_TextChanged" />
+                    </Border>
+                    <TextBlock Grid.Row="1" Margin="2,8,0,0"
+                               Text="Разделители верхнего уровня: запятая, точка с запятой или новая строка. Внутри [ ] и { } разделители сохраняются."
+                               FontSize="11" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
+                </Grid>
+            </Grid>
 
             <Border Grid.Row="3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="20,14">
                 <Grid>
-                    <TextBlock x:Name="ErrorText"
-                               Foreground="{StaticResource DangerBrush}"
-                               TextWrapping="Wrap"
-                               VerticalAlignment="Center"
-                               Visibility="Collapsed" />
+                    <TextBlock x:Name="ErrorText" Margin="0,0,285,0" Foreground="{StaticResource DangerBrush}"
+                               TextWrapping="Wrap" VerticalAlignment="Center" Visibility="Collapsed" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <Button Style="{StaticResource RoundedButton}" Content="Отмена" Click="CancelButton_Click" MinWidth="110" />
-                        <Button Style="{StaticResource AccentButton}" Content="Применить список" Click="ApplyButton_Click" MinWidth="155" Margin="10,0,0,0" />
+                        <Button Style="{StaticResource AccentButton}" Content="Применить список" Click="ApplyButton_Click"
+                                MinWidth="155" Margin="10,0,0,0" />
                     </StackPanel>
                 </Grid>
             </Border>

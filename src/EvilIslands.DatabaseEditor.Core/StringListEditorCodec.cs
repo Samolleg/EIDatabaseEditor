@@ -91,7 +91,7 @@ public static class StringListEditorCodec
         return true;
     }
 
-    public static StringListElementAnalysis AnalyzeElement(string? value)
+    public static StringListElementAnalysis AnalyzeElement(string? value, string? fieldName = null)
     {
         string text = value?.Trim() ?? string.Empty;
         if (!TryValidateElement(text, out string? error))
@@ -124,7 +124,46 @@ public static class StringListEditorCodec
             return new("Заклинание", spellCode, spellCode, runeCodes, summary, null);
         }
 
+        if (TryAnalyzeResourcePath(text, fieldName, out string pathKind, out string pathSummary))
+        {
+            return new(pathKind, text, null, [], pathSummary, null);
+        }
+
         return new("Ссылка / значение", text, null, [], text, null);
+    }
+
+    private static bool TryAnalyzeResourcePath(
+        string text,
+        string? fieldName,
+        out string kind,
+        out string summary)
+    {
+        string[] parts = text
+            .Split('\\', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        bool looksLikePath = parts.Length > 1 ||
+            (!string.IsNullOrWhiteSpace(fieldName) &&
+             (fieldName.Contains("путь", StringComparison.CurrentCultureIgnoreCase) ||
+              fieldName.Contains("звук", StringComparison.CurrentCultureIgnoreCase) ||
+              fieldName.Contains("текстур", StringComparison.CurrentCultureIgnoreCase)));
+        if (!looksLikePath)
+        {
+            kind = string.Empty;
+            summary = string.Empty;
+            return false;
+        }
+
+        if (parts.Length >= 3 && string.Equals(parts[0], "steps", StringComparison.OrdinalIgnoreCase))
+        {
+            kind = "Звук шага";
+            summary = $"Блок: {parts[0]} · модель: {parts[1]} · поверхность: {string.Join(" / ", parts.Skip(2))}";
+            return true;
+        }
+
+        kind = "Путь к ресурсу";
+        summary = parts.Length > 1
+            ? $"Блоки пути: {string.Join(" → ", parts)}"
+            : text;
+        return true;
     }
 
     private static bool TryParseStandaloneSpell(string text, out string spellCode, out string[] modifiers)
