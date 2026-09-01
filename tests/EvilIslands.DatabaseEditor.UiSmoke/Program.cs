@@ -54,6 +54,7 @@ internal static class Program
             VerifyBranding(window);
             VerifyLongTextEditorDialog();
             VerifyStructuredStringListEditorDialog();
+            VerifyDatabaseComparisonDialog();
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
             VerifySpreadsheetClipboardText();
@@ -149,10 +150,11 @@ internal static class Program
         if (window.Title != "Редактор БД от Атамана — Preview" ||
             window.Icon is null ||
             window.FindName("BrandIcon") is not Image { Source: not null } ||
-            window.FindName("ManagedBackupsList") is not ItemsControl)
+            window.FindName("ManagedBackupsList") is not ItemsControl ||
+            window.FindName("CompareDatabaseButton") is not Button)
         {
             throw new InvalidOperationException(
-                "Окно должно использовать бренд редактора и содержать управление резервными копиями RES.");
+                "Окно должно использовать бренд редактора и содержать управление резервными копиями и сравнением RES.");
         }
     }
 
@@ -2608,6 +2610,68 @@ internal static class Program
         VerifyUnsavedChangesClose(sourcePath);
     }
 
+    private static void VerifyDatabaseComparisonDialog()
+    {
+        var result = new DatabaseComparisonResult(
+            @"C:\current\database.res",
+            new string('1', 64),
+            @"C:\compared\database.res",
+            new string('2', 64),
+            [
+                new DatabaseDifference(
+                    DatabaseDifferenceKind.FieldChanged,
+                    "items.materials",
+                    "Материалы",
+                    "items.idb",
+                    "astral rock",
+                    "astral rock",
+                    45,
+                    45,
+                    1,
+                    "Тип",
+                    "Stone",
+                    "Metal"),
+                new DatabaseDifference(
+                    DatabaseDifferenceKind.OnlyInCompared,
+                    "items.materials",
+                    "Материалы",
+                    "items.idb",
+                    "comparison item",
+                    "comparison item",
+                    null,
+                    51,
+                    null,
+                    "Вся запись",
+                    string.Empty,
+                    "24 поля"),
+            ]);
+        var dialog = new DatabaseComparisonDialog(result);
+        if (dialog.FindName("DifferencesGrid") is not DataGrid
+            {
+                IsReadOnly: true,
+                AutoGenerateColumns: false,
+                ClipboardCopyMode: DataGridClipboardCopyMode.ExcludeHeader,
+            } grid ||
+            grid.Columns.Count < 7 ||
+            dialog.DataContext is not DatabaseComparisonDialogViewModel viewModel ||
+            viewModel.Differences.Count != 2 ||
+            viewModel.ModifiedRecordCount != 1 ||
+            viewModel.OnlyInComparedCount != 1)
+        {
+            throw new InvalidOperationException(
+                "Диалог сравнения обязан показывать read-only Excel-совместимый отчёт и корректную сводку.");
+        }
+
+        viewModel.SearchText = "Metal";
+        if (viewModel.DifferencesView.Cast<object>().Count() != 1)
+        {
+            throw new InvalidOperationException(
+                "Поиск отчёта сравнения должен фильтровать по значениям полей.");
+        }
+
+        dialog.Close();
+    }
+
     private static void VerifyEmbeddedMagicConstructor(MainWindowViewModel viewModel)
     {
         Dictionary<string, IReadOnlyList<DatabaseRecord>> recordsByTable = viewModel.Databases
@@ -3958,6 +4022,11 @@ internal static class Program
     {
         public Task<WorkspaceSnapshot> OpenAsync(string path, CancellationToken cancellationToken) =>
             Task.FromResult(CreateWorkspace(path));
+
+        public Task<DatabaseComparisonResult> CompareAsync(
+            string path,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
 
         public Task<WorkspaceSnapshot> AttachTextsAsync(string path, CancellationToken cancellationToken) =>
             throw new NotSupportedException();

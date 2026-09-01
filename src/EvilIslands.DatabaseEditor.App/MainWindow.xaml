@@ -854,6 +854,14 @@
                                                     <TextBlock Grid.Column="0" Text="{Binding FileLength, Converter={StaticResource FileSizeConverter}}" Margin="0,20,0,0" />
                                                     <TextBlock Grid.Column="1" Text="{Binding Sha256}" Margin="0,20,0,0" FontFamily="Cascadia Mono, Consolas" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Sha256}" />
                                                 </Grid>
+                                                <Button x:Name="CompareDatabaseButton"
+                                                        Style="{StaticResource RoundedButton}"
+                                                        Content="≠ Сравнить с другой базой…"
+                                                        HorizontalAlignment="Left"
+                                                        Margin="0,18,0,0"
+                                                        Padding="13,7"
+                                                        Click="CompareDatabaseButton_Click"
+                                                        ToolTip="Открыть вторую database.res только для чтения и показать различия по таблицам, записям и полям" />
                                             </StackPanel>
                                             <Border Grid.Column="1" Width="118" Height="118" Margin="24,0,0,0" Background="#242424" BorderBrush="#3E3E3E" BorderThickness="1" CornerRadius="16">
                                                 <StackPanel VerticalAlignment="Center">

@@ -940,6 +940,51 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    internal async Task<DatabaseComparisonResult?> ComparePathAsync(string path)
+    {
+        if (_workspace is null || IsBusy)
+        {
+            return null;
+        }
+
+        CancelOperation();
+        _operationCancellation = new CancellationTokenSource();
+        CancellationToken cancellationToken = _operationCancellation.Token;
+        IsBusy = true;
+        IsOperationCancelable = true;
+        BusyText = "Чтение второй базы и построение отчёта…";
+        NotificationMessage = null;
+        StatusText = "Сравнение database.res…";
+
+        try
+        {
+            DatabaseComparisonResult result = await _service.CompareAsync(path, cancellationToken);
+            StatusText = result.AreEquivalent
+                ? "Сравнение завершено: распознанные таблицы совпадают."
+                : $"Сравнение завершено: {result.Differences.Count:N0} строк отчёта.";
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Сравнение отменено.";
+            return null;
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Не удалось сравнить базы: {UnwrapMessage(exception)}");
+            StatusText = "Ошибка сравнения.";
+            return null;
+        }
+        finally
+        {
+            IsOperationCancelable = false;
+            IsBusy = false;
+            BusyText = string.Empty;
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+        }
+    }
+
     public async Task AttachTextsPathAsync(string path)
     {
         if (_workspace is null || HasUnsavedWork || IsBusy)
@@ -2673,6 +2718,32 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     internal void ReportSpreadsheetError(string message) => ShowError(message);
+
+    internal void NavigateToComparisonDifference(
+        string tableKey,
+        int currentRecordIndex,
+        int? fieldId)
+    {
+        DatabaseTableViewModel? table = Databases
+            .SelectMany(database => database.Tables)
+            .FirstOrDefault(candidate => candidate.Key.Equals(tableKey, StringComparison.OrdinalIgnoreCase));
+        RecordRowViewModel? record = table?.Records
+            .FirstOrDefault(candidate => candidate.SourceRecordIndex == currentRecordIndex);
+        if (table is null || record is null)
+        {
+            ShowError("Не удалось найти выбранную строку в текущей базе. Повторите сравнение.");
+            return;
+        }
+
+        SelectTable(table);
+        SelectedRecord = record;
+        RecordFocusRequested?.Invoke(
+            this,
+            new RecordFocusRequestedEventArgs(record, fieldId ?? record.NameFieldId, beginEdit: false));
+        StatusText = fieldId is int selectedFieldId
+            ? $"Открыто различие: {table.Title} · #{record.Index:N0} · поле {selectedFieldId}."
+            : $"Открыта отличающаяся запись: {table.Title} · #{record.Index:N0} {record.DisplayName}.";
+    }
 
     internal void ReportLayoutReset()
     {

@@ -201,6 +201,8 @@ internal static class Program
             AssertEmbeddedMagicCatalog(coreDocument.GetDatabases(), log);
             log.Assert(coreDocument.ContainsPowerHit(), "В spells.sdb найдена запись CodeName=powerhit.");
 
+            await VerifyDatabaseComparisonAsync(sourcePath, log).ConfigureAwait(false);
+
             string noOpPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-noop.res");
             staging.AssertOutputPath(noOpPath, allSourcePaths);
             await log.MeasureAsync(
@@ -1683,6 +1685,61 @@ internal static class Program
         log.Assert(
             reopened.Validate().All(diagnostic => !diagnostic.IsBlocking),
             "Копия после записи всех сложных типов повторно разобрана без блокирующих ошибок.");
+    }
+
+    private static async Task VerifyDatabaseComparisonAsync(
+        string sourcePath,
+        VerificationLog log)
+    {
+        DatabaseDocument current = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        DatabaseDocument compared = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+
+        DatabaseComparisonResult identical = DatabaseComparer.Compare(current, compared);
+        log.Assert(
+            identical.AreEquivalent && identical.Differences.Count == 0,
+            "Сравнение двух одинаковых database.res не создаёт ложных различий.");
+
+        (DatabaseTable Table, DatabaseRecord Record, DatabaseField Field) editableProbe = compared.Databases
+            .SelectMany(group => group.Tables)
+            .SelectMany(table => table.Records.Select(record => (Table: table, Record: record)))
+            .SelectMany(item => item.Record.Fields.Select(field => (item.Table, item.Record, Field: field)))
+            .First(item =>
+                item.Field.IsEditable &&
+                item.Field.Kind.Equals("String", StringComparison.Ordinal) &&
+                item.Field.Id != item.Record.IdentityFieldId &&
+                item.Field.EditorText.Length < 128);
+        string editedValue = editableProbe.Field.EditorText + "_comparison_probe";
+        SetFieldValue(editableProbe.Field, editedValue, "проверка сравнения баз");
+
+        DatabaseComparisonResult changed = DatabaseComparer.Compare(current, compared);
+        DatabaseDifference? changedField = changed.Differences.SingleOrDefault(difference =>
+            difference.Kind == DatabaseDifferenceKind.FieldChanged &&
+            difference.TableKey.Equals(editableProbe.Table.Key, StringComparison.Ordinal) &&
+            difference.CurrentRecordIndex == editableProbe.Record.RecordIndex &&
+            difference.FieldId == editableProbe.Field.Id);
+        log.Assert(
+            changed.Differences.Count == 1 &&
+            changedField is not null &&
+            changedField.ComparedValue.Equals(editedValue, StringComparison.Ordinal),
+            "Сравнение находит одно точное изменение физического поля и показывает оба значения.");
+
+        DatabaseTable appendableTable = compared.Databases
+            .SelectMany(group => group.Tables)
+            .First(table => table.CanAppendRecords && table.Records.Count > 0);
+        DatabaseRecord added = compared.AppendRecordClone(appendableTable.Records[0]);
+        DatabaseField identityField = RequireField(added, added.IdentityFieldId);
+        SetFieldValue(
+            identityField,
+            $"codex_comparison_{Guid.NewGuid():N}",
+            "уникальная запись сравнения");
+
+        DatabaseComparisonResult withAddedRecord = DatabaseComparer.Compare(current, compared);
+        log.Assert(
+            withAddedRecord.OnlyInComparedCount == 1 &&
+            withAddedRecord.Differences.Any(difference =>
+                difference.Kind == DatabaseDifferenceKind.OnlyInCompared &&
+                difference.TableKey.Equals(appendableTable.Key, StringComparison.Ordinal)),
+            "Сравнение отдельно показывает запись, существующую только во второй базе.");
     }
 
     private static string CreateComplexEditText(DatabaseField field)

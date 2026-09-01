@@ -15,6 +15,8 @@ internal interface IDatabaseWorkspaceService
 
     Task<IReadOnlyList<ValidationMessageViewModel>> ValidateAsync(CancellationToken cancellationToken);
 
+    Task<DatabaseComparisonResult> CompareAsync(string path, CancellationToken cancellationToken);
+
     RecordRowViewModel AppendRecordClone(DatabaseTableViewModel table, RecordRowViewModel template);
 
     void RefreshRelatedTexts(RecordRowViewModel record);

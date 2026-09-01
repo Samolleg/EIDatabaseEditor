@@ -45,6 +45,26 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             cancellationToken);
     }
 
+    public async Task<DatabaseComparisonResult> CompareAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        DatabaseDocument current = RequireDocument();
+        string fullPath = Path.GetFullPath(path);
+        if (!File.Exists(fullPath))
+        {
+            throw new FileNotFoundException("Файл для сравнения не найден.", fullPath);
+        }
+
+        DatabaseDocument compared = await DatabaseDocument.OpenAsync(fullPath, cancellationToken)
+            .ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        return await Task.Run(
+                () => DatabaseComparer.Compare(current, compared, cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     private async Task<WorkspaceSnapshot> OpenInternalAsync(
         string path,
         string? explicitTextsPath,

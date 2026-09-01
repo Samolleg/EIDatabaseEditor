@@ -425,6 +425,51 @@ public partial class MainWindow : Window
             DispatcherPriority.Loaded);
     }
 
+    private async void CompareDatabaseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_viewModel.HasDocument)
+        {
+            return;
+        }
+
+        var fileDialog = new OpenFileDialog
+        {
+            Title = "Выберите вторую database.res для сравнения",
+            Filter = "Evil Islands database.res|database.res;*.res|RES-контейнеры (*.res)|*.res|Все файлы (*.*)|*.*",
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Multiselect = false,
+            RestoreDirectory = true,
+            InitialDirectory = _viewModel.SourceDirectory,
+        };
+        if (fileDialog.ShowDialog(this) is not true)
+        {
+            return;
+        }
+
+        DatabaseComparisonResult? result = await _viewModel.ComparePathAsync(fileDialog.FileName);
+        if (result is null)
+        {
+            return;
+        }
+
+        var comparisonDialog = new DatabaseComparisonDialog(result)
+        {
+            Owner = this,
+        };
+        if (comparisonDialog.ShowDialog() is true &&
+            comparisonDialog.SelectedDifference is
+            {
+                CurrentRecordIndex: int currentRecordIndex,
+            } difference)
+        {
+            _viewModel.NavigateToComparisonDifference(
+                difference.TableKey,
+                currentRecordIndex,
+                difference.FieldId);
+        }
+    }
+
     private async void ViewModel_AttachTextsRequested(object? sender, EventArgs e)
     {
         var dialog = new OpenFileDialog

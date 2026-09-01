@@ -1,0 +1,161 @@
+<Window x:Class="EvilIslands.DatabaseEditor.App.Dialogs.DatabaseComparisonDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
+        Title="Сравнение database.res" Width="1420" Height="820"
+        MinWidth="980" MinHeight="620" ResizeMode="CanResize" WindowStyle="None"
+        ShowInTaskbar="False" WindowStartupLocation="CenterOwner" Background="Transparent"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" CornerRadius="0" GlassFrameThickness="0"
+                                  ResizeBorderThickness="7" UseAeroCaptionButtons="False" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Border Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource StrongBorderBrush}"
+            BorderThickness="1" CornerRadius="12">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="52" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Background="{StaticResource SidebarBrush}" CornerRadius="12,12,0,0"
+                    MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="46" /></Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" Margin="17,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="≠" Foreground="{StaticResource AccentBrush}" FontSize="20" />
+                        <TextBlock Text="Сравнение database.res" FontSize="15" FontWeight="SemiBold" Margin="10,0,0,0" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Style="{StaticResource ChromeButton}" Content="×" Click="CloseButton_Click" />
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1" Margin="18,14,18,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="13,10">
+                    <StackPanel>
+                        <TextBlock Text="ТЕКУЩАЯ БАЗА" Foreground="{StaticResource MutedTextBrush}" FontSize="10" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding CurrentFileName}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                        <TextBlock Text="{Binding CurrentPath}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding CurrentPath}" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9" Padding="13,10">
+                    <StackPanel>
+                        <TextBlock Text="ВТОРАЯ БАЗА · ТОЛЬКО ЧТЕНИЕ" Foreground="{StaticResource LocalizationAccentBrush}" FontSize="10" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding ComparedFileName}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                        <TextBlock Text="{Binding ComparedPath}" Foreground="{StaticResource SubtleTextBrush}" FontSize="11"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding ComparedPath}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Grid Grid.Row="2" Margin="18,12,18,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="210" />
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="#263A34" CornerRadius="7" Padding="10,6">
+                    <TextBlock Text="{Binding ModifiedRecordCount, StringFormat=Изменено записей: {0:N0}}" Foreground="#B9D7CF" />
+                </Border>
+                <Border Grid.Column="1" Background="#3B3423" CornerRadius="7" Padding="10,6" Margin="7,0,0,0">
+                    <TextBlock Text="{Binding OnlyInCurrentCount, StringFormat=Только в текущей: {0:N0}}" Foreground="#F1D58C" />
+                </Border>
+                <Border Grid.Column="2" Background="#243443" CornerRadius="7" Padding="10,6" Margin="7,0,0,0">
+                    <TextBlock Text="{Binding OnlyInComparedCount, StringFormat=Только во второй: {0:N0}}" Foreground="#B9D7F0" />
+                </Border>
+                <Border Grid.Column="3" Background="#2D2D2D" CornerRadius="7" Padding="10,6" Margin="7,0,0,0">
+                    <TextBlock Text="{Binding ChangedFieldCount, StringFormat=Полей: {0:N0}}" Foreground="{StaticResource MutedTextBrush}" />
+                </Border>
+                <Grid Grid.Column="5">
+                    <TextBox x:Name="SearchBox" Style="{StaticResource DarkTextBox}" Padding="31,8,10,8"
+                             TextChanged="SearchBox_TextChanged" ToolTip="Поиск по таблице, записи, полю и значениям" />
+                    <TextBlock Text="⌕" Margin="10,0,0,1" FontSize="17" Foreground="{StaticResource MutedTextBrush}"
+                               VerticalAlignment="Center" HorizontalAlignment="Left" IsHitTestVisible="False" />
+                </Grid>
+                <ComboBox x:Name="KindFilter" Grid.Column="6" Margin="10,0,0,0" SelectedIndex="0"
+                          SelectionChanged="KindFilter_SelectionChanged" Padding="9,7"
+                          Background="#262626" Foreground="{StaticResource TextBrush}"
+                          BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                    <ComboBox.ItemContainerStyle>
+                        <Style TargetType="ComboBoxItem">
+                            <Setter Property="Background" Value="#262626" />
+                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                            <Setter Property="Padding" Value="9,6" />
+                            <Style.Triggers>
+                                <Trigger Property="IsHighlighted" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ComboBox.ItemContainerStyle>
+                    <ComboBoxItem Content="Все различия" Tag="All" />
+                    <ComboBoxItem Content="Изменённые поля" Tag="Changed" />
+                    <ComboBoxItem Content="Только в текущей" Tag="Current" />
+                    <ComboBoxItem Content="Только во второй" Tag="Compared" />
+                </ComboBox>
+            </Grid>
+
+            <Border Grid.Row="3" Margin="18,0" CornerRadius="9" ClipToBounds="True"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                <Grid>
+                    <DataGrid x:Name="DifferencesGrid" ItemsSource="{Binding DifferencesView}"
+                              BorderThickness="0" IsReadOnly="True" AutoGenerateColumns="False"
+                              SelectionUnit="CellOrRowHeader" SelectionMode="Extended"
+                              ClipboardCopyMode="ExcludeHeader" MouseDoubleClick="DifferencesGrid_MouseDoubleClick">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Состояние" Binding="{Binding StatusText}" Width="145" />
+                            <DataGridTextColumn Header="Таблица" Binding="{Binding TableTitle}" Width="180" />
+                            <DataGridTextColumn Header="Запись" Binding="{Binding RecordName}" Width="220" />
+                            <DataGridTextColumn Header="Поле" Binding="{Binding FieldName}" Width="185" />
+                            <DataGridTemplateColumn Header="Текущая база" Width="*" MinWidth="210"
+                                                    ClipboardContentBinding="{Binding CurrentValue}">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding CurrentValue}" TextTrimming="CharacterEllipsis" ToolTip="{Binding CurrentValue}" /></DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="Вторая база" Width="*" MinWidth="210"
+                                                    ClipboardContentBinding="{Binding ComparedValue}">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding ComparedValue}" TextTrimming="CharacterEllipsis" ToolTip="{Binding ComparedValue}" /></DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Технический путь" Binding="{Binding TechnicalPath}" Width="240" />
+                            <DataGridTemplateColumn Header="" Width="105">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource RoundedButton}" Content="Открыть" Padding="8,4"
+                                                IsEnabled="{Binding CanNavigate}" CommandParameter="{Binding}"
+                                                Click="OpenDifferenceButton_Click" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Visibility="{Binding EmptyStateVisibility}">
+                        <TextBlock Text="✓" FontSize="36" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" />
+                        <TextBlock Text="Распознанные таблицы совпадают" FontSize="17" FontWeight="SemiBold" Margin="0,10,0,0" />
+                        <TextBlock Text="Ни один физический payload записи не отличается." Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="18,12">
+                <Grid>
+                    <TextBlock Text="Отчёт доступен только для просмотра. Ctrl+C копирует выбранные клетки; перенос изменений намеренно отсутствует."
+                               Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                    <Button HorizontalAlignment="Right" Style="{StaticResource RoundedButton}" Content="Закрыть"
+                            MinWidth="110" Click="CloseButton_Click" />
+                </Grid>
+            </Border>
+        </Grid>
+    </Border>
+</Window>
