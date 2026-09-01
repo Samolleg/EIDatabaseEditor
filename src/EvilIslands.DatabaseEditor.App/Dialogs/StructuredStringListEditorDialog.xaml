@@ -93,7 +93,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="46" /></Grid.ColumnDefinitions>
                     <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="18,0" VerticalAlignment="Center">
                         <TextBlock Text="☷" Foreground="{StaticResource AccentBrush}" FontSize="20" VerticalAlignment="Center" />
-                        <TextBlock Text="Структурный редактор списка" Margin="10,0,0,0" FontSize="15"
+                        <TextBlock x:Name="DialogTitleText" Text="Структурный редактор списка" Margin="10,0,0,0" FontSize="15"
                                    FontWeight="SemiBold" VerticalAlignment="Center" />
                     </StackPanel>
                     <Button Grid.Column="1" Style="{StaticResource ChromeButton}" Content="×"
@@ -112,7 +112,8 @@
                 </Border>
                 <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                     <TextBlock x:Name="FieldNameText" FontSize="15" FontWeight="SemiBold" />
-                    <TextBlock Text="Одна строка таблицы — один физический элемент RES. Весь список применяется одной операцией Undo."
+                    <TextBlock x:Name="FieldDescriptionText"
+                               Text="Одна строка таблицы — один физический элемент RES. Весь список применяется одной операцией Undo."
                                Margin="0,3,0,0" FontSize="11" Foreground="{StaticResource MutedTextBrush}" />
                 </StackPanel>
             </Grid>
@@ -133,7 +134,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <Border Grid.Row="0" Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource BorderBrush}"
+                    <Border x:Name="ListActionsBorder" Grid.Row="0" Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1" CornerRadius="8" Padding="8" Margin="0,0,0,10">
                         <StackPanel Orientation="Horizontal">
                             <Button Style="{StaticResource RoundedButton}" Content="＋ Элемент" Click="AddButton_Click" Padding="11,6" />
@@ -195,13 +196,13 @@
                         <Border Grid.Column="2" Background="{StaticResource SidebarBrush}"
                                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                 CornerRadius="8" Padding="16">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" /><RowDefinition Height="*" />
-                                </Grid.RowDefinitions>
-                                <StackPanel Grid.Row="0">
+                            <ScrollViewer x:Name="ElementDetailsScrollViewer"
+                                          VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          PanningMode="VerticalOnly"
+                                          CanContentScroll="False">
+                              <StackPanel>
+                                <StackPanel>
                                     <TextBlock Text="Выбранный элемент" FontSize="15" FontWeight="SemiBold" />
                                     <TextBlock x:Name="ElementKindText" Margin="0,5,0,0"
                                                Foreground="{StaticResource DatabaseAccentBrush}" FontWeight="SemiBold" />
@@ -209,8 +210,8 @@
                                                Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" MaxHeight="48"
                                                ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
                                 </StackPanel>
-                                <Border Grid.Row="1" Height="1" Background="{StaticResource BorderBrush}" Margin="0,13" />
-                                <StackPanel Grid.Row="2">
+                                <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,13" />
+                                <StackPanel>
                                     <TextBlock x:Name="PrimaryValueLabel" Text="Значение элемента" Style="{StaticResource DetailLabel}" />
                                     <TextBox x:Name="PrimaryValueBox" Style="{StaticResource DarkTextBox}" Padding="9,7" />
                                     <StackPanel x:Name="SpellCodePanel" Margin="0,11,0,0">
@@ -222,7 +223,7 @@
                                         <TextBox x:Name="ModifiersBox" Style="{StaticResource DarkTextBox}" Padding="9,7" />
                                     </StackPanel>
                                 </StackPanel>
-                                <StackPanel Grid.Row="3" Margin="0,12,0,0">
+                                <StackPanel Margin="0,12,0,0">
                                     <Button x:Name="UpdateElementButton" Style="{StaticResource AccentButton}"
                                             Content="Обновить элемент" Click="UpdateElementButton_Click"
                                             HorizontalAlignment="Left" Padding="12,7" />
@@ -230,8 +231,8 @@
                                                Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap"
                                                Visibility="Collapsed" />
                                 </StackPanel>
-                                <Border Grid.Row="4" Height="1" Background="{StaticResource BorderBrush}" Margin="0,13" />
-                                <Grid Grid.Row="5" MinHeight="120">
+                                <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,13" />
+                                <Grid MinHeight="120">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" /><RowDefinition Height="*" />
@@ -258,12 +259,13 @@
                                                  BorderThickness="1"
                                                  ItemContainerStyle="{StaticResource ReferenceResultItem}"
                                                  MouseDoubleClick="ReferenceResultsList_MouseDoubleClick" />
-                                        <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Content="Добавить →"
+                                        <Button x:Name="AddReferenceButton" Grid.Column="1" Style="{StaticResource RoundedButton}" Content="Добавить →"
                                                 Click="AddReferenceButton_Click" Margin="8,0,0,0" Padding="10,6"
                                                 VerticalAlignment="Top" />
                                     </Grid>
                                 </Grid>
-                            </Grid>
+                              </StackPanel>
+                            </ScrollViewer>
                         </Border>
                     </Grid>
                     <TextBlock x:Name="StructuredStatisticsText" Grid.Row="2" Margin="2,8,0,0"
@@ -292,7 +294,7 @@
                                TextWrapping="Wrap" VerticalAlignment="Center" Visibility="Collapsed" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                         <Button Style="{StaticResource RoundedButton}" Content="Отмена" Click="CancelButton_Click" MinWidth="110" />
-                        <Button Style="{StaticResource AccentButton}" Content="Применить список" Click="ApplyButton_Click"
+                        <Button x:Name="ApplyButton" Style="{StaticResource AccentButton}" Content="Применить список" Click="ApplyButton_Click"
                                 MinWidth="155" Margin="10,0,0,0" />
                     </StackPanel>
                 </Grid>

@@ -3293,6 +3293,28 @@ internal static class Program
                 "Один Undo должен полностью восстановить StringList после структурного применения.");
         }
 
+        foreach (int weaponFieldId in new[] { 33, 42 })
+        {
+            SpreadsheetColumnViewModel weaponColumn = prototypes.Columns.Single(column =>
+                column.FieldId == weaponFieldId && column.Projection is null);
+            RecordFieldViewModel weaponField = longValueRecord.GetCell(weaponFieldId)
+                ?? throw new InvalidOperationException($"У прототипа отсутствует поле оружия {weaponFieldId}.");
+            DataGridColumn weaponGridColumn = recordsGrid.Columns.Single(column =>
+                ReferenceEquals(column.Header, weaponColumn));
+            recordsGrid.CurrentCell = new DataGridCellInfo(longValueRecord, weaponGridColumn);
+            recordsGrid.SelectedCells.Clear();
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(longValueRecord, weaponGridColumn));
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (weaponField.Kind != "String" ||
+                !openEditorButton.IsEnabled ||
+                !Equals(openEditorButton.ToolTip, "Открыть структурный редактор значения"))
+            {
+                throw new InvalidOperationException(
+                    $"{weaponColumn.Title} должно открываться как один составной объект оружия с вложенной магией. " +
+                    $"kind={weaponField.Kind}, enabled={openEditorButton.IsEnabled}, tooltip={openEditorButton.ToolTip}.");
+            }
+        }
+
         viewModel.SelectTableCommand.Execute(materials);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
     }
@@ -3622,6 +3644,9 @@ internal static class Program
         if (dialog.Width < 1000 ||
             dialog.Height < 680 ||
             itemsGrid is null ||
+            dialog.FindName("ElementDetailsScrollViewer") is not ScrollViewer detailsScrollViewer ||
+            detailsScrollViewer.VerticalScrollBarVisibility != ScrollBarVisibility.Auto ||
+            detailsScrollViewer.HorizontalScrollBarVisibility != ScrollBarVisibility.Disabled ||
             dialog.FindName("RawEditorBox") is not TextBox ||
             dialog.FindName("StructuredPanel") is not Grid ||
             dialog.FindName("RawPanel") is not Grid ||
@@ -3633,6 +3658,39 @@ internal static class Program
                 "Структурный редактор списка должен открываться крупным и содержать табличный и сырой режимы. " +
                 $"width={dialog.Width}, height={dialog.Height}, grid={itemsGrid is not null}, " +
                 $"raw={dialog.FindName("RawEditorBox") is TextBox}, model={dialog.Items.Count}, visual={itemsGrid?.Items.Count ?? -1}.");
+        }
+
+        IReadOnlyList<string>? appliedSingleValue = null;
+        var singleValueDialog = new StructuredStringListEditorDialog(
+            "AG1",
+            "Оружие 1",
+            [embeddedMagic],
+            ["long sword.mithrill"],
+            values =>
+            {
+                appliedSingleValue = values.ToArray();
+                return (true, null);
+            },
+            singleValueMode: true);
+        if (singleValueDialog.FindName("ListActionsBorder") is not Border singleActions ||
+            singleActions.Visibility != Visibility.Collapsed ||
+            singleValueDialog.FindName("DialogTitleText") is not TextBlock singleTitle ||
+            singleTitle.Text != "Структурный редактор значения" ||
+            singleValueDialog.Items.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "Скалярные поля Оружие 1/2 должны использовать структурный режим одного значения без команд списка.");
+        }
+
+        singleValueDialog.Items[0].Value = "bone sword.scrab bones[lightning{it;m0;im0}]";
+        if (!singleValueDialog.TryCommit() ||
+            !singleValueDialog.WasApplied ||
+            appliedSingleValue is null ||
+            appliedSingleValue.Count != 1 ||
+            appliedSingleValue[0] != "bone sword.scrab bones[lightning{it;m0;im0}]")
+        {
+            throw new InvalidOperationException(
+                "Структурный редактор скалярного оружия должен вернуть ровно один проверенный составной объект.");
         }
 
 

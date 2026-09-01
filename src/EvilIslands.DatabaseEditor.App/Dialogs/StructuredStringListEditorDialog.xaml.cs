@@ -13,6 +13,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
     private readonly Func<IReadOnlyList<string>, (bool Success, string? Error)> _tryApply;
     private readonly IReadOnlyList<string> _referenceSuggestions;
     private readonly string _fieldName;
+    private readonly bool _singleValueMode;
     private StructuredStringListItemViewModel? _selectedItem;
     private bool _syncingTabs;
     private bool _isRawMode;
@@ -22,11 +23,13 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         string fieldName,
         IReadOnlyList<string> initialValues,
         IReadOnlyList<string> referenceSuggestions,
-        Func<IReadOnlyList<string>, (bool Success, string? Error)> tryApply)
+        Func<IReadOnlyList<string>, (bool Success, string? Error)> tryApply,
+        bool singleValueMode = false)
     {
         _tryApply = tryApply ?? throw new ArgumentNullException(nameof(tryApply));
         _referenceSuggestions = referenceSuggestions ?? [];
         _fieldName = fieldName ?? string.Empty;
+        _singleValueMode = singleValueMode;
         Items = new ObservableCollection<StructuredStringListItemViewModel>(
             initialValues.Select(CreateItem));
         foreach (StructuredStringListItemViewModel item in Items)
@@ -39,6 +42,16 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         ItemsGrid.ItemsSource = Items;
         AddressText.Text = string.IsNullOrWhiteSpace(address) ? "—" : address;
         FieldNameText.Text = fieldName;
+        if (_singleValueMode)
+        {
+            Title = "Структурный редактор значения";
+            DialogTitleText.Text = "Структурный редактор значения";
+            FieldDescriptionText.Text =
+                "Поле хранит один составной объект RES. Оружие и вложенное заклинание применяются одной операцией Undo.";
+            ListActionsBorder.Visibility = Visibility.Collapsed;
+            AddReferenceButton.Content = "Подставить →";
+            ApplyButton.Content = "Применить значение";
+        }
         SynchronizeRawText();
         RenumberItems();
         RefreshReferenceResults();
@@ -83,6 +96,11 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         }
 
         string[] values = Items.Select(item => item.Value.Trim()).ToArray();
+        if (_singleValueMode && values.Length != 1)
+        {
+            SetError("Это поле должно содержать ровно один составной объект.");
+            return false;
+        }
         for (int index = 0; index < values.Length; index++)
         {
             if (!StringListEditorCodec.TryValidateElement(values[index], out string? validationError))
@@ -98,7 +116,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         (bool success, string? error) = _tryApply(values);
         if (!success)
         {
-            SetError(error ?? "Список не принят.");
+            SetError(error ?? (_singleValueMode ? "Значение не принято." : "Список не принят."));
             return false;
         }
 
@@ -279,7 +297,21 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 
         if (!string.IsNullOrWhiteSpace(value))
         {
-            InsertValue(value);
+            if (_singleValueMode)
+            {
+                if (SelectedItem is null)
+                {
+                    InsertValue(value);
+                }
+                else
+                {
+                    SelectedItem.Value = value;
+                }
+            }
+            else
+            {
+                InsertValue(value);
+            }
         }
     }
 
@@ -331,7 +363,18 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 
     private bool TryLoadRawTextIntoItems()
     {
-        if (!StringListEditorCodec.TryParseEditorText(RawEditorBox.Text, out IReadOnlyList<string> values, out string? error))
+        IReadOnlyList<string> values;
+        string? error = null;
+        if (_singleValueMode)
+        {
+            values = [RawEditorBox.Text.Trim()];
+            if (!StringListEditorCodec.TryValidateElement(values[0], out error))
+            {
+                SetError(error);
+                return false;
+            }
+        }
+        else if (!StringListEditorCodec.TryParseEditorText(RawEditorBox.Text, out values, out error))
         {
             SetError(error);
             return false;
@@ -378,9 +421,13 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         }
 
         _syncingTabs = true;
-        RawEditorBox.Text = StringListEditorCodec.FormatEditorText(Items.Select(item => item.Value).ToArray());
+        RawEditorBox.Text = _singleValueMode
+            ? Items.FirstOrDefault()?.Value ?? string.Empty
+            : StringListEditorCodec.FormatEditorText(Items.Select(item => item.Value).ToArray());
         _syncingTabs = false;
-        StructuredStatisticsText.Text = $"{Items.Count:N0} элементов · изменения применятся одной операцией Undo";
+        StructuredStatisticsText.Text = _singleValueMode
+            ? "1 составной объект · изменение применится одной операцией Undo"
+            : $"{Items.Count:N0} элементов · изменения применятся одной операцией Undo";
     }
 
     private void RenumberItems()

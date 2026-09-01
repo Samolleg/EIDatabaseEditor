@@ -1497,14 +1497,18 @@ public partial class MainWindow : Window
         FormulaApplyButton.IsEnabled = context.IsEditable;
         FormulaCancelButton.IsEnabled = context.IsEditable;
         FormulaOpenEditorButton.IsEnabled = context.CanOpenLongTextEditor;
-        FormulaOpenEditorButton.Content = context.CanOpenStructuredListEditor ? "☷" : "▤";
-        FormulaOpenEditorButton.ToolTip = context.CanOpenStructuredListEditor
-            ? "Открыть структурный редактор списка"
+        FormulaOpenEditorButton.Content = context.CanOpenStructuredEditor ? "☷" : "▤";
+        FormulaOpenEditorButton.ToolTip = context.CanOpenStructuredEditor
+            ? context.StructuredEditorIsSingleValue
+                ? "Открыть структурный редактор значения"
+                : "Открыть структурный редактор списка"
             : "Открыть во встроенном редакторе большого текста";
         AutomationProperties.SetName(
             FormulaOpenEditorButton,
-            context.CanOpenStructuredListEditor
-                ? "Открыть структурный редактор списка"
+            context.CanOpenStructuredEditor
+                ? context.StructuredEditorIsSingleValue
+                    ? "Открыть структурный редактор значения"
+                    : "Открыть структурный редактор списка"
                 : "Открыть большой текст во встроенном редакторе");
         SetFormulaError(null);
     }
@@ -1547,6 +1551,7 @@ public partial class MainWindow : Window
             Action<string>? writeValue = descriptor.IsEditable && field.CanEdit
                 ? value => field.EditorText = value
                 : null;
+            bool structuredScalar = IsStructuredScalarField(descriptor);
             context = new FormulaCellContext(
                 record,
                 column,
@@ -1556,7 +1561,8 @@ public partial class MainWindow : Window
                 writeValue,
                 () => field.ErrorMessage,
                 SupportsLongTextEditor: IsLongTextKind(descriptor.Kind),
-                StructuredListField: descriptor.Kind is "StringList" or "FixedStringList" ? field : null);
+                StructuredField: descriptor.Kind is "StringList" or "FixedStringList" || structuredScalar ? field : null,
+                StructuredEditorIsSingleValue: structuredScalar);
             return true;
         }
 
@@ -1625,6 +1631,10 @@ public partial class MainWindow : Window
 
     private static bool IsLongTextKind(string kind) =>
         kind is "String" or "FixedString" or "StringList" or "FixedStringList";
+
+    private static bool IsStructuredScalarField(SpreadsheetColumnViewModel descriptor) =>
+        descriptor.Kind is "String" or "FixedString" &&
+        descriptor.Title is "Оружие 1" or "Оружие 2";
 
     private static string GetSpreadsheetAddress(DataGrid grid, object item, DataGridColumn column)
     {
@@ -1745,10 +1755,20 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (context.CanOpenStructuredListEditor &&
-            context.StructuredListField is RecordFieldViewModel listField &&
-            listField.TryGetStringListValues(out IReadOnlyList<string> values))
+        if (context.CanOpenStructuredEditor &&
+            context.StructuredField is RecordFieldViewModel structuredField)
         {
+            IReadOnlyList<string> values;
+            if (context.StructuredEditorIsSingleValue)
+            {
+                values = [structuredField.EditorText];
+            }
+            else if (!structuredField.TryGetStringListValues(out values))
+            {
+                SetFormulaError("Не удалось прочитать элементы физического списка RES.");
+                return;
+            }
+
             var structuredDialog = new StructuredStringListEditorDialog(
                 context.Address,
                 context.Label,
@@ -1756,9 +1776,22 @@ public partial class MainWindow : Window
                 BuildReferenceSuggestions(),
                 updatedValues =>
                 {
-                    bool success = listField.TrySetStringListValues(updatedValues, out string? error);
-                    return (success, error);
-                })
+                    if (!context.StructuredEditorIsSingleValue)
+                    {
+                        bool success = structuredField.TrySetStringListValues(updatedValues, out string? error);
+                        return (success, error);
+                    }
+
+                    if (updatedValues.Count != 1)
+                    {
+                        return (false, "Это поле должно содержать ровно один составной объект.");
+                    }
+
+                    context.WriteValue!(updatedValues[0]);
+                    string? scalarError = context.ReadError?.Invoke();
+                    return (string.IsNullOrWhiteSpace(scalarError), scalarError);
+                },
+                singleValueMode: context.StructuredEditorIsSingleValue)
             {
                 Owner = this,
             };
@@ -3586,14 +3619,17 @@ public partial class MainWindow : Window
         Action<string>? WriteValue = null,
         Func<string?>? ReadError = null,
         bool SupportsLongTextEditor = false,
-        RecordFieldViewModel? StructuredListField = null)
+        RecordFieldViewModel? StructuredField = null,
+        bool StructuredEditorIsSingleValue = false)
     {
         public bool IsEditable => WriteValue is not null;
 
         public bool CanOpenLongTextEditor => IsEditable && SupportsLongTextEditor;
 
-        public bool CanOpenStructuredListEditor =>
-            CanOpenLongTextEditor && StructuredListField?.CanEditStringList is true;
+        public bool CanOpenStructuredEditor =>
+            CanOpenLongTextEditor &&
+            StructuredField is not null &&
+            (StructuredEditorIsSingleValue ? StructuredField.CanEdit : StructuredField.CanEditStringList);
     }
 
     private sealed class SpreadsheetRecordComparer(
