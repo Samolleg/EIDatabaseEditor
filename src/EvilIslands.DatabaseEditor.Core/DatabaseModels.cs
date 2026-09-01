@@ -368,12 +368,23 @@ public sealed class DatabaseField
         ArgumentNullException.ThrowIfNull(projection);
         lock (_editSync)
         {
-            return IsEditable &&
-                   projection.Kind == DatabaseFieldProjectionKind.Bit &&
-                   projection.Index is >= 0 and < 32 &&
-                   _schema.Kind == DatabaseValueKind.UInt32 &&
-                   _schema.Projections.Contains(projection) &&
-                   Payload.Length == sizeof(uint);
+            if (!IsEditable || !_schema.Projections.Contains(projection))
+            {
+                return false;
+            }
+
+            return projection.Kind switch
+            {
+                DatabaseFieldProjectionKind.Bit =>
+                    projection.Index is >= 0 and < 32 &&
+                    _schema.Kind == DatabaseValueKind.UInt32 &&
+                    Payload.Length == sizeof(uint),
+                DatabaseFieldProjectionKind.ListElement =>
+                    projection.Index >= 0 &&
+                    DatabaseValueCodec.TryGetPrimitiveListCount(_schema, Payload, out int count) &&
+                    projection.Index < count,
+                _ => false,
+            };
         }
     }
 
@@ -390,6 +401,23 @@ public sealed class DatabaseField
             {
                 error = "Эта расшифрованная ячейка доступна только для чтения.";
                 return false;
+            }
+
+            if (projection.Kind == DatabaseFieldProjectionKind.ListElement)
+            {
+                if (!DatabaseValueCodec.TryEncodePrimitiveListElement(
+                        _schema,
+                        Payload,
+                        projection.Index,
+                        value,
+                        out byte[] encodedList,
+                        out error))
+                {
+                    return false;
+                }
+
+                _editedPayload = encodedList.AsSpan().SequenceEqual(OriginalPayload) ? null : encodedList;
+                return true;
             }
 
             string normalized = value.Trim();
@@ -815,6 +843,73 @@ internal static class DatabaseValueCodec
         {
             return false;
         }
+    }
+
+    public static bool TryEncodePrimitiveListElement(
+        FieldSchema schema,
+        ReadOnlySpan<byte> original,
+        int index,
+        string text,
+        out byte[] encoded,
+        out string? error)
+    {
+        encoded = [];
+        error = null;
+        string[]? values = schema.Kind switch
+        {
+            DatabaseValueKind.Float32List => DecodeFloatValues(original),
+            DatabaseValueKind.UInt32List => DecodeUInt32Values(original),
+            DatabaseValueKind.ByteList => DecodeByteValues(original),
+            _ => null,
+        };
+        if (values is null)
+        {
+            error = "Поле не является числовым списком.";
+            return false;
+        }
+
+        if (index < 0 || index >= values.Length)
+        {
+            error = $"Элемент списка {index + 1} отсутствует.";
+            return false;
+        }
+
+        string normalized = text.Trim();
+        switch (schema.Kind)
+        {
+            case DatabaseValueKind.Float32List:
+                normalized = normalized.Replace(',', '.');
+                if (!float.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out float floatValue) ||
+                    !float.IsFinite(floatValue))
+                {
+                    error = "Ожидается конечное 32-битное число.";
+                    return false;
+                }
+
+                normalized = floatValue.ToString("R", CultureInfo.InvariantCulture);
+                break;
+            case DatabaseValueKind.UInt32List:
+                if (!uint.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out uint uintValue))
+                {
+                    error = "Ожидается целое число от 0 до 4294967295.";
+                    return false;
+                }
+
+                normalized = uintValue.ToString(CultureInfo.InvariantCulture);
+                break;
+            case DatabaseValueKind.ByteList:
+                if (!byte.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out byte byteValue))
+                {
+                    error = "Ожидается целое число от 0 до 255.";
+                    return false;
+                }
+
+                normalized = byteValue.ToString(CultureInfo.InvariantCulture);
+                break;
+        }
+
+        values[index] = normalized;
+        return TryEncode(schema, string.Join("; ", values), original, out encoded, out error);
     }
 
     public static bool TryEncode(

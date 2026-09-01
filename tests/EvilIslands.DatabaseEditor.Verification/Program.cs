@@ -1271,6 +1271,52 @@ internal static class Program
             RequireField(npc, 14).Kind == "Byte",
             "Типы Units соответствуют native-структурам, включая signed координаты рта и уровень.");
 
+        DatabaseField manualSkills = RequireField(npc, 6);
+        DatabaseField autoSkills = RequireField(npc, 7);
+        DatabaseFieldProjection tame = manualSkills.Projections.Single(projection =>
+            projection.DisplayName == "Tame");
+        DatabaseFieldState originalManualSkills = manualSkills.CaptureState();
+        string[] originalManualSkillValues = manualSkills.Projections
+            .Select(projection => manualSkills.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+            .ToArray();
+        byte originalTame = byte.Parse(
+            originalManualSkillValues[tame.Index],
+            System.Globalization.CultureInfo.InvariantCulture);
+        byte changedTame = originalTame == byte.MaxValue ? (byte)(originalTame - 1) : (byte)(originalTame + 1);
+        bool tameAccepted = manualSkills.TrySetProjectedValue(
+            tame,
+            changedTame.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            out string? tameError);
+        string[] changedManualSkillValues = manualSkills.Projections
+            .Select(projection => manualSkills.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+            .ToArray();
+        log.Assert(
+            manualSkills.Projections.Count == 3 &&
+            manualSkills.Projections.All(manualSkills.CanEditProjection) &&
+            autoSkills.Projections.Count == 8 &&
+            autoSkills.Projections.All(autoSkills.CanEditProjection) &&
+            tameAccepted &&
+            tameError is null &&
+            changedManualSkillValues[tame.Index] == changedTame.ToString(System.Globalization.CultureInfo.InvariantCulture) &&
+            changedManualSkillValues.Where((_, index) => index != tame.Index).SequenceEqual(
+                originalManualSkillValues.Where((_, index) => index != tame.Index),
+                StringComparer.Ordinal),
+            "Навыки NPC редактируются по отдельным ячейкам без изменения соседних элементов ByteList.");
+        bool invalidTameAccepted = manualSkills.TrySetProjectedValue(tame, "256", out string? invalidTameError);
+        log.Assert(
+            !invalidTameAccepted &&
+            !string.IsNullOrWhiteSpace(invalidTameError) &&
+            manualSkills.GetProjectedValue(tame)?.ToString() ==
+                changedTame.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "Навык NPC отклоняет значение вне диапазона 0–255 без изменения списка.");
+        manualSkills.RestoreState(originalManualSkills);
+        log.Assert(
+            manualSkills.Projections
+                .Select(projection => manualSkills.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+                .SequenceEqual(originalManualSkillValues, StringComparer.Ordinal) &&
+            !manualSkills.IsModified,
+            "После проверки исходный список навыков NPC восстановлен без следов изменения.");
+
         DatabaseTable spellTable = RequireTable(tables, "spells.prototypes");
         DatabaseRecord powerHit = spellTable.Records.First(record =>
             string.Equals(record.GetString("CodeName"), "powerhit", StringComparison.OrdinalIgnoreCase));
@@ -1432,7 +1478,9 @@ internal static class Program
 
         DatabaseFieldProjection shop1 = shops.Projections[0];
         DatabaseFieldProjection shop2 = shops.Projections[1];
+        DatabaseFieldProjection piercing = absorption.Projections[0];
         DatabaseFieldState originalShops = shops.CaptureState();
+        DatabaseFieldState originalAbsorption = absorption.CaptureState();
         uint originalShopMask = Convert.ToUInt32(
             shops.Value,
             System.Globalization.CultureInfo.InvariantCulture);
@@ -1444,8 +1492,8 @@ internal static class Program
         log.Assert(
             shops.CanEditProjection(shop1) &&
             shops.CanEditProjection(shop2) &&
-            !absorption.CanEditProjection(absorption.Projections[0]),
-            "Только проверенные битовые проекции объявлены редактируемыми.");
+            absorption.Projections.All(absorption.CanEditProjection),
+            "Битовые и числовые проекции объявлены редактируемыми.");
         log.Assert(
             shop1Accepted &&
             shop1Error is null &&
@@ -1458,11 +1506,46 @@ internal static class Program
             !string.IsNullOrWhiteSpace(invalidShopError) &&
             Convert.ToUInt32(shops.Value, System.Globalization.CultureInfo.InvariantCulture) == changedShopMask,
             "Битовая проекция отклоняет значения вне 0/1, не меняя маску.");
+        string[] originalAbsorptionValues = absorption.Projections
+            .Select(projection => absorption.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+            .ToArray();
+        float changedPiercing = float.Parse(
+            originalAbsorptionValues[0],
+            System.Globalization.CultureInfo.InvariantCulture) + 0.25f;
+        bool piercingAccepted = absorption.TrySetProjectedValue(
+            piercing,
+            changedPiercing.ToString("R", System.Globalization.CultureInfo.InvariantCulture).Replace('.', ','),
+            out string? piercingError);
+        string[] changedAbsorptionValues = absorption.Projections
+            .Select(projection => absorption.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+            .ToArray();
+        log.Assert(
+            piercingAccepted &&
+            piercingError is null &&
+            NearlyEqual(
+                absorption.GetProjectedValue(piercing)!,
+                changedPiercing) &&
+            changedAbsorptionValues.Skip(1).SequenceEqual(originalAbsorptionValues.Skip(1), StringComparer.Ordinal),
+            "Редактирование одного элемента Float32List принимает десятичную запятую и сохраняет соседние значения.");
+        bool invalidPiercingAccepted = absorption.TrySetProjectedValue(
+            piercing,
+            "не число",
+            out string? invalidPiercingError);
+        log.Assert(
+            !invalidPiercingAccepted &&
+            !string.IsNullOrWhiteSpace(invalidPiercingError) &&
+            NearlyEqual(absorption.GetProjectedValue(piercing)!, changedPiercing),
+            "Числовая проекция отклоняет неверное значение без частичного изменения списка.");
         shops.RestoreState(originalShops);
+        absorption.RestoreState(originalAbsorption);
         log.Assert(
             Convert.ToUInt32(shops.Value, System.Globalization.CultureInfo.InvariantCulture) == originalShopMask &&
-            !shops.IsModified,
-            "После проверки исходная shop-маска восстановлена без следов изменения.");
+            !shops.IsModified &&
+            absorption.Projections
+                .Select(projection => absorption.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+                .SequenceEqual(originalAbsorptionValues, StringComparer.Ordinal) &&
+            !absorption.IsModified,
+            "После проверки исходные shop-маска и числовой список восстановлены без следов изменения.");
         log.Assert(
             materials.Records.All(record =>
                 RequireField(record, 11).Length == 28 &&

@@ -1013,10 +1013,12 @@ internal static class Program
             tables.SelectMany(table => table.Columns)
                 .Where(column => column.Projection is not null)
                 .Any(column => column.IsEditable !=
-                    (column.Projection!.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit)))
+                    (column.Projection!.Kind is
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit or
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement)))
         {
             throw new InvalidOperationException(
-                "Все 26 таблиц и их физические поля должны редактироваться; битовые проекции редактируются как ячейки 0/1, остальные расшифровки остаются только для чтения.");
+                "Все 26 таблиц и их физические поля должны редактироваться; битовые и числовые списочные проекции редактируются по ячейкам, остальные расшифровки остаются только для чтения.");
         }
 
         if (records.Any(record => record.AreFieldsMaterialized))
@@ -1503,15 +1505,20 @@ internal static class Program
             materials.Columns.Count(column =>
                 column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit &&
                 column.IsEditable) != 5 ||
+            materials.Columns.Count(column =>
+                column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement &&
+                column.IsEditable) != 7 ||
             materials.Columns.Where(column =>
                     column.Projection is not null &&
-                    column.Projection.Kind != EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit)
+                    column.Projection.Kind is not (
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit or
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement))
                 .Any(column => column.IsEditable))
         {
             throw new InvalidOperationException(
                 "Материалы должны иметь 14 редактируемых физических столбцов, " +
-                $"пять редактируемых shop-битов и нередактируемые расшифровки; статус таблицы — «Схема распознана». " +
-                $"columns={materials.Columns.Count}; status={materials.StatusText}; physicalEditable={materials.Columns.Count(column => column.Projection is null && column.IsEditable)}; bitEditable={materials.Columns.Count(column => column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit && column.IsEditable)}; otherProjectionEditable={materials.Columns.Count(column => column.Projection is not null && column.Projection.Kind != EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit && column.IsEditable)}");
+                $"пять редактируемых shop-битов, семь элементов поглощения и нередактируемые сложные расшифровки; статус таблицы — «Схема распознана». " +
+                $"columns={materials.Columns.Count}; status={materials.StatusText}; physicalEditable={materials.Columns.Count(column => column.Projection is null && column.IsEditable)}; bitEditable={materials.Columns.Count(column => column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit && column.IsEditable)}; listEditable={materials.Columns.Count(column => column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement && column.IsEditable)}; otherProjectionEditable={materials.Columns.Count(column => column.Projection is not null && column.Projection.Kind is not (EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit or EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement) && column.IsEditable)}");
         }
 
         var rawColumns = tables
@@ -2224,10 +2231,12 @@ internal static class Program
                 "Изменение вычисляемого номера строки должно отклоняться до модификации модели.");
         }
 
-        SpreadsheetColumnViewModel computedFloat = materials.Columns.First(column =>
+        viewModel.SelectTableCommand.Execute(armors);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        SpreadsheetColumnViewModel computedFloat = armors.Columns.First(column =>
             !column.IsEditable && column.Kind == "Float32" &&
-            materials.Records.Any(record => GetSpreadsheetText(record, column).Contains('.')));
-        RecordRowViewModel computedRow = materials.Records.First(record =>
+            armors.Records.Any(record => GetSpreadsheetText(record, column).Contains('.')));
+        RecordRowViewModel computedRow = armors.Records.First(record =>
             GetSpreadsheetText(record, computedFloat).Contains('.'));
         DataGridColumn computedGridColumn = recordsGrid.Columns.Single(column =>
             ReferenceEquals(column.Header, computedFloat));
@@ -2251,6 +2260,11 @@ internal static class Program
             throw new InvalidOperationException(
                 "Ошибка вставки в вычисляемую колонку должна показывать короткое понятное название, а не внутреннее описание объекта.");
         }
+
+        viewModel.SelectTableCommand.Execute(materials);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        materialTypeGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, materialType));
 
         _ = localizationTitleGridColumn;
         _ = localizationKeyGridColumn;
@@ -3362,6 +3376,108 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Один Undo должен полностью отменять вставку в shop-ячейку.");
+        }
+
+        DatabaseTableViewModel npcs = viewModel.Databases
+            .SelectMany(group => group.Tables)
+            .Single(table => table.Key == "units.npcs");
+        viewModel.SelectTableCommand.Execute(npcs);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        RecordRowViewModel npc = npcs.Records[0];
+        SpreadsheetColumnViewModel tameColumn = npcs.Columns.Single(column => column.Title == "Tame");
+        DataGridColumn tameGridColumn = recordsGrid.Columns.Single(column => ReferenceEquals(column.Header, tameColumn));
+        RecordFieldViewModel manualSkills = npc.GetCell(tameColumn.FieldId)
+            ?? throw new InvalidOperationException("Не найден исходный список ручных навыков NPC.");
+        string originalTame = manualSkills.GetProjectedText(tameColumn.Projection!);
+        string originalManualSkillsRaw = manualSkills.EditorText;
+        byte originalTameValue = byte.Parse(originalTame, CultureInfo.InvariantCulture);
+        string changedTame = (originalTameValue == byte.MaxValue ? originalTameValue - 1 : originalTameValue + 1)
+            .ToString(CultureInfo.InvariantCulture);
+        recordsGrid.CurrentCell = new DataGridCellInfo(npc, tameGridColumn);
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(npc, tameGridColumn));
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        string? skillError = null;
+        if (!tameColumn.IsEditable ||
+            tameGridColumn.IsReadOnly ||
+            editorBox.IsReadOnly ||
+            !applyButton.IsEnabled ||
+            !window.TryApplyFormulaValue(changedTame, out skillError) ||
+            skillError is not null ||
+            manualSkills.GetProjectedText(tameColumn.Projection!) != changedTame ||
+            manualSkills.EditorText == originalManualSkillsRaw ||
+            viewModel.ChangeCount != 1)
+        {
+            throw new InvalidOperationException(
+                $"Tame должен редактироваться как обычная ячейка и синхронизировать ByteList: {skillError}; " +
+                $"descriptorEditable={tameColumn.IsEditable}; gridReadOnly={tameGridColumn.IsReadOnly}; " +
+                $"formulaReadOnly={editorBox.IsReadOnly}; apply={applyButton.IsEnabled}; " +
+                $"projected={manualSkills.GetProjectedText(tameColumn.Projection!)}; expected={changedTame}; " +
+                $"rawChanged={manualSkills.EditorText != originalManualSkillsRaw}; changes={viewModel.ChangeCount}");
+        }
+
+        if (window.TryApplyFormulaValue("256", out skillError) ||
+            string.IsNullOrWhiteSpace(skillError) ||
+            manualSkills.GetProjectedText(tameColumn.Projection!) != changedTame)
+        {
+            throw new InvalidOperationException(
+                "Tame должен отклонять значение 256 без изменения уже записанного элемента.");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (manualSkills.GetProjectedText(tameColumn.Projection!) != originalTame ||
+            manualSkills.EditorText != originalManualSkillsRaw ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Undo должен одновременно восстановить Tame и исходный список ручных навыков.");
+        }
+
+        SpreadsheetColumnViewModel[] manualSkillColumns = new[] { "Science", "Stealing", "Tame" }
+            .Select(title => npcs.Columns.Single(column => column.Title == title))
+            .ToArray();
+        string[] originalManualSkillValues = manualSkillColumns
+            .Select(column => manualSkills.GetProjectedText(column.Projection!))
+            .ToArray();
+        string[] changedManualSkillValues = originalManualSkillValues
+            .Select(value =>
+            {
+                byte parsed = byte.Parse(value, CultureInfo.InvariantCulture);
+                return (parsed == byte.MaxValue ? parsed - 1 : parsed + 1).ToString(CultureInfo.InvariantCulture);
+            })
+            .ToArray();
+        DataGridColumn scienceGridColumn = recordsGrid.Columns.Single(column =>
+            ReferenceEquals(column.Header, manualSkillColumns[0]));
+        recordsGrid.CurrentCell = new DataGridCellInfo(npc, scienceGridColumn);
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(npc, scienceGridColumn));
+        IReadOnlyList<IReadOnlyList<string>> skillsPasteMatrix =
+            SpreadsheetClipboardText.Parse(string.Join('\t', changedManualSkillValues));
+        if (!window.TryBuildPasteCells(
+                skillsPasteMatrix,
+                out IReadOnlyList<SpreadsheetPasteCell> skillsPasteCells,
+                out skillError) ||
+            !viewModel.TryPasteSpreadsheetCells(skillsPasteCells, out int skillsPasteCount, out skillError) ||
+            skillsPasteCount != 3 ||
+            !manualSkillColumns
+                .Select(column => manualSkills.GetProjectedText(column.Projection!))
+                .SequenceEqual(changedManualSkillValues, StringComparer.Ordinal) ||
+            viewModel.ChangeCount != 1)
+        {
+            throw new InvalidOperationException(
+                $"Ctrl+V должен атомарно вставлять три соседних навыка NPC в один ByteList: {skillError}");
+        }
+
+        viewModel.UndoCommand.Execute(null);
+        if (!manualSkillColumns
+                .Select(column => manualSkills.GetProjectedText(column.Projection!))
+                .SequenceEqual(originalManualSkillValues, StringComparer.Ordinal) ||
+            manualSkills.EditorText != originalManualSkillsRaw ||
+            viewModel.ChangeCount != 0)
+        {
+            throw new InvalidOperationException(
+                "Один Undo должен полностью отменять прямоугольную Excel-вставку в навыки NPC.");
         }
 
         viewModel.SelectTableCommand.Execute(prototypes);
