@@ -1065,7 +1065,7 @@ public partial class MainWindow : Window
             style.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("SurfaceBrush")));
         }
 
-        if (!descriptor.IsEditable)
+        if (!descriptor.IsEditable && descriptor.Kind != "StructuredListDecoded")
         {
             style.Setters.Add(new Setter(Control.ForegroundProperty, FindResource("MutedTextBrush")));
         }
@@ -1579,7 +1579,9 @@ public partial class MainWindow : Window
         FormulaEditorBox.ToolTip = null;
         AutomationProperties.SetHelpText(
             FormulaEditorBox,
-            context.IsEditable
+            context.CanOpenStructuredEditor
+                ? $"{context.Label}. Нажмите кнопку справа, чтобы открыть понятный структурный редактор."
+                : context.IsEditable
                 ? $"{context.Label}. Enter — применить, Esc — отменить, Alt+Enter — перенос строки."
                 : $"{context.Label}. Вычисляемое или служебное поле доступно только для чтения.");
         FormulaApplyButton.IsEnabled = context.IsEditable;
@@ -1587,14 +1589,18 @@ public partial class MainWindow : Window
         FormulaOpenEditorButton.IsEnabled = context.CanOpenLongTextEditor;
         FormulaOpenEditorButton.Content = context.CanOpenStructuredEditor ? "☷" : "▤";
         FormulaOpenEditorButton.ToolTip = context.CanOpenStructuredEditor
-            ? context.StructuredEditorIsSingleValue
+            ? context.StructuredEditorIsRecordList
+                ? "Открыть редактор вариантов реплики"
+                : context.StructuredEditorIsSingleValue
                 ? "Открыть структурный редактор значения"
                 : "Открыть структурный редактор списка"
             : "Открыть во встроенном редакторе большого текста";
         AutomationProperties.SetName(
             FormulaOpenEditorButton,
             context.CanOpenStructuredEditor
-                ? context.StructuredEditorIsSingleValue
+                ? context.StructuredEditorIsRecordList
+                    ? "Открыть редактор вариантов реплики"
+                    : context.StructuredEditorIsSingleValue
                     ? "Открыть структурный редактор значения"
                     : "Открыть структурный редактор списка"
                 : "Открыть большой текст во встроенном редакторе");
@@ -1621,6 +1627,8 @@ public partial class MainWindow : Window
 
             if (descriptor.Projection is not null)
             {
+                bool structuredRecordList = descriptor.Kind == "StructuredListDecoded" &&
+                                            field.CanEditStructuredList;
                 Action<string>? projectedWriteValue = descriptor.IsEditable && field.CanEditProjection(descriptor.Projection)
                     ? value => field.TrySetProjectedText(descriptor.Projection, value, out _)
                     : null;
@@ -1632,7 +1640,9 @@ public partial class MainWindow : Window
                     () => field.GetProjectedText(descriptor.Projection),
                     projectedWriteValue,
                     () => field.ErrorMessage,
-                    SupportsLongTextEditor: IsLongTextKind(descriptor.Kind));
+                    SupportsLongTextEditor: structuredRecordList || IsLongTextKind(descriptor.Kind),
+                    StructuredField: structuredRecordList ? field : null,
+                    StructuredEditorIsRecordList: structuredRecordList);
                 return true;
             }
 
@@ -1846,6 +1856,40 @@ public partial class MainWindow : Window
         if (context.CanOpenStructuredEditor &&
             context.StructuredField is RecordFieldViewModel structuredField)
         {
+            if (context.StructuredEditorIsRecordList)
+            {
+                if (!structuredField.TryGetStructuredListEntries(
+                        out IReadOnlyList<StructuredListFieldDescriptor> fields,
+                        out IReadOnlyList<StructuredListEntryValue> entries))
+                {
+                    SetFormulaError("Не удалось прочитать варианты реплики из составного поля RES.");
+                    return;
+                }
+
+                var recordListDialog = new StructuredRecordListEditorDialog(
+                    context.Address,
+                    context.Label,
+                    fields,
+                    entries,
+                    updatedEntries =>
+                    {
+                        bool success = structuredField.TrySetStructuredListEntries(updatedEntries, out string? error);
+                        return (success, error);
+                    })
+                {
+                    Owner = this,
+                };
+
+                if (ShowResizableEditorDialog(recordListDialog) is true && recordListDialog.WasApplied)
+                {
+                    SetFormulaError(null);
+                    FormulaEditorBox.Text = context.ReadValue();
+                    RecordsGrid.Focus();
+                }
+
+                return;
+            }
+
             IReadOnlyList<string> values;
             if (context.StructuredEditorIsSingleValue)
             {
@@ -3759,16 +3803,20 @@ public partial class MainWindow : Window
         Func<string?>? ReadError = null,
         bool SupportsLongTextEditor = false,
         RecordFieldViewModel? StructuredField = null,
-        bool StructuredEditorIsSingleValue = false)
+        bool StructuredEditorIsSingleValue = false,
+        bool StructuredEditorIsRecordList = false)
     {
         public bool IsEditable => WriteValue is not null;
 
-        public bool CanOpenLongTextEditor => IsEditable && SupportsLongTextEditor;
+        public bool CanOpenLongTextEditor => CanOpenStructuredEditor || IsEditable && SupportsLongTextEditor;
 
         public bool CanOpenStructuredEditor =>
-            CanOpenLongTextEditor &&
+            SupportsLongTextEditor &&
             StructuredField is not null &&
-            (StructuredEditorIsSingleValue ? StructuredField.CanEdit : StructuredField.CanEditStringList);
+            (StructuredEditorIsRecordList
+                ? StructuredField.CanEditStructuredList
+                : IsEditable &&
+                  (StructuredEditorIsSingleValue ? StructuredField.CanEdit : StructuredField.CanEditStringList));
     }
 
     private sealed class SpreadsheetRecordComparer(

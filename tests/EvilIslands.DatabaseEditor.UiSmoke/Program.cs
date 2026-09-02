@@ -54,6 +54,7 @@ internal static class Program
             VerifyBranding(window);
             VerifyLongTextEditorDialog();
             VerifyStructuredStringListEditorDialog();
+            VerifyStructuredRecordListEditorDialog();
             VerifyDatabaseComparisonDialog();
             VerifyResFileManagerDialog();
             VerifyContrastStyles(application, window);
@@ -1696,17 +1697,38 @@ internal static class Program
         viewModel.SelectTableCommand.Execute(acks);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (viewModel.ShowAllColumns ||
-            viewModel.VisibleSpreadsheetColumns.Count != acks.Columns.Count ||
+            viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex") ||
             !viewModel.VisibleSpreadsheetColumns.Any(column =>
-                column.Kind == "RawHex" && column.IsEditable) ||
-            !viewModel.VisibleSpreadsheetColumns.Any(column =>
+                column.Kind == "StructuredListDecoded" &&
                 column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue) ||
+            viewModel.VisibleSpreadsheetColumns.Count >= acks.Columns.Count ||
             recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
                 (viewModel.HasTextsDocument ? 4 : 1) +
                 (viewModel.HasSoundArchives ? 2 : 0))
         {
             throw new InvalidOperationException(
-                "acks.db/Ответы и команды должен показывать расшифровку и соседний редактируемый raw-источник для каждой необратимой структуры.");
+                "acks.db/Ответы и команды должен показывать только понятные составные списки; raw-код доступен отдельно в техническом режиме.");
+        }
+
+        SpreadsheetColumnViewModel structuredAckColumn = viewModel.VisibleSpreadsheetColumns.First(column =>
+            column.Kind == "StructuredListDecoded");
+        RecordRowViewModel structuredAckRecord = acks.Records.First(record =>
+            record.GetCell(structuredAckColumn.FieldId)?.CanEditStructuredList is true);
+        DataGridColumn structuredAckGridColumn = recordsGrid.Columns.First(column =>
+            ReferenceEquals(column.Header, structuredAckColumn));
+        viewModel.SelectedRecord = structuredAckRecord;
+        recordsGrid.SelectedItem = structuredAckRecord;
+        recordsGrid.CurrentCell = new DataGridCellInfo(structuredAckRecord, structuredAckGridColumn);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (window.FindName("FormulaOpenEditorButton") is not Button
+            {
+                IsEnabled: true,
+                ToolTip: "Открыть редактор вариантов реплики",
+            } ||
+            window.FindName("FormulaEditorBox") is not TextBox { IsReadOnly: true })
+        {
+            throw new InvalidOperationException(
+                "Понятная ячейка acks.db должна открывать отдельный редактор вариантов, оставляя сводный текст защищённым от случайной перезаписи.");
         }
 
         if (viewModel.HasSoundArchives)
@@ -4092,6 +4114,66 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Структурный редактор не должен применять элемент с незакрытой квадратной скобкой.");
+        }
+    }
+
+    private static void VerifyStructuredRecordListEditorDialog()
+    {
+        IReadOnlyList<StructuredListFieldDescriptor> fields =
+        [
+            new(1, "Файл", "String", true),
+            new(2, "Вероятность", "Int32", true),
+            new(3, "Описание", "String", true),
+            new(4, "Ключ", "String", true),
+            new(10, "Флаги условий", "UInt32", true),
+        ];
+        IReadOnlyList<StructuredListEntryValue> source =
+        [
+            new(0, new Dictionary<int, string>
+            {
+                [1] = @"Acks\HH\Attack\9.wav",
+                [2] = "25",
+                [3] = "Атака",
+                [4] = "Attack09",
+                [10] = "641",
+            }),
+        ];
+        IReadOnlyList<StructuredListEntryValue>? applied = null;
+        var dialog = new StructuredRecordListEditorDialog(
+            "F18",
+            "Атака",
+            fields,
+            source,
+            values =>
+            {
+                applied = values.ToArray();
+                return (true, null);
+            });
+
+        if (dialog.Width < 1100 ||
+            dialog.Height < 650 ||
+            dialog.FindName("EntriesGrid") is not DataGrid entriesGrid ||
+            entriesGrid.Items.Count != 1 ||
+            dialog.FindName("ConditionsColumn") is not DataGridColumn { Visibility: Visibility.Visible } ||
+            dialog.Entries[0].ConditionsText != "бег, день, снаружи")
+        {
+            throw new InvalidOperationException(
+                "Редактор вариантов реплики должен показывать крупную таблицу с понятными полями и расшифровкой условий.");
+        }
+
+        dialog.Entries[0].FileName = @"Acks\HH\Attack\10.wav";
+        dialog.Entries[0].Probability = "30";
+        if (!dialog.TryCommit() ||
+            !dialog.WasApplied ||
+            applied is null ||
+            applied.Count != 1 ||
+            applied[0].Fields[1] != @"Acks\HH\Attack\10.wav" ||
+            applied[0].Fields[2] != "30" ||
+            applied[0].Fields[3] != "Атака" ||
+            applied[0].Fields[10] != "641")
+        {
+            throw new InvalidOperationException(
+                "Редактор вариантов реплики должен применять изменённые понятные поля без потери остальных значений.");
         }
     }
 

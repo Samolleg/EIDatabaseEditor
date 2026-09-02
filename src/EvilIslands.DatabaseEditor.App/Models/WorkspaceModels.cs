@@ -281,9 +281,11 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                         new DatabaseFieldProjection(
                             DatabaseFieldProjectionKind.DecodedValue,
                             0,
-                            $"{field.DisplayName} · расшифровка",
+                            field.Kind == "StructuredList"
+                                ? field.DisplayName
+                                : $"{field.DisplayName} · расшифровка",
                             "Читаемое представление исходных байтов.",
-                            "Decoded",
+                            field.Kind == "StructuredList" ? "StructuredListDecoded" : "Decoded",
                             field.DisplayOrder));
                 }
 
@@ -404,6 +406,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "UInt32List" => "UInt32",
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "ByteList" => "Byte",
                 DatabaseFieldProjectionKind.EnumValue => "Enum",
+                DatabaseFieldProjectionKind.DecodedValue when sourceKind == "StructuredList" =>
+                    "StructuredListDecoded",
                 DatabaseFieldProjectionKind.DecodedValue => "Decoded",
                 _ => sourceKind,
             });
@@ -426,7 +430,9 @@ internal sealed record SpreadsheetColumnViewModel(
     DatabaseFieldProjection? Projection,
     int DisplayOrder)
 {
-    public string Subtitle => $"{Key} · {Kind}";
+    public string Subtitle => Kind == "StructuredListDecoded"
+        ? "Варианты реплик · редактор ☷"
+        : $"{Key} · {Kind}";
 
     public string HeaderToolTip => $"{Title}\n{Subtitle}";
 
@@ -438,7 +444,7 @@ internal sealed record SpreadsheetColumnViewModel(
 
     public bool IsSortable => Kind is not (
         "Hex" or "RawHex" or "Nested" or "StructuredList" or "StringList" or "FixedStringList" or
-        "UInt32List" or "Float32List" or "ByteList");
+        "StructuredListDecoded" or "UInt32List" or "Float32List" or "ByteList");
 
     public bool IsPrimitive => Kind is "String" or "FixedString" or "Int32" or "UInt32" or "Float32" or "Byte" or "Boolean";
 }
@@ -467,6 +473,7 @@ internal readonly record struct SpreadsheetColumnLayout(
             "StringList" or "FixedStringList" or "UInt32List" or "Float32List" or "ByteList" =>
                 new(140, 96, 320),
             "Nested" or "StructuredList" => new(140, 96, 320),
+            "StructuredListDecoded" => new(190, 130, 420),
             _ => new(112, 76, 280),
         };
     }
@@ -1656,8 +1663,58 @@ internal sealed class RecordFieldViewModel : ObservableObject
     public bool CanEditStringList =>
         CanEdit && Kind is "StringList" or "FixedStringList";
 
+    public bool CanEditStructuredList =>
+        CanEdit && Kind == "StructuredList" && _field.CanEditStructuredList;
+
     public bool TryGetStringListValues(out IReadOnlyList<string> values) =>
         _field.TryGetStringListValues(out values);
+
+    public bool TryGetStructuredListEntries(
+        out IReadOnlyList<StructuredListFieldDescriptor> fields,
+        out IReadOnlyList<StructuredListEntryValue> entries) =>
+        _field.TryGetStructuredListEntries(out fields, out entries);
+
+    public bool TrySetStructuredListEntries(
+        IReadOnlyList<StructuredListEntryValue> entries,
+        out string? error)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        error = null;
+        if (!CanEditStructuredList)
+        {
+            error = "Этот составной список доступен только для чтения.";
+            ErrorMessage = error;
+            return false;
+        }
+
+        DatabaseFieldState beforeState = _field.CaptureState();
+        try
+        {
+            if (!_field.TrySetStructuredListEntries(entries, out error))
+            {
+                ErrorMessage = error ?? "Составной список не принят.";
+                return false;
+            }
+        }
+        catch (Exception exception)
+        {
+            error = exception.Message;
+            ErrorMessage = error;
+            return false;
+        }
+
+        ErrorMessage = null;
+        SetProperty(ref _editorText, _field.EditorText, nameof(EditorText));
+        OnPropertyChanged(nameof(IsModified));
+        OnPropertyChanged(nameof(ProjectionSource));
+        DatabaseFieldState afterState = _field.CaptureState();
+        if (!beforeState.IsEquivalentTo(afterState))
+        {
+            ValueCommitted?.Invoke(this, new FieldValueCommittedEventArgs(beforeState, afterState));
+        }
+
+        return true;
+    }
 
     public bool TrySetStringListValues(
         IReadOnlyList<string> values,
@@ -1805,6 +1862,7 @@ internal sealed class RecordFieldViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(CanEdit));
                 OnPropertyChanged(nameof(CanEditStringList));
+                OnPropertyChanged(nameof(CanEditStructuredList));
             }
         }
     }

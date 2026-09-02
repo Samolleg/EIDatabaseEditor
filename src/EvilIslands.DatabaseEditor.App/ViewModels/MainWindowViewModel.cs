@@ -1597,7 +1597,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             .ToHashSet();
         var fieldsWithEditableDecodedProjection = columns
             .Where(column => column.Projection?.Kind == DatabaseFieldProjectionKind.DecodedValue &&
-                             column.IsEditable)
+                             (column.IsEditable || column.Kind == "StructuredListDecoded"))
             .Select(column => column.FieldId)
             .ToHashSet();
 

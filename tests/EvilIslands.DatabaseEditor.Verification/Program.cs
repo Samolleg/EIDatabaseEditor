@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using EvilIslands.DatabaseEditor.Core;
 
@@ -239,6 +240,11 @@ internal static class Program
                 boundaries.Sum(summary => summary.Records),
                 log).ConfigureAwait(false);
             await VerifyComplexFieldRoundTripAsync(
+                sourcePath,
+                allSourcePaths,
+                staging,
+                log).ConfigureAwait(false);
+            await VerifyStructuredAckListRoundTripAsync(
                 sourcePath,
                 allSourcePaths,
                 staging,
@@ -2064,6 +2070,82 @@ internal static class Program
                 difference.Kind == DatabaseDifferenceKind.OnlyInCompared &&
                 difference.TableKey.Equals(appendableTable.Key, StringComparison.Ordinal)),
             "Сравнение отдельно показывает запись, существующую только во второй базе.");
+    }
+
+    private static async Task VerifyStructuredAckListRoundTripAsync(
+        string sourcePath,
+        IReadOnlyCollection<string> allSourcePaths,
+        SafeStagingArea staging,
+        VerificationLog log)
+    {
+        DatabaseDocument document = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
+        DatabaseTable table = RequireTable(document.Databases.SelectMany(group => group.Tables), "acks.answers");
+        (DatabaseRecord Record, DatabaseField Field) probe = table.Records
+            .SelectMany(record => record.Fields.Select(field => (Record: record, Field: field)))
+            .First(item =>
+                item.Field.CanEditStructuredList &&
+                item.Field.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> entries) &&
+                entries.Any(entry =>
+                    entry.Fields.TryGetValue(2, out string? probability) &&
+                    int.TryParse(probability, out _)));
+
+        string originalHex = probe.Field.EditorText;
+        log.Assert(
+            probe.Field.TryGetStructuredListEntries(
+                out IReadOnlyList<StructuredListFieldDescriptor> descriptors,
+                out IReadOnlyList<StructuredListEntryValue> originalEntries) &&
+            new[] { 1, 2, 3, 4 }.All(id => descriptors.Any(field => field.Id == id && field.IsEditable)),
+            "Структурная реплика acks.db раскрывает редактируемые поля «Файл», «Вероятность», «Описание» и «Ключ».");
+
+        int entryIndex = originalEntries.ToList().FindIndex(entry =>
+            entry.Fields.TryGetValue(2, out string? probability) && int.TryParse(probability, out _));
+        var editedEntries = originalEntries
+            .Select(entry => new StructuredListEntryValue(
+                entry.Index,
+                new Dictionary<int, string>(entry.Fields)))
+            .ToArray();
+        var editedFields = (Dictionary<int, string>)editedEntries[entryIndex].Fields;
+        int originalProbability = int.Parse(editedFields[2], CultureInfo.InvariantCulture);
+        string editedProbability = checked(originalProbability + 1).ToString(CultureInfo.InvariantCulture);
+        string editedDescription = editedFields.GetValueOrDefault(3, string.Empty) + " тест";
+        editedFields[2] = editedProbability;
+        editedFields[3] = editedDescription;
+
+        log.Assert(
+            probe.Field.TrySetStructuredListEntries(editedEntries, out string? editError),
+            $"Понятное поле «Вероятность» принято без ручного редактирования hex: {editError}");
+        log.Assert(
+            probe.Field.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> decodedEdited) &&
+            decodedEdited[entryIndex].Fields[2] == editedProbability &&
+            decodedEdited[entryIndex].Fields[3] == editedDescription,
+            "Изменённые вероятность и CP1251-описание немедленно читаются обратно через структурный список.");
+        log.Assert(
+            probe.Field.TrySetStructuredListEntries(originalEntries, out string? restoreError) &&
+            probe.Field.EditorText.Equals(originalHex, StringComparison.Ordinal),
+            $"Возврат исходных понятных значений побайтово восстанавливает составное поле: {restoreError}");
+
+        log.Assert(
+            probe.Field.TrySetStructuredListEntries(editedEntries, out editError),
+            $"Повторное структурное изменение подготовлено для Save As: {editError}");
+        string targetPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-acks-structured-list.res");
+        staging.AssertOutputPath(targetPath, allSourcePaths);
+        await document.SaveAsAsync(targetPath).ConfigureAwait(false);
+
+        DatabaseDocument reopened = await DatabaseDocument.OpenAsync(targetPath).ConfigureAwait(false);
+        DatabaseField reopenedField = RequireField(
+            RequireTable(reopened.Databases.SelectMany(group => group.Tables), "acks.answers")
+                .Records[probe.Record.RecordIndex],
+            probe.Field.Id);
+        log.Assert(
+            reopenedField.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> reopenedEntries) &&
+            reopenedEntries[entryIndex].Fields[2] == editedProbability &&
+            reopenedEntries[entryIndex].Fields[3] == editedDescription,
+            "Понятные числовое и строковое изменения acks.db сохранились в тестовую копию и повторно открылись.");
+        log.Assert(
+            reopened.Validate().All(diagnostic => !diagnostic.IsBlocking),
+            "Копия с изменённым структурным списком acks.db не содержит блокирующих ошибок.");
+        _ = DatabaseBoundaryVerifier.Verify(ResArchiveDocument.Open(targetPath));
+        log.Pass("Структурный список acks.db повторно разобран до границ всех TLV-полей.");
     }
 
     private static string CreateComplexEditText(DatabaseField field)
