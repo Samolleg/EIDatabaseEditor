@@ -680,8 +680,8 @@ public partial class MainWindow : Window
         DataGridColumn? nameColumn = null;
         foreach (var descriptor in _spreadsheetViewModel.VisibleSpreadsheetColumns)
         {
-            Style columnElementStyle = CreateSpreadsheetElementStyle(descriptor, elementStyle);
-            Style columnEditingStyle = CreateSpreadsheetEditingStyle(descriptor, editingStyle);
+            Style columnElementStyle = CreateSpreadsheetElementStyle(elementStyle);
+            Style columnEditingStyle = CreateSpreadsheetEditingStyle(editingStyle);
             DataGridColumn column;
             if (descriptor.Projection is not null && descriptor.IsEditable)
             {
@@ -1041,35 +1041,23 @@ public partial class MainWindow : Window
         return style;
     }
 
-    private static Style CreateSpreadsheetElementStyle(
-        SpreadsheetColumnViewModel descriptor,
-        Style baseStyle)
+    private static Style CreateSpreadsheetElementStyle(Style baseStyle)
     {
         var style = new Style(typeof(TextBlock), baseStyle);
         style.Setters.Add(new Setter(
             TextBlock.TextAlignmentProperty,
-            GetSpreadsheetTextAlignment(descriptor)));
+            TextAlignment.Center));
         return style;
     }
 
-    private static Style CreateSpreadsheetEditingStyle(
-        SpreadsheetColumnViewModel descriptor,
-        Style baseStyle)
+    private static Style CreateSpreadsheetEditingStyle(Style baseStyle)
     {
         var style = new Style(typeof(TextBox), baseStyle);
         style.Setters.Add(new Setter(
             TextBox.TextAlignmentProperty,
-            GetSpreadsheetTextAlignment(descriptor)));
+            TextAlignment.Center));
         return style;
     }
-
-    private static TextAlignment GetSpreadsheetTextAlignment(SpreadsheetColumnViewModel descriptor) =>
-        descriptor.Kind switch
-        {
-            "Boolean" => TextAlignment.Center,
-            "Byte" or "Int32" or "UInt32" or "Float32" => TextAlignment.Right,
-            _ => TextAlignment.Left,
-        };
 
     private Style CreateSpreadsheetCellStyle(SpreadsheetColumnViewModel descriptor)
     {

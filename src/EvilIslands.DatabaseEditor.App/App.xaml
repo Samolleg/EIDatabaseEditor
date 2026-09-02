@@ -722,7 +722,7 @@
                 <Setter Property="Padding" Value="10,0" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="HorizontalContentAlignment" Value="Left" />
+                <Setter Property="HorizontalContentAlignment" Value="Center" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
             </Style>
 
@@ -747,6 +747,7 @@
                 <Setter Property="FontSize" Value="14" />
                 <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="TextBlock.TextAlignment" Value="Center" />
                 <Setter Property="FocusVisualStyle" Value="{x:Null}" />
                 <Style.Triggers>
                     <Trigger Property="IsSelected" Value="True">

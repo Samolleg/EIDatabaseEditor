@@ -195,12 +195,23 @@ internal static class Program
         }
 
         var dataGridStyle = application.Resources[typeof(DataGrid)] as Style;
+        var dataGridCellStyle = application.Resources[typeof(DataGridCell)] as Style;
+        var dataGridHeaderStyle = application.Resources[typeof(DataGridColumnHeader)] as Style;
         if (!Equals(FindSetterValue(dataGridStyle, DataGrid.RowHeightProperty), 38d) ||
             !Equals(FindSetterValue(dataGridStyle, DataGrid.ColumnHeaderHeightProperty), 42d) ||
             !Equals(FindSetterValue(dataGridStyle, ScrollViewer.IsDeferredScrollingEnabledProperty), false))
         {
             throw new InvalidOperationException(
                 "Все таблицы должны наследовать единые размеры строк и заголовков и живую прокрутку.");
+        }
+
+        if (!Equals(FindSetterValue(dataGridCellStyle, TextBlock.TextAlignmentProperty), TextAlignment.Center) ||
+            !Equals(FindSetterValue(dataGridCellStyle, Control.VerticalContentAlignmentProperty), VerticalAlignment.Center) ||
+            !Equals(FindSetterValue(dataGridHeaderStyle, Control.HorizontalContentAlignmentProperty), HorizontalAlignment.Center) ||
+            !Equals(FindSetterValue(dataGridHeaderStyle, Control.VerticalContentAlignmentProperty), VerticalAlignment.Center))
+        {
+            throw new InvalidOperationException(
+                "Все таблицы должны центрировать содержимое ячеек и заголовков по горизонтали и вертикали.");
         }
 
         static void VerifyTemplatedStyle(Style? style, DependencyProperty property, string name)
@@ -362,10 +373,13 @@ internal static class Program
     private static void VerifySpreadsheetGridDefinition(MainWindow window)
     {
         if (window.Resources["SpreadsheetCellEditor"] is not Style spreadsheetCellEditor ||
-            spreadsheetCellEditor.BasedOn != Application.Current.Resources["DarkTextBox"])
+            spreadsheetCellEditor.BasedOn != Application.Current.Resources["DarkTextBox"] ||
+            FindStyleSetter(spreadsheetCellEditor, TextBox.TextAlignmentProperty) is not TextAlignment.Center ||
+            window.Resources["SpreadsheetCellText"] is not Style spreadsheetCellText ||
+            FindStyleSetter(spreadsheetCellText, TextBlock.TextAlignmentProperty) is not TextAlignment.Center)
         {
             throw new InvalidOperationException(
-                "Редактор значения внутри таблицы обязан наследовать общий тёмный шаблон текстового поля.");
+                "Показ и редактирование значения внутри таблицы должны использовать общий тёмный стиль и центрирование.");
         }
 
         if (MainWindow.RecoveryAutosaveInterval != TimeSpan.FromMinutes(5))
@@ -423,6 +437,10 @@ internal static class Program
             throw new InvalidOperationException(
                 "Нижние связанные тексты и звук должны явно открепляться в отдельное окно.");
         }
+
+        static object? FindStyleSetter(Style style, DependencyProperty property) =>
+            style.Setters.OfType<Setter>()
+                .LastOrDefault(setter => setter.Property == property)?.Value;
 
         string[] splitterNames =
         [
@@ -3771,12 +3789,34 @@ internal static class Program
         recordsGrid.UpdateLayout();
         TextBlock numericText = FindVisualChild<TextBlock>(numericColumn.GetCellContent(firstRecord))
             ?? throw new InvalidOperationException("Не найден текст числовой Excel-клетки.");
-        if (cellText.TextAlignment != TextAlignment.Left ||
-            numericText.TextAlignment != TextAlignment.Right)
+        if (cellText.TextAlignment != TextAlignment.Center ||
+            numericText.TextAlignment != TextAlignment.Center)
         {
             throw new InvalidOperationException(
-                "Excel-подобная сетка должна располагать текст слева, а числовые значения справа.");
+                "Excel-подобная сетка должна центрировать текстовые и числовые значения.");
         }
+
+        recordsGrid.CurrentCell = new DataGridCellInfo(firstRecord, nameColumn);
+        recordsGrid.SelectedCells.Clear();
+        recordsGrid.SelectedCells.Add(new DataGridCellInfo(firstRecord, nameColumn));
+        if (!recordsGrid.BeginEdit())
+        {
+            throw new InvalidOperationException(
+                "Проверочная редактируемая ячейка не перешла в режим ввода.");
+        }
+
+        recordsGrid.UpdateLayout();
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
+        TextBox editingText = FindVisualChild<TextBox>(nameColumn.GetCellContent(firstRecord))
+            ?? throw new InvalidOperationException("Не найден редактор Excel-клетки после F2/двойного щелчка.");
+        if (editingText.TextAlignment != TextAlignment.Center ||
+            editingText.VerticalContentAlignment != VerticalAlignment.Center)
+        {
+            throw new InvalidOperationException(
+                "Текст должен оставаться по центру после перехода ячейки в режим редактирования.");
+        }
+
+        recordsGrid.CancelEdit(DataGridEditingUnit.Cell);
     }
 
     private static void VerifyFormulaBar(

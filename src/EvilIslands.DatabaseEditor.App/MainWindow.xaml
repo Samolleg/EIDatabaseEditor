@@ -152,12 +152,14 @@
                            Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=DataGridColumnHeader}}"
                            FontSize="12"
                            FontWeight="SemiBold"
+                           TextAlignment="Center"
                            TextTrimming="CharacterEllipsis" />
                 <TextBlock Text="{Binding Subtitle}"
                            Foreground="{StaticResource SubtleTextBrush}"
                            FontFamily="Cascadia Mono, Consolas"
                            FontSize="10"
                            Margin="0,2,0,0"
+                           TextAlignment="Center"
                            TextTrimming="CharacterEllipsis" />
             </StackPanel>
         </DataTemplate>
@@ -340,7 +342,7 @@
             <Setter Property="FontSize" Value="14" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="TextAlignment" Value="Left" />
+            <Setter Property="TextAlignment" Value="Center" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="Padding" Value="4,0" />
             <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
@@ -360,6 +362,7 @@
             <Setter Property="FontSize" Value="14" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="TextAlignment" Value="Center" />
             <Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}" />
             <Setter Property="ToolTipService.ShowDuration" Value="12000" />
         </Style>
