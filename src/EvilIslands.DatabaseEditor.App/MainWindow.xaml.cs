@@ -500,8 +500,18 @@ public partial class MainWindow : Window
         {
             Owner = this,
         };
-        if (comparisonDialog.ShowDialog() is true &&
-            comparisonDialog.SelectedDifference is
+        if (comparisonDialog.ShowDialog() is not true)
+        {
+            return;
+        }
+
+        if (comparisonDialog.SelectedProject is { } project)
+        {
+            _viewModel.ApplyComparisonProject(project);
+            return;
+        }
+
+        if (comparisonDialog.SelectedDifference is
             {
                 CurrentRecordIndex: int currentRecordIndex,
             } difference)
@@ -510,6 +520,27 @@ public partial class MainWindow : Window
                 difference.TableKey,
                 currentRecordIndex,
                 difference.FieldId);
+        }
+    }
+
+    private async void FindReferencesButton_Click(object sender, RoutedEventArgs e)
+    {
+        DatabaseReferenceSearchResult? result = await _viewModel.FindReferencesForSelectedAsync();
+        if (result is null)
+        {
+            return;
+        }
+
+        var dialog = new ReferenceUsagesDialog(result)
+        {
+            Owner = this,
+        };
+        if (dialog.ShowDialog() is true && dialog.SelectedUsage is { } usage)
+        {
+            _viewModel.NavigateToComparisonDifference(
+                usage.TableKey,
+                usage.RecordIndex,
+                usage.FieldId);
         }
     }
 

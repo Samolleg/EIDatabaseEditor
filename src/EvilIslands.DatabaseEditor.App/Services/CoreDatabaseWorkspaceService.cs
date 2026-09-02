@@ -65,6 +65,17 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             .ConfigureAwait(false);
     }
 
+    public Task<DatabaseReferenceSearchResult> FindReferencesAsync(
+        string tableKey,
+        int recordIndex,
+        CancellationToken cancellationToken)
+    {
+        DatabaseDocument current = RequireDocument();
+        return Task.Run(
+            () => DatabaseReferenceFinder.Find(current, tableKey, recordIndex, cancellationToken),
+            cancellationToken);
+    }
+
     private async Task<WorkspaceSnapshot> OpenInternalAsync(
         string path,
         string? explicitTextsPath,

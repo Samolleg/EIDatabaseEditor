@@ -653,6 +653,46 @@ public sealed class DatabaseField
         }
     }
 
+    public bool TryApplyTransferredPayload(
+        ReadOnlySpan<byte> expectedCurrentPayload,
+        ReadOnlySpan<byte> transferredPayload,
+        out string? error)
+    {
+        lock (_editSync)
+        {
+            error = null;
+            if (!IsEditable)
+            {
+                error = "Поле недоступно для переноса.";
+                return false;
+            }
+
+            if (!Payload.SequenceEqual(expectedCurrentPayload))
+            {
+                error = "Значение изменилось после сравнения. Выполните сравнение баз заново.";
+                return false;
+            }
+
+            try
+            {
+                _ = DatabaseValueCodec.DecodeValue(_schema, transferredPayload);
+                _ = DatabaseValueCodec.GetEditorText(_schema, transferredPayload);
+            }
+            catch (Exception exception) when (exception is DatabaseFormatException or
+                                               ArgumentException or
+                                               DecoderFallbackException)
+            {
+                error = $"Значение второй базы несовместимо со схемой поля: {exception.Message}";
+                return false;
+            }
+
+            _editedPayload = transferredPayload.SequenceEqual(OriginalPayload)
+                ? null
+                : transferredPayload.ToArray();
+            return true;
+        }
+    }
+
     public void RestoreState(DatabaseFieldState state)
     {
         ArgumentNullException.ThrowIfNull(state);

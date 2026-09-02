@@ -202,7 +202,7 @@ internal static class Program
             AssertEmbeddedMagicCatalog(coreDocument.GetDatabases(), log);
             log.Assert(coreDocument.ContainsPowerHit(), "В spells.sdb найдена запись CodeName=powerhit.");
 
-            await VerifyDatabaseComparisonAsync(sourcePath, log).ConfigureAwait(false);
+            await VerifyDatabaseComparisonAsync(sourcePath, staging, log).ConfigureAwait(false);
 
             string noOpPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-noop.res");
             staging.AssertOutputPath(noOpPath, allSourcePaths);
@@ -2141,6 +2141,7 @@ internal static class Program
 
     private static async Task VerifyDatabaseComparisonAsync(
         string sourcePath,
+        SafeStagingArea staging,
         VerificationLog log)
     {
         DatabaseDocument current = await DatabaseDocument.OpenAsync(sourcePath).ConfigureAwait(false);
@@ -2172,8 +2173,74 @@ internal static class Program
         log.Assert(
             changed.Differences.Count == 1 &&
             changedField is not null &&
-            changedField.ComparedValue.Equals(editedValue, StringComparison.Ordinal),
+            changedField.ComparedValue.Equals(editedValue, StringComparison.Ordinal) &&
+            changedField.CanApplyFromCompared,
             "Сравнение находит одно точное изменение физического поля и показывает оба значения.");
+
+        if (changedField is null)
+        {
+            throw new VerificationException("Изменённое поле не найдено для проверки плана переноса.");
+        }
+
+        DatabaseChangeProject project = DatabaseChangeProject.Create(changed, [changedField]);
+        string projectPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}.eidbpatch.json");
+        await project.SaveAsync(projectPath).ConfigureAwait(false);
+        DatabaseChangeProject reopenedProject = await DatabaseChangeProject.LoadAsync(projectPath).ConfigureAwait(false);
+        log.Assert(
+            reopenedProject.Changes.Count == 1 &&
+            reopenedProject.Changes[0].TableKey.Equals(editableProbe.Table.Key, StringComparison.Ordinal),
+            "Выбранное различие сохраняется и повторно читается как версионированный план переноса.");
+
+        DatabaseChangeProjectEntry transfer = reopenedProject.Changes[0];
+        DatabaseTable currentTable = current.Databases
+            .SelectMany(group => group.Tables)
+            .Single(table => table.Key.Equals(transfer.TableKey, StringComparison.Ordinal));
+        DatabaseRecord currentRecord = currentTable.Records
+            .Single(record => record.RecordIndex == transfer.CurrentRecordIndex);
+        DatabaseField currentField = currentRecord.Fields
+            .Where(field => field.Id == transfer.FieldId)
+            .Skip(transfer.FieldOccurrence)
+            .First();
+        DatabaseFieldState currentBeforeTransfer = currentField.CaptureState();
+        bool transferAccepted = currentField.TryApplyTransferredPayload(
+            transfer.GetBeforePayload(),
+            transfer.GetAfterPayload(),
+            out string? transferError);
+        log.Assert(
+            transferAccepted && currentField.EditorText.Equals(editedValue, StringComparison.Ordinal),
+            $"План переносит точный payload совместимого поля: {transferError}");
+        bool staleTransferAccepted = currentField.TryApplyTransferredPayload(
+            transfer.GetBeforePayload(),
+            transfer.GetAfterPayload(),
+            out string? staleError);
+        log.Assert(
+            !staleTransferAccepted && !string.IsNullOrWhiteSpace(staleError),
+            "Устаревший план отклоняется после изменения исходного значения.");
+        currentField.RestoreState(currentBeforeTransfer);
+
+        DatabaseTable weapons = current.Databases.SelectMany(group => group.Tables)
+            .Single(table => table.Key.Equals("items.weapons", StringComparison.Ordinal));
+        DatabaseRecord weaponWithMaterial = weapons.Records.First(record =>
+            record.Fields.Any(field => field.Id == 3 &&
+                !string.IsNullOrWhiteSpace(field.EditorText) &&
+                !field.EditorText.Equals("none", StringComparison.OrdinalIgnoreCase)));
+        string materialIdentity = weaponWithMaterial.Fields.First(field => field.Id == 3).EditorText.Trim();
+        DatabaseTable materials = current.Databases.SelectMany(group => group.Tables)
+            .Single(table => table.Key.Equals("items.materials", StringComparison.Ordinal));
+        DatabaseRecord material = materials.Records.First(record =>
+            record.Fields.Any(field => field.Id == 1 &&
+                field.EditorText.Equals(materialIdentity, StringComparison.OrdinalIgnoreCase)));
+        DatabaseReferenceSearchResult references = DatabaseReferenceFinder.Find(
+            current,
+            materials.Key,
+            material.RecordIndex);
+        log.Assert(
+            references.ConfirmedCount > 0 && references.Usages.Any(usage =>
+                usage.MatchKind == DatabaseReferenceMatchKind.Confirmed &&
+                usage.TableKey.Equals(weapons.Key, StringComparison.Ordinal) &&
+                usage.RecordIndex == weaponWithMaterial.RecordIndex &&
+                usage.FieldId == 3),
+            "«Где используется» находит подтверждённую ссылку оружия на материал и точное поле назначения.");
 
         DatabaseTable appendableTable = compared.Databases
             .SelectMany(group => group.Tables)

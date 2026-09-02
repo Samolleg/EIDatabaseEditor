@@ -19,9 +19,20 @@ public sealed record DatabaseDifference(
     int? CurrentRecordIndex,
     int? ComparedRecordIndex,
     int? FieldId,
+    int FieldOccurrence,
     string FieldName,
     string CurrentValue,
-    string ComparedValue);
+    string ComparedValue,
+    byte[]? CurrentPayload,
+    byte[]? ComparedPayload)
+{
+    public bool CanApplyFromCompared =>
+        Kind == DatabaseDifferenceKind.FieldChanged &&
+        CurrentRecordIndex.HasValue &&
+        FieldId.HasValue &&
+        CurrentPayload is not null &&
+        ComparedPayload is not null;
+}
 
 public sealed record DatabaseComparisonResult(
     string CurrentPath,
@@ -177,11 +188,14 @@ public static class DatabaseComparer
                 current.Record.RecordIndex,
                 compared.Record.RecordIndex,
                 field.Id,
+                fieldKey.Occurrence,
                 fieldKey.Occurrence == 0
                     ? field.DisplayName
                     : $"{field.DisplayName} · повтор {fieldKey.Occurrence + 1}",
                 currentField?.EditorText ?? string.Empty,
-                comparedField?.EditorText ?? string.Empty));
+                comparedField?.EditorText ?? string.Empty,
+                currentField?.Payload.ToArray(),
+                comparedField?.Payload.ToArray()));
         }
     }
 
@@ -202,9 +216,12 @@ public static class DatabaseComparer
             current?.Record.RecordIndex,
             compared?.Record.RecordIndex,
             null,
+            0,
             "Вся запись",
             current is null ? string.Empty : $"{current.Record.Fields.Count} полей",
-            compared is null ? string.Empty : $"{compared.Record.Fields.Count} полей");
+            compared is null ? string.Empty : $"{compared.Record.Fields.Count} полей",
+            null,
+            null);
     }
 
     private static IReadOnlyDictionary<string, RecordMatch> BuildRecordMatches(

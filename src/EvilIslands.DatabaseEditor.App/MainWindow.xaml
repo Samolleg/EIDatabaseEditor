@@ -1314,6 +1314,13 @@
                                                 Padding="11,6"
                                                 Margin="0,0,10,0" />
                                         <Button Style="{StaticResource RoundedButton}"
+                                                Content="⌁ Где используется"
+                                                IsEnabled="{Binding HasSelectedRecord}"
+                                                Click="FindReferencesButton_Click"
+                                                ToolTip="Найти точные ссылки и совпадения технического ключа выбранной записи во всех таблицах database.res"
+                                                Padding="11,6"
+                                                Margin="0,0,10,0" />
+                                        <Button Style="{StaticResource RoundedButton}"
                                                 Command="{Binding ToggleColumnModeCommand}"
                                                 Content="{Binding ColumnModeButtonText}"
                                                 ToolTip="Показать или скрыть исходные raw-поля. В понятном режиме вместо них выводятся отдельные значения и расшифровки."

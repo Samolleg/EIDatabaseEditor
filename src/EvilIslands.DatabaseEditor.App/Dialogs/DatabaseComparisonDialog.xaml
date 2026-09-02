@@ -98,6 +98,16 @@
                               SelectionUnit="CellOrRowHeader" SelectionMode="Extended"
                               ClipboardCopyMode="ExcludeHeader" MouseDoubleClick="DifferencesGrid_MouseDoubleClick">
                         <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="Перенести" Width="78">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding CanApply}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  ToolTip="Перенести значение второй базы в существующее поле текущей базы" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="Состояние" Binding="{Binding StatusText}" Width="145" />
                             <DataGridTextColumn Header="Таблица" Binding="{Binding TableTitle}" Width="180" />
                             <DataGridTextColumn Header="Запись" Binding="{Binding RecordName}" Width="220" />
@@ -137,10 +147,32 @@
 
             <Border Grid.Row="4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="18,12">
                 <Grid>
-                    <TextBlock Text="Отчёт доступен только для просмотра. Ctrl+C копирует выбранные клетки; перенос изменений намеренно отсутствует."
-                               Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
-                    <Button HorizontalAlignment="Right" Style="{StaticResource RoundedButton}" Content="Закрыть"
-                            MinWidth="110" Click="CloseButton_Click" />
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource MutedTextBrush}"
+                                   VerticalAlignment="Center" TextWrapping="Wrap" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="16,0,0,0">
+                            <Button Style="{StaticResource RoundedButton}" Content="Выбрать совместимые"
+                                    Padding="10,6" Click="SelectCompatibleButton_Click" />
+                            <Button Style="{StaticResource RoundedButton}" Content="Снять выбор"
+                                    Padding="10,6" Margin="8,0,0,0" Click="ClearSelectionButton_Click" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid Grid.Row="1" Margin="0,10,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding SelectedCount, StringFormat=Выбрано полей: {0:N0}}"
+                                   Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Button Style="{StaticResource RoundedButton}" Content="Сохранить план…"
+                                    IsEnabled="{Binding HasSelection}" MinWidth="135" Click="SavePlanButton_Click" />
+                            <Button Style="{StaticResource AccentButton}" Content="Применить выбранное"
+                                    IsEnabled="{Binding HasSelection}" MinWidth="165" Margin="8,0,0,0"
+                                    Click="ApplySelectedButton_Click" />
+                            <Button Style="{StaticResource RoundedButton}" Content="Закрыть"
+                                    MinWidth="100" Margin="8,0,0,0" Click="CloseButton_Click" />
+                        </StackPanel>
+                    </Grid>
                 </Grid>
             </Border>
         </Grid>

@@ -57,6 +57,7 @@ internal static class Program
             VerifyStructuredStringListEditorDialog();
             VerifyStructuredRecordListEditorDialog();
             VerifyDatabaseComparisonDialog();
+            VerifyReferenceUsagesDialog();
             VerifyResFileManagerDialog();
             VerifyContrastStyles(application, window);
             VerifySpreadsheetGridDefinition(window);
@@ -2466,87 +2467,94 @@ internal static class Program
 
         DataGridColumn materialNameGridColumn = recordsGrid.Columns.Single(column =>
             column.Header is SpreadsheetColumnViewModel descriptor && descriptor.IsNameField);
-        DataGridColumn localizationTitleGridColumn = recordsGrid.Columns.Single(column =>
-            Equals(column.Header, "Название RU"));
         DataGridColumn rowNumberGridColumn = recordsGrid.Columns.Single(column => Equals(column.Header, "#"));
-        DataGridColumn localizationKeyGridColumn = recordsGrid.Columns.Single(column =>
+        RecordRowViewModel servicePasteRow = materials.Records[0];
+        DataGridColumn? localizationTitleGridColumn = recordsGrid.Columns.SingleOrDefault(column =>
+            Equals(column.Header, "Название RU"));
+        DataGridColumn? localizationKeyGridColumn = recordsGrid.Columns.SingleOrDefault(column =>
             Equals(column.Header, "Ключ texts.res"));
-        DataGridColumn localizationDescriptionGridColumn = recordsGrid.Columns.Single(column =>
+        DataGridColumn? localizationDescriptionGridColumn = recordsGrid.Columns.SingleOrDefault(column =>
             Equals(column.Header, "Описание RU"));
-        RecordRowViewModel mixedPasteRow = materials.Records.First(record => record.CanEditPrimaryLocalization);
-        string originalMixedTitle = mixedPasteRow.LocalizationTitle;
-        string originalMixedDescription = mixedPasteRow.LocalizationDescription;
-        string originalMixedType = mixedPasteRow.GetCell(materialType.FieldId)!.EditorText;
-        string changedMixedTitle = originalMixedTitle + " Excel";
-        string changedMixedDescription = originalMixedDescription + " Вставлено из Excel.";
-        string changedMixedType = originalMixedType + "Excel";
-        IReadOnlyList<IReadOnlyList<string>> mixedExcelRow =
-        [[
-            mixedPasteRow.DisplayName,
-            changedMixedTitle,
-            mixedPasteRow.Index.ToString(CultureInfo.InvariantCulture),
-            mixedPasteRow.LocalizationKeyText,
-            changedMixedDescription,
-            changedMixedType,
-        ]];
-        recordsGrid.SelectedCells.Clear();
-        recordsGrid.SelectedCells.Add(new DataGridCellInfo(mixedPasteRow, materialNameGridColumn));
-        recordsGrid.CurrentCell = new DataGridCellInfo(mixedPasteRow, materialNameGridColumn);
-        if (!window.TryBuildPasteCells(mixedExcelRow, out IReadOnlyList<SpreadsheetPasteCell> mixedCells, out string? mixedError) ||
-            mixedCells.Count != 4 ||
-            !viewModel.TryPasteSpreadsheetCells(mixedCells, out int mixedChangedCount, out mixedError) ||
-            mixedChangedCount != 3 ||
-            mixedPasteRow.LocalizationTitle != changedMixedTitle ||
-            mixedPasteRow.LocalizationDescription != changedMixedDescription ||
-            mixedPasteRow.GetCell(materialType.FieldId)!.EditorText != changedMixedType)
+        RecordRowViewModel? mixedPasteRow = materials.Records.FirstOrDefault(record => record.CanEditPrimaryLocalization);
+        if (localizationTitleGridColumn is not null &&
+            localizationKeyGridColumn is not null &&
+            localizationDescriptionGridColumn is not null &&
+            mixedPasteRow is not null)
         {
-            throw new InvalidOperationException(
-                $"Excel-диапазон с RU и неизменными служебными столбцами должен вставляться атомарно: {mixedError}");
+            string originalMixedTitle = mixedPasteRow.LocalizationTitle;
+            string originalMixedDescription = mixedPasteRow.LocalizationDescription;
+            string originalMixedType = mixedPasteRow.GetCell(materialType.FieldId)!.EditorText;
+            string changedMixedTitle = originalMixedTitle + " Excel";
+            string changedMixedDescription = originalMixedDescription + " Вставлено из Excel.";
+            string changedMixedType = originalMixedType + "Excel";
+            IReadOnlyList<IReadOnlyList<string>> mixedExcelRow =
+            [[
+                mixedPasteRow.DisplayName,
+                changedMixedTitle,
+                mixedPasteRow.Index.ToString(CultureInfo.InvariantCulture),
+                mixedPasteRow.LocalizationKeyText,
+                changedMixedDescription,
+                changedMixedType,
+            ]];
+            recordsGrid.SelectedCells.Clear();
+            recordsGrid.SelectedCells.Add(new DataGridCellInfo(mixedPasteRow, materialNameGridColumn));
+            recordsGrid.CurrentCell = new DataGridCellInfo(mixedPasteRow, materialNameGridColumn);
+            if (!window.TryBuildPasteCells(mixedExcelRow, out IReadOnlyList<SpreadsheetPasteCell> mixedCells, out string? mixedError) ||
+                mixedCells.Count != 4 ||
+                !viewModel.TryPasteSpreadsheetCells(mixedCells, out int mixedChangedCount, out mixedError) ||
+                mixedChangedCount != 3 ||
+                mixedPasteRow.LocalizationTitle != changedMixedTitle ||
+                mixedPasteRow.LocalizationDescription != changedMixedDescription ||
+                mixedPasteRow.GetCell(materialType.FieldId)!.EditorText != changedMixedType)
+            {
+                throw new InvalidOperationException(
+                    $"Excel-диапазон с RU и неизменными служебными столбцами должен вставляться атомарно: {mixedError}");
+            }
+
+            string recoveryIntegrationRoot = Path.Combine(
+                Path.GetTempPath(),
+                "EI-Database-Studio-UiSmoke",
+                "recovery-integration-" + Guid.NewGuid().ToString("N"));
+            var recoveryStore = new RecoverySnapshotStore(recoveryIntegrationRoot);
+            RecoverySnapshotDraft recoveryDraft = recoveryStore.Prepare(sourcePath);
+            SavePairCopyResult? recoverySave = null;
+            RunWithDispatcher(async () =>
+                recoverySave = await viewModel.SaveRecoveryCopyPathAsync(recoveryDraft.DatabasePath));
+            if (recoverySave is null)
+            {
+                throw new InvalidOperationException(
+                    $"Аварийная копия изменённых database.res/texts.res не создана: {viewModel.NotificationMessage}");
+            }
+
+            RecoverySnapshot recoverySnapshot = recoveryStore.Complete(
+                sourcePath,
+                recoveryDraft,
+                recoverySave,
+                pendingSound: null);
+            if (!File.Exists(recoverySnapshot.DatabasePath) ||
+                recoverySnapshot.TextsPath is null || !File.Exists(recoverySnapshot.TextsPath) ||
+                recoveryStore.FindLatest(sourcePath) is null)
+            {
+                throw new InvalidOperationException(
+                    "Полная аварийная пара database.res + texts.res должна повторно обнаруживаться после записи manifest.");
+            }
+            recoveryStore.Discard(sourcePath);
+            Directory.Delete(recoveryIntegrationRoot, recursive: true);
+
+            viewModel.UndoCommand.Execute(null);
+            if (mixedPasteRow.LocalizationTitle != originalMixedTitle ||
+                mixedPasteRow.LocalizationDescription != originalMixedDescription ||
+                mixedPasteRow.GetCell(materialType.FieldId)!.EditorText != originalMixedType ||
+                viewModel.ChangeCount != 0)
+            {
+                throw new InvalidOperationException(
+                    "Один Undo должен одновременно отменять DB- и texts.res-ячейки смешанной Excel-вставки.");
+            }
         }
 
-        string recoveryIntegrationRoot = Path.Combine(
-            Path.GetTempPath(),
-            "EI-Database-Studio-UiSmoke",
-            "recovery-integration-" + Guid.NewGuid().ToString("N"));
-        var recoveryStore = new RecoverySnapshotStore(recoveryIntegrationRoot);
-        RecoverySnapshotDraft recoveryDraft = recoveryStore.Prepare(sourcePath);
-        SavePairCopyResult? recoverySave = null;
-        RunWithDispatcher(async () =>
-            recoverySave = await viewModel.SaveRecoveryCopyPathAsync(recoveryDraft.DatabasePath));
-        if (recoverySave is null)
-        {
-            throw new InvalidOperationException(
-                $"Аварийная копия изменённых database.res/texts.res не создана: {viewModel.NotificationMessage}");
-        }
-
-        RecoverySnapshot recoverySnapshot = recoveryStore.Complete(
-            sourcePath,
-            recoveryDraft,
-            recoverySave,
-            pendingSound: null);
-        if (!File.Exists(recoverySnapshot.DatabasePath) ||
-            recoverySnapshot.TextsPath is null || !File.Exists(recoverySnapshot.TextsPath) ||
-            recoveryStore.FindLatest(sourcePath) is null)
-        {
-            throw new InvalidOperationException(
-                "Полная аварийная пара database.res + texts.res должна повторно обнаруживаться после записи manifest.");
-        }
-        recoveryStore.Discard(sourcePath);
-        Directory.Delete(recoveryIntegrationRoot, recursive: true);
-
-        viewModel.UndoCommand.Execute(null);
-        if (mixedPasteRow.LocalizationTitle != originalMixedTitle ||
-            mixedPasteRow.LocalizationDescription != originalMixedDescription ||
-            mixedPasteRow.GetCell(materialType.FieldId)!.EditorText != originalMixedType ||
-            viewModel.ChangeCount != 0)
-        {
-            throw new InvalidOperationException(
-                "Один Undo должен одновременно отменять DB- и texts.res-ячейки смешанной Excel-вставки.");
-        }
-
-        recordsGrid.CurrentCell = new DataGridCellInfo(mixedPasteRow, rowNumberGridColumn);
+        recordsGrid.CurrentCell = new DataGridCellInfo(servicePasteRow, rowNumberGridColumn);
         if (window.TryBuildPasteCells(
-                [[(mixedPasteRow.Index + 1).ToString(CultureInfo.InvariantCulture)]],
+                [[(servicePasteRow.Index + 1).ToString(CultureInfo.InvariantCulture)]],
                 out _,
                 out string? serviceColumnError) ||
             string.IsNullOrWhiteSpace(serviceColumnError))
@@ -2590,10 +2598,6 @@ internal static class Program
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         materialTypeGridColumn = recordsGrid.Columns.Single(column =>
             ReferenceEquals(column.Header, materialType));
-
-        _ = localizationTitleGridColumn;
-        _ = localizationKeyGridColumn;
-        _ = localizationDescriptionGridColumn;
 
         recordsGrid.SelectedCells.Clear();
         foreach (RecordRowViewModel pasteRow in pasteRows)
@@ -3098,9 +3102,12 @@ internal static class Program
                     45,
                     45,
                     1,
+                    0,
                     "Тип",
                     "Stone",
-                    "Metal"),
+                    "Metal",
+                    [1],
+                    [2]),
                 new DatabaseDifference(
                     DatabaseDifferenceKind.OnlyInCompared,
                     "items.materials",
@@ -3111,9 +3118,12 @@ internal static class Program
                     null,
                     51,
                     null,
+                    0,
                     "Вся запись",
                     string.Empty,
-                    "24 поля"),
+                    "24 поля",
+                    null,
+                    null),
             ]);
         var dialog = new DatabaseComparisonDialog(result);
         if (dialog.FindName("DifferencesGrid") is not DataGrid
@@ -3122,7 +3132,7 @@ internal static class Program
                 AutoGenerateColumns: false,
                 ClipboardCopyMode: DataGridClipboardCopyMode.ExcludeHeader,
             } grid ||
-            grid.Columns.Count < 7 ||
+            grid.Columns.Count < 8 ||
             dialog.DataContext is not DatabaseComparisonDialogViewModel viewModel ||
             viewModel.Differences.Count != 2 ||
             viewModel.ModifiedRecordCount != 1 ||
@@ -3141,6 +3151,63 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Поиск отчёта сравнения должен фильтровать по значениям полей.");
+        }
+
+        viewModel.SelectVisibleCompatible();
+        if (viewModel.SelectedCount != 1 || !viewModel.HasSelection ||
+            !viewModel.Differences[0].CanApply || viewModel.Differences[1].CanApply)
+        {
+            throw new InvalidOperationException(
+                "Сравнение должно разрешать выбор только существующих совместимых полей, но не новых записей.");
+        }
+
+        dialog.Close();
+    }
+
+    private static void VerifyReferenceUsagesDialog()
+    {
+        var result = new DatabaseReferenceSearchResult(
+            new DatabaseReferenceTarget("items.materials", "Материалы", 4, "Metal", "Металл"),
+            [
+                new DatabaseReferenceUsage(
+                    DatabaseReferenceMatchKind.Confirmed,
+                    "items.weapons",
+                    "Оружие",
+                    "items.idb",
+                    7,
+                    "metal battle axe",
+                    "Боевой топор",
+                    3,
+                    "Материал",
+                    "Metal"),
+                new DatabaseReferenceUsage(
+                    DatabaseReferenceMatchKind.StructuredValue,
+                    "units.prototypes",
+                    "Прототипы монстров",
+                    "units.udb",
+                    12,
+                    "Human Hero",
+                    "Герой",
+                    29,
+                    "Оружие 1",
+                    "metal battle axe.Metal[arrow{it;im0}]")
+            ]);
+        var dialog = new ReferenceUsagesDialog(result);
+        if (dialog.FindName("UsagesGrid") is not DataGrid
+            {
+                IsReadOnly: true,
+                AutoGenerateColumns: false,
+            } grid ||
+            grid.Columns.Count < 6 ||
+            dialog.FindName("KindFilter") is not ComboBox { Template: not null } kindFilter ||
+            kindFilter.ItemContainerStyle is null ||
+            dialog.DataContext is not ReferenceUsagesDialogViewModel viewModel ||
+            viewModel.Usages.Count != 2 ||
+            viewModel.ConfirmedCount != 1 ||
+            viewModel.StructuredCount != 1)
+        {
+            throw new InvalidOperationException(
+                "Диалог «Где используется» обязан различать подтверждённые ссылки и составные совпадения и открывать точное поле.");
         }
 
         dialog.Close();
@@ -4685,6 +4752,12 @@ internal static class Program
 
         public Task<DatabaseComparisonResult> CompareAsync(
             string path,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<DatabaseReferenceSearchResult> FindReferencesAsync(
+            string tableKey,
+            int recordIndex,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

@@ -896,6 +896,20 @@ internal sealed class RecordRowViewModel : ObservableObject
 
     internal DatabaseRecord CoreRecord => _record;
 
+    internal RecordFieldViewModel? GetFieldByOccurrence(int fieldId, int occurrence)
+    {
+        if (occurrence < 0)
+        {
+            return null;
+        }
+
+        DatabaseField? field = _record.Fields
+            .Where(candidate => candidate.Id == fieldId)
+            .Skip(occurrence)
+            .FirstOrDefault();
+        return field is null ? null : GetOrCreateField(field);
+    }
+
     internal void SetRelatedTexts(
         IReadOnlyList<LocalizationEntryViewModel> texts,
         IReadOnlyList<string>? expectedKeys = null)
@@ -1962,6 +1976,36 @@ internal sealed class RecordFieldViewModel : ObservableObject
     }
 
     public DatabaseFieldState CaptureState() => _field.CaptureState();
+
+    internal bool TryApplyTransferredPayload(
+        ReadOnlySpan<byte> expectedCurrentPayload,
+        ReadOnlySpan<byte> transferredPayload,
+        out string? error)
+    {
+        try
+        {
+            if (!_field.TryApplyTransferredPayload(
+                    expectedCurrentPayload,
+                    transferredPayload,
+                    out error))
+            {
+                ErrorMessage = error;
+                return false;
+            }
+        }
+        catch (Exception exception)
+        {
+            error = exception.Message;
+            ErrorMessage = error;
+            return false;
+        }
+
+        ErrorMessage = null;
+        SetProperty(ref _editorText, _field.EditorText, nameof(EditorText));
+        OnPropertyChanged(nameof(IsModified));
+        OnPropertyChanged(nameof(ProjectionSource));
+        return true;
+    }
 
     public bool RestoreState(DatabaseFieldState state)
     {

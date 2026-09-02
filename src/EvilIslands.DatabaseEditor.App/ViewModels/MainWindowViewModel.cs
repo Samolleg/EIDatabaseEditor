@@ -1129,6 +1129,135 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    internal async Task<DatabaseReferenceSearchResult?> FindReferencesForSelectedAsync()
+    {
+        RecordRowViewModel? record = SelectedRecord;
+        if (_workspace is null || record is null || IsBusy)
+        {
+            return null;
+        }
+
+        CancelOperation();
+        _operationCancellation = new CancellationTokenSource();
+        CancellationToken cancellationToken = _operationCancellation.Token;
+        IsBusy = true;
+        IsOperationCancelable = true;
+        BusyText = "Поиск ссылок во всех таблицах…";
+        NotificationMessage = null;
+        StatusText = $"Поиск использований: {record.DisplayName}…";
+
+        try
+        {
+            DatabaseReferenceSearchResult result = await _service.FindReferencesAsync(
+                record.TableKey,
+                record.SourceRecordIndex,
+                cancellationToken);
+            StatusText = result.Usages.Count == 0
+                ? $"Ссылки на «{result.Target.RecordIdentity}» не найдены."
+                : $"Найдено использований «{result.Target.RecordIdentity}»: {result.Usages.Count:N0}.";
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Поиск ссылок отменён.";
+            return null;
+        }
+        catch (Exception exception)
+        {
+            ShowError($"Не удалось найти использования: {UnwrapMessage(exception)}");
+            StatusText = "Ошибка поиска ссылок.";
+            return null;
+        }
+        finally
+        {
+            IsOperationCancelable = false;
+            IsBusy = false;
+            BusyText = string.Empty;
+            _operationCancellation?.Dispose();
+            _operationCancellation = null;
+        }
+    }
+
+    internal bool ApplyComparisonProject(DatabaseChangeProject project)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        if (_workspace is null || IsBusy || !IsEditMode)
+        {
+            ShowError("Для переноса включите редактирование текущей базы.");
+            return false;
+        }
+
+        if (project.FormatVersion != DatabaseChangeProject.CurrentFormatVersion)
+        {
+            ShowError("Версия плана переноса не поддерживается этой сборкой редактора.");
+            return false;
+        }
+
+        if (!project.CurrentSha256.Equals(_workspace.Sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            ShowError("План создан для другой текущей базы. Выполните сравнение заново.");
+            return false;
+        }
+
+        if (project.Changes.Count == 0)
+        {
+            ShowError("В плане переноса нет совместимых полей.");
+            return false;
+        }
+
+        var applied = new List<FieldEditFrame>(project.Changes.Count);
+        foreach (DatabaseChangeProjectEntry change in project.Changes)
+        {
+            DatabaseTableViewModel? table = Databases
+                .SelectMany(database => database.Tables)
+                .FirstOrDefault(candidate => candidate.Key.Equals(change.TableKey, StringComparison.OrdinalIgnoreCase));
+            RecordRowViewModel? record = table?.Records
+                .FirstOrDefault(candidate => candidate.SourceRecordIndex == change.CurrentRecordIndex);
+            RecordFieldViewModel? field = record?.GetFieldByOccurrence(change.FieldId, change.FieldOccurrence);
+            if (record is null || field is null)
+            {
+                RollbackTransferredFields(applied);
+                ShowError($"Не найдено поле плана: {change.TableTitle} · {change.RecordName} · {change.FieldName}. Выполните сравнение заново.");
+                return false;
+            }
+
+            DatabaseFieldState before = field.CaptureState();
+            if (!field.TryApplyTransferredPayload(
+                    change.GetBeforePayload(),
+                    change.GetAfterPayload(),
+                    out string? error))
+            {
+                RollbackTransferredFields(applied);
+                ShowError($"Перенос отменён: {change.TableTitle} · {change.RecordName} · {change.FieldName}. {error}");
+                return false;
+            }
+
+            DatabaseFieldState after = field.CaptureState();
+            applied.Add(new FieldEditFrame(record, field, before, after));
+        }
+
+        _undo.Push(new FieldBatchEditFrame(
+            applied,
+            $"Отменён перенос из второй базы: {applied.Count:N0} полей.",
+            $"Повторён перенос из второй базы: {applied.Count:N0} полей."));
+        _redo.Clear();
+        RefreshChangedFields(applied.Select(edit => (edit.Record, edit.Field)));
+        RefreshValidationDeferred();
+        NotificationIsError = false;
+        NotificationMessage = $"Перенесено из второй базы: {applied.Count:N0} полей. Исходные файлы ещё не сохранены.";
+        StatusText = $"Применён план переноса: {applied.Count:N0} полей · одна операция Undo.";
+        RaiseCommandStates();
+        return true;
+    }
+
+    private static void RollbackTransferredFields(IEnumerable<FieldEditFrame> applied)
+    {
+        foreach (FieldEditFrame edit in applied.Reverse())
+        {
+            edit.Field.RestoreState(edit.BeforeState);
+        }
+    }
+
     public async Task AttachTextsPathAsync(string path)
     {
         if (_workspace is null || HasUnsavedWork || IsBusy)
@@ -3053,8 +3182,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
                 RefreshChangedFields(batchFrame.Edits.Select(edit => (edit.Record, edit.Field)));
                 status = undo
-                    ? $"Отменена вставка в {batchFrame.Edits.Count:N0} ячеек."
-                    : $"Повторена вставка в {batchFrame.Edits.Count:N0} ячеек.";
+                    ? batchFrame.UndoStatus ?? $"Отменена вставка в {batchFrame.Edits.Count:N0} ячеек."
+                    : batchFrame.RedoStatus ?? $"Повторена вставка в {batchFrame.Edits.Count:N0} ячеек.";
                 return true;
 
             case RecordPresenceEditFrame recordFrame:
@@ -3920,7 +4049,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         DatabaseFieldState AfterState) : WorkspaceEditFrame;
 
     private sealed record FieldBatchEditFrame(
-        IReadOnlyList<FieldEditFrame> Edits) : WorkspaceEditFrame;
+        IReadOnlyList<FieldEditFrame> Edits,
+        string? UndoStatus = null,
+        string? RedoStatus = null) : WorkspaceEditFrame;
 
     private sealed record RecordPresenceEditFrame(
         DatabaseTableViewModel Table,

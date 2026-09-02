@@ -17,6 +17,11 @@ internal interface IDatabaseWorkspaceService
 
     Task<DatabaseComparisonResult> CompareAsync(string path, CancellationToken cancellationToken);
 
+    Task<DatabaseReferenceSearchResult> FindReferencesAsync(
+        string tableKey,
+        int recordIndex,
+        CancellationToken cancellationToken);
+
     RecordRowViewModel AppendRecordClone(DatabaseTableViewModel table, RecordRowViewModel template);
 
     void RefreshRelatedTexts(RecordRowViewModel record);
