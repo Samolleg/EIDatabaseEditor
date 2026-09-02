@@ -176,7 +176,7 @@ internal static class ResArchiveWriter
         {
             BuildResource resource = table[index]
                 ?? throw new DatabaseFormatException("RES hash table contains an empty slot.");
-            byte[] nameBytes = System.Text.Encoding.ASCII.GetBytes(resource.Name);
+            byte[] nameBytes = ResResourceNameCodec.Encode(resource.Name);
             int nameOffset = checked((int)namePool.Position);
             namePool.Write(nameBytes);
 
@@ -201,13 +201,7 @@ internal static class ResArchiveWriter
 
     private static int ComputeHash(string name, int count)
     {
-        int sum = 0;
-        foreach (char character in name)
-        {
-            sum += character is >= 'A' and <= 'Z' ? character + 32 : character;
-        }
-
-        return sum % count;
+        return ResResourceNameCodec.ComputeHash(name, count);
     }
 
     private sealed record BuildResource(string Name, byte[] Data);

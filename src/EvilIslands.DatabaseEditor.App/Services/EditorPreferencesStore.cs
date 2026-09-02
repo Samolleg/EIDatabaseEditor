@@ -223,6 +223,13 @@ internal sealed class EditorPreferencesStore
         DetailsWindowWidth = Clamp(source.DetailsWindowWidth, 720, 3000, 1080),
         DetailsWindowHeight = Clamp(source.DetailsWindowHeight, 420, 2200, 620),
         DetailsWindowMaximized = source.DetailsWindowMaximized,
+        ResManagerWindowWidth = Clamp(source.ResManagerWindowWidth, 1040, 4000, 1460),
+        ResManagerWindowHeight = Clamp(source.ResManagerWindowHeight, 640, 2600, 860),
+        ResManagerWindowMaximized = source.ResManagerWindowMaximized,
+        ResManagerFoldersWidth = Clamp(source.ResManagerFoldersWidth, 190, 520, 250),
+        ResManagerDetailsWidth = Clamp(source.ResManagerDetailsWidth, 240, 620, 310),
+        ResManagerDetailsVisible = source.ResManagerDetailsVisible,
+        ResManagerChangesExpanded = source.ResManagerChangesExpanded,
     };
 
     private static double Clamp(double value, double minimum, double maximum, double fallback) =>
@@ -350,4 +357,18 @@ internal sealed class EditorLayoutState
     public double DetailsWindowHeight { get; set; } = 620;
 
     public bool DetailsWindowMaximized { get; set; }
+
+    public double ResManagerWindowWidth { get; set; } = 1460;
+
+    public double ResManagerWindowHeight { get; set; } = 860;
+
+    public bool ResManagerWindowMaximized { get; set; }
+
+    public double ResManagerFoldersWidth { get; set; } = 250;
+
+    public double ResManagerDetailsWidth { get; set; } = 310;
+
+    public bool ResManagerDetailsVisible { get; set; } = true;
+
+    public bool ResManagerChangesExpanded { get; set; }
 }

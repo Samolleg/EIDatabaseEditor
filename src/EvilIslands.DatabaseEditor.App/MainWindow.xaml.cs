@@ -264,7 +264,7 @@ public partial class MainWindow : Window
             }
         }
 
-        var manager = new ResFileManagerDialog(fileDialog.FileName, writeLockedPaths)
+        var manager = new ResFileManagerDialog(fileDialog.FileName, writeLockedPaths, _preferences)
         {
             Owner = this,
         };

@@ -593,6 +593,13 @@ internal static class Program
             DetailsWindowWidth = 1240,
             DetailsWindowHeight = 740,
             DetailsWindowMaximized = true,
+            ResManagerWindowWidth = 1580,
+            ResManagerWindowHeight = 920,
+            ResManagerWindowMaximized = true,
+            ResManagerFoldersWidth = 286,
+            ResManagerDetailsWidth = 356,
+            ResManagerDetailsVisible = false,
+            ResManagerChangesExpanded = true,
         });
         var reopenedStore = new EditorPreferencesStore(settingsPath);
         EditorLayoutState reopenedLayout = reopenedStore.GetLayout();
@@ -621,7 +628,14 @@ internal static class Program
             !reopenedLayout.DetailsPaneDetached ||
             reopenedLayout.DetailsWindowWidth != 1240 ||
             reopenedLayout.DetailsWindowHeight != 740 ||
-            !reopenedLayout.DetailsWindowMaximized)
+            !reopenedLayout.DetailsWindowMaximized ||
+            reopenedLayout.ResManagerWindowWidth != 1580 ||
+            reopenedLayout.ResManagerWindowHeight != 920 ||
+            !reopenedLayout.ResManagerWindowMaximized ||
+            reopenedLayout.ResManagerFoldersWidth != 286 ||
+            reopenedLayout.ResManagerDetailsWidth != 356 ||
+            reopenedLayout.ResManagerDetailsVisible ||
+            !reopenedLayout.ResManagerChangesExpanded)
         {
             throw new InvalidOperationException(
                 "Настройки должны сохранять последнюю папку, ширины колонок, масштаб и всю модульную раскладку редактора.");
@@ -633,7 +647,11 @@ internal static class Program
             resetLayout.FormulaBarHeight != 60 || resetLayout.BriefingTimelineWidth != 460 ||
             resetLayout.MainWindowMaximized || resetLayout.LongTextEditorMaximized ||
             resetLayout.DetailsPaneDetached || resetLayout.DetailsWindowWidth != 1080 ||
-            resetLayout.DetailsWindowHeight != 620 || resetLayout.DetailsWindowMaximized)
+            resetLayout.DetailsWindowHeight != 620 || resetLayout.DetailsWindowMaximized ||
+            resetLayout.ResManagerWindowWidth != 1460 || resetLayout.ResManagerWindowHeight != 860 ||
+            resetLayout.ResManagerWindowMaximized || resetLayout.ResManagerFoldersWidth != 250 ||
+            resetLayout.ResManagerDetailsWidth != 310 || !resetLayout.ResManagerDetailsVisible ||
+            resetLayout.ResManagerChangesExpanded)
         {
             throw new InvalidOperationException("Сброс макета должен возвращать проверенные размеры по умолчанию.");
         }
@@ -2629,8 +2647,20 @@ internal static class Program
     private static void VerifyResFileManagerDialog()
     {
         string unopenedArchivePath = Path.Combine(Path.GetTempPath(), $"ui-smoke-{Guid.NewGuid():N}.res");
-        var dialog = new ResFileManagerDialog(unopenedArchivePath);
+        string settingsPath = Path.Combine(Path.GetTempPath(), $"res-manager-layout-{Guid.NewGuid():N}.json");
+        var preferences = new EditorPreferencesStore(settingsPath);
+        preferences.RememberLayout(new EditorLayoutState
+        {
+            ResManagerWindowWidth = 1510,
+            ResManagerWindowHeight = 890,
+            ResManagerFoldersWidth = 278,
+            ResManagerDetailsWidth = 334,
+            ResManagerDetailsVisible = true,
+            ResManagerChangesExpanded = true,
+        });
+        var dialog = new ResFileManagerDialog(unopenedArchivePath, null, preferences);
         if (dialog.ResizeMode != ResizeMode.CanResize ||
+            dialog.Width != 1510 || dialog.Height != 890 ||
             dialog.FindName("FoldersTree") is not TreeView ||
             dialog.FindName("FilesGrid") is not DataGrid
             {
@@ -2639,6 +2669,13 @@ internal static class Program
                 ClipboardCopyMode: DataGridClipboardCopyMode.IncludeHeader,
             } filesGrid ||
             filesGrid.Columns.Count != 5 ||
+            dialog.FindName("FolderPathColumn") is not DataGridTextColumn { Visibility: Visibility.Collapsed } ||
+            dialog.FindName("FoldersColumn") is not ColumnDefinition { Width.Value: 278 } ||
+            dialog.FindName("DetailsColumn") is not ColumnDefinition { Width.Value: 334 } ||
+            dialog.FindName("DetailsPanel") is not Border { Visibility: Visibility.Visible } ||
+            dialog.FindName("ChangesGrid") is not DataGrid { IsReadOnly: true } ||
+            dialog.FindName("BreadcrumbPanel") is not StackPanel ||
+            dialog.FindName("OperationStatusText") is not TextBlock ||
             dialog.FindName("AddFilesButton") is not Button ||
             dialog.FindName("AddFolderButton") is not Button ||
             dialog.FindName("ExtractButton") is not Button ||
@@ -2646,10 +2683,11 @@ internal static class Program
             dialog.FindName("SaveCurrentButton") is not Button)
         {
             throw new InvalidOperationException(
-                "RES-менеджер обязан содержать дерево папок, файловую таблицу и безопасные команды добавления, извлечения и сохранения.");
+                "RES-менеджер обязан содержать запоминаемую трёхпанельную раскладку, адресную строку, журнал изменений и безопасные команды.");
         }
 
         dialog.Close();
+        File.Delete(settingsPath);
     }
 
     private static void VerifyDatabaseComparisonDialog()

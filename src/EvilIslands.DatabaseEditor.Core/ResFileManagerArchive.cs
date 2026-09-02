@@ -727,7 +727,7 @@ public sealed class ResFileManagerArchive
         {
             BuildResource resource = table[index]
                 ?? throw new DatabaseFormatException("Hash-таблица RES содержит пустую запись.");
-            byte[] nameBytes = Encoding.ASCII.GetBytes(resource.Name);
+            byte[] nameBytes = ResResourceNameCodec.Encode(resource.Name);
             int nameOffset = checked((int)names.Position);
             names.Write(nameBytes);
 
@@ -924,7 +924,7 @@ public sealed class ResFileManagerArchive
             }
 
             int nameStart = checked((int)directoryLength + (int)nameOffsetValue);
-            string name = Encoding.ASCII.GetString(catalog, nameStart, nameLength).TrimEnd('\0');
+            string name = ResResourceNameCodec.Decode(catalog.AsSpan(nameStart, nameLength)).TrimEnd('\0');
             ValidateResourceName(name);
             if (!names.Add(name))
             {
@@ -1000,14 +1000,26 @@ public sealed class ResFileManagerArchive
     private static void ValidateResourceName(string name)
     {
         if (string.IsNullOrWhiteSpace(name) ||
-            !name.All(character => character <= 0x7F && !char.IsControl(character)) ||
+            name.Any(char.IsControl) ||
             name.Contains(':', StringComparison.Ordinal) ||
             name.StartsWith('\\'))
         {
-            throw new DatabaseFormatException($"Имя ресурса '{name}' не является допустимым ASCII-путём.", name);
+            throw new DatabaseFormatException($"Имя ресурса '{name}' не является допустимым путём RES.", name);
         }
 
-        if (Encoding.ASCII.GetByteCount(name) > ushort.MaxValue)
+        byte[] encoded;
+        try
+        {
+            encoded = ResResourceNameCodec.Encode(name);
+        }
+        catch (EncoderFallbackException)
+        {
+            throw new DatabaseFormatException(
+                $"Имя ресурса '{name}' содержит символы вне Windows-1251.",
+                name);
+        }
+
+        if (encoded.Length > ushort.MaxValue)
         {
             throw new DatabaseFormatException("Имя ресурса слишком длинное.", name);
         }
@@ -1015,13 +1027,7 @@ public sealed class ResFileManagerArchive
 
     private static int ComputeHash(string name, int count)
     {
-        int sum = 0;
-        foreach (char character in name)
-        {
-            sum += character is >= 'A' and <= 'Z' ? character + 32 : character;
-        }
-
-        return sum % count;
+        return ResResourceNameCodec.ComputeHash(name, count);
     }
 
     private static void CopyExactly(

@@ -254,7 +254,7 @@ public sealed class ResArchiveDocument
                 throw new DatabaseFormatException("RES resource name exceeds the name pool.", sourcePath, entryOffset);
             }
 
-            var name = Encoding.ASCII.GetString(data, (int)nameStart, nameLength).TrimEnd('\0');
+            var name = ResResourceNameCodec.Decode(data.AsSpan((int)nameStart, nameLength)).TrimEnd('\0');
             if (string.IsNullOrWhiteSpace(name) || name.Any(char.IsControl))
             {
                 throw new DatabaseFormatException("RES resource name is invalid.", sourcePath, (long)nameStart);

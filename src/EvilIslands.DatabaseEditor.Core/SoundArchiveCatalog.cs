@@ -318,7 +318,7 @@ public sealed class SoundArchiveCatalog
             }
 
             int nameStart = checked(header.DirectoryLength + (int)nameOffsetValue);
-            string name = Encoding.ASCII.GetString(catalog.Slice(nameStart, nameLength)).TrimEnd('\0');
+            string name = ResResourceNameCodec.Decode(catalog.Slice(nameStart, nameLength)).TrimEnd('\0');
             if (string.IsNullOrWhiteSpace(name) || name.Any(char.IsControl))
             {
                 throw new DatabaseFormatException("RES resource name is invalid.", path, header.DirectoryOffset + nameStart);

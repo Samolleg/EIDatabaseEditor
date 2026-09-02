@@ -522,7 +522,7 @@ public static class SoundArchiveCopyEditor
         {
             BuildResource resource = table[index]
                 ?? throw new DatabaseFormatException("Hash-таблица RES содержит пустую запись.");
-            byte[] nameBytes = Encoding.ASCII.GetBytes(resource.Name);
+            byte[] nameBytes = ResResourceNameCodec.Encode(resource.Name);
             int nameOffset = checked((int)namePool.Position);
             namePool.Write(nameBytes);
 
@@ -719,7 +719,7 @@ public static class SoundArchiveCopyEditor
             }
 
             int nameStart = checked((int)directoryLength + (int)nameOffsetValue);
-            string name = Encoding.ASCII.GetString(catalog, nameStart, nameLength).TrimEnd('\0');
+            string name = ResResourceNameCodec.Decode(catalog.AsSpan(nameStart, nameLength)).TrimEnd('\0');
             ValidateResourceName(name);
             if (!names.Add(name))
             {
@@ -998,7 +998,7 @@ public static class SoundArchiveCopyEditor
             throw new DatabaseFormatException($"Имя ресурса '{name}' не является допустимым ASCII-путём.", name);
         }
 
-        if (Encoding.ASCII.GetByteCount(name) > ushort.MaxValue)
+        if (ResResourceNameCodec.Encode(name).Length > ushort.MaxValue)
         {
             throw new DatabaseFormatException("Имя ресурса слишком длинное.", name);
         }
@@ -1029,13 +1029,7 @@ public static class SoundArchiveCopyEditor
 
     private static int ComputeHash(string name, int count)
     {
-        int sum = 0;
-        foreach (char character in name)
-        {
-            sum += character is >= 'A' and <= 'Z' ? character + 32 : character;
-        }
-
-        return sum % count;
+        return ResResourceNameCodec.ComputeHash(name, count);
     }
 
     private sealed class BuildResource(

@@ -2,9 +2,13 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
+using System.Windows.Media;
 using EvilIslands.DatabaseEditor.App.Infrastructure;
+using EvilIslands.DatabaseEditor.App.Services;
 using EvilIslands.DatabaseEditor.Core;
 using Microsoft.Win32;
 
@@ -17,16 +21,31 @@ public partial class ResFileManagerDialog : Window
     private readonly Dictionary<string, ResFileEdit> _edits = new(StringComparer.OrdinalIgnoreCase);
     private readonly Stack<Dictionary<string, ResFileEdit>> _undo = [];
     private readonly Stack<Dictionary<string, ResFileEdit>> _redo = [];
+    private readonly ObservableCollection<ResManagerChangeRow> _changes = [];
     private readonly ICollectionView _filesView;
+    private readonly EditorPreferencesStore _preferences;
+    private readonly EditorLayoutState _layout;
     private ResFileManagerArchive? _archive;
     private string _archivePath;
     private string _selectedFolder = string.Empty;
     private bool _isBusy;
     private bool _allowClose;
+    private bool _detailsVisible;
+    private double _detailsWidth;
 
     public ResFileManagerDialog(string archivePath, IEnumerable<string>? writeLockedPaths = null)
+        : this(archivePath, writeLockedPaths, new EditorPreferencesStore())
+    {
+    }
+
+    internal ResFileManagerDialog(
+        string archivePath,
+        IEnumerable<string>? writeLockedPaths,
+        EditorPreferencesStore preferences)
     {
         InitializeComponent();
+        _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
+        _layout = _preferences.GetLayout();
         _archivePath = Path.GetFullPath(archivePath);
         _writeLockedPaths = new HashSet<string>(
             (writeLockedPaths ?? [])
@@ -36,6 +55,8 @@ public partial class ResFileManagerDialog : Window
         _filesView = CollectionViewSource.GetDefaultView(_rows);
         _filesView.Filter = FilterRow;
         FilesGrid.ItemsSource = _filesView;
+        ChangesGrid.ItemsSource = _changes;
+        ApplyStoredLayout();
     }
 
     private bool HasPendingChanges => _edits.Count > 0;
@@ -43,8 +64,15 @@ public partial class ResFileManagerDialog : Window
     private bool IsCurrentWriteLocked =>
         _archive is not null && _writeLockedPaths.Contains(Path.GetFullPath(_archive.SourcePath));
 
-    private async void Window_Loaded(object sender, RoutedEventArgs e) =>
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_layout.ResManagerWindowMaximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+
         await LoadArchiveAsync(_archivePath);
+    }
 
     private async Task LoadArchiveAsync(string path)
     {
@@ -118,6 +146,7 @@ public partial class ResFileManagerDialog : Window
         }
 
         RebuildFolderTree();
+        RebuildChanges();
         _filesView.Refresh();
         UpdateUiState();
     }
@@ -167,8 +196,71 @@ public partial class ResFileManagerDialog : Window
             _selectedFolder = string.Empty;
         }
 
+        byPath[_selectedFolder].IsSelected = true;
+
         FoldersTree.ItemsSource = new[] { root };
         FolderSummaryText.Text = $"{byPath.Count - 1:N0} папок · {_rows.Count:N0} файлов";
+        RebuildBreadcrumb();
+    }
+
+    private void RebuildChanges()
+    {
+        bool firstChange = _changes.Count == 0 && _edits.Count > 0;
+        _changes.Clear();
+        foreach (ResFileEdit edit in _edits.Values.OrderBy(edit => edit.ResourceName, StringComparer.OrdinalIgnoreCase))
+        {
+            string action = edit.Kind == ResFileEditKind.Delete
+                ? "Удаление"
+                : _archive?.Contains(edit.ResourceName) == true ? "Замена" : "Добавление";
+            _changes.Add(new ResManagerChangeRow(action, edit.ResourceName));
+        }
+
+        ChangesCountText.Text = _changes.Count.ToString("N0");
+        ChangesExpander.Visibility = _changes.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (firstChange)
+        {
+            ChangesExpander.IsExpanded = true;
+        }
+    }
+
+    private void RebuildBreadcrumb()
+    {
+        BreadcrumbPanel.Children.Clear();
+        AddBreadcrumbPart("Корень RES", string.Empty);
+        if (!string.IsNullOrEmpty(_selectedFolder))
+        {
+            string current = string.Empty;
+            foreach (string segment in _selectedFolder.Split('\\'))
+            {
+                BreadcrumbPanel.Children.Add(new TextBlock
+                {
+                    Text = "  ›  ",
+                    Foreground = (Brush)FindResource("MutedTextBrush"),
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+                current = string.IsNullOrEmpty(current) ? segment : current + "\\" + segment;
+                AddBreadcrumbPart(segment, current);
+            }
+        }
+
+        UpFolderButton.IsEnabled = !string.IsNullOrEmpty(_selectedFolder) && !_isBusy;
+    }
+
+    private void AddBreadcrumbPart(string caption, string path)
+    {
+        var button = new Button
+        {
+            Content = caption,
+            Tag = path,
+            Style = (Style)FindResource("RoundedButton"),
+            Padding = new Thickness(3, 0, 3, 0),
+            MinHeight = 0,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Foreground = (Brush)FindResource("TextBrush"),
+        };
+        button.Click += BreadcrumbButton_Click;
+        BreadcrumbPanel.Children.Add(button);
     }
 
     private bool FilterRow(object item)
@@ -204,15 +296,24 @@ public partial class ResFileManagerDialog : Window
         RedoButton.IsEnabled = canEdit && _redo.Count > 0;
         SaveCopyButton.IsEnabled = canEdit && HasPendingChanges;
         SaveCurrentButton.IsEnabled = canEdit && HasPendingChanges && !IsCurrentWriteLocked;
+        SearchHint.Visibility = string.IsNullOrEmpty(SearchBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        FolderPathColumn.Visibility = string.IsNullOrWhiteSpace(SearchBox.Text)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
         if (_archive is null)
         {
+            ArchiveTitleText.Text = "Файловый менеджер RES";
             ArchivePathText.Text = _archivePath;
             ArchiveSummaryText.Text = "RES не открыт";
             SafetyText.Text = "Выберите корректный RES-контейнер.";
+            UpdateSelectionDetails(selected);
             return;
         }
 
+        ArchiveTitleText.Text = Path.GetFileName(_archive.SourcePath);
         ArchivePathText.Text = _archive.SourcePath;
         ArchivePathText.ToolTip = _archive.SourcePath;
         int visible = _filesView.Cast<object>().Count();
@@ -225,11 +326,55 @@ public partial class ResFileManagerDialog : Window
         ArchiveSummaryText.Text =
             $"{Path.GetFileName(_archive.SourcePath)} · {_rows.Count:N0} файлов · подготовлено изменений: {_edits.Count:N0}";
         SafetyText.Text = IsCurrentWriteLocked
-            ? "Этот RES сейчас подключён к основному редактору. Чтобы не получить две несогласованные версии, доступно только сохранение копии."
+            ? "🔒 Текущий RES используется основным редактором — доступно только безопасное сохранение копии."
             : "Запись выполняется через временный RES, повторный разбор и SHA-256; при сохранении в текущий файл создаётся проверенная .bak-копия.";
+        SaveCurrentButton.Content = IsCurrentWriteLocked
+            ? "🔒 Текущий RES занят"
+            : "Перезаписать текущий RES…";
         SaveCurrentButton.ToolTip = IsCurrentWriteLocked
             ? "Сначала закройте основной редактор и откройте RES-менеджер до загрузки database.res."
             : "Пересобрать открытый RES после подтверждения и создать резервную копию";
+        UpdateSelectionDetails(selected);
+        RebuildBreadcrumb();
+    }
+
+    private void UpdateSelectionDetails(IReadOnlyList<ResManagerFileRow> selected)
+    {
+        ResManagerFileRow? row = selected.Count == 1 ? selected[0] : null;
+        DetailsEmptyState.Visibility = row is null ? Visibility.Visible : Visibility.Collapsed;
+        DetailsContent.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
+        if (row is null)
+        {
+            return;
+        }
+
+        DetailsNameText.Text = row.FileName;
+        DetailsPathText.Text = row.ResourceName;
+        DetailsTypeText.Text = row.FileType;
+        DetailsSizeText.Text = FormatFileSize(row.Size);
+        DetailsOffsetText.Text = row.OffsetText;
+        DetailsStateText.Text = row.State;
+        DetailsStateBadge.Background = row.State switch
+        {
+            "Добавлен" => new SolidColorBrush(Color.FromRgb(24, 53, 40)),
+            "Заменён" => new SolidColorBrush(Color.FromRgb(51, 44, 29)),
+            "Будет удалён" => (Brush)FindResource("DangerSurfaceBrush"),
+            _ => new SolidColorBrush(Color.FromRgb(40, 45, 41)),
+        };
+    }
+
+    private static string FormatFileSize(long size)
+    {
+        string[] units = ["Б", "КиБ", "МиБ", "ГиБ"];
+        double value = size;
+        int unit = 0;
+        while (value >= 1024 && unit + 1 < units.Length)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return unit == 0 ? $"{size:N0} {units[unit]}" : $"{value:N1} {units[unit]}";
     }
 
     private List<ResManagerFileRow> GetSelectedRows() =>
@@ -744,6 +889,84 @@ public partial class ResFileManagerDialog : Window
         UpdateUiState();
     }
 
+    private void BreadcrumbButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string path })
+        {
+            NavigateToFolder(path);
+        }
+    }
+
+    private void UpFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        int separator = _selectedFolder.LastIndexOf('\\');
+        NavigateToFolder(separator < 0 ? string.Empty : _selectedFolder[..separator]);
+    }
+
+    private void NavigateToFolder(string path)
+    {
+        _selectedFolder = path;
+        SearchBox.Clear();
+        RebuildFolderTree();
+        _filesView.Refresh();
+        UpdateUiState();
+    }
+
+    private void DetailsToggleButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetDetailsVisible(!_detailsVisible);
+        RememberLayout();
+    }
+
+    private void SetDetailsVisible(bool visible)
+    {
+        _detailsVisible = visible;
+        if (visible)
+        {
+            DetailsColumn.Width = new GridLength(Math.Clamp(_detailsWidth, 240, 620));
+            DetailsSplitterColumn.Width = new GridLength(7);
+            DetailsPanel.Visibility = Visibility.Visible;
+            DetailsSplitter.Visibility = Visibility.Visible;
+            DetailsToggleButton.Content = "Скрыть свойства";
+        }
+        else
+        {
+            if (DetailsColumn.ActualWidth >= 240)
+            {
+                _detailsWidth = DetailsColumn.ActualWidth;
+            }
+
+            DetailsPanel.Visibility = Visibility.Collapsed;
+            DetailsSplitter.Visibility = Visibility.Collapsed;
+            DetailsSplitterColumn.Width = new GridLength(0);
+            DetailsColumn.Width = new GridLength(0);
+            DetailsToggleButton.Content = "Свойства";
+        }
+    }
+
+    private void GridSplitter_DragCompleted(object sender, DragCompletedEventArgs e) => RememberLayout();
+
+    private void ChangesExpander_StateChanged(object sender, RoutedEventArgs e)
+    {
+        if (IsLoaded)
+        {
+            RememberLayout();
+        }
+    }
+
+    private void RevertChangeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string resourceName } || !_edits.ContainsKey(resourceName))
+        {
+            return;
+        }
+
+        CaptureUndo();
+        _edits.Remove(resourceName);
+        RebuildRows();
+        ShowMessage($"Изменение ресурса '{resourceName}' отменено.", false);
+    }
+
     private void FoldersTree_SelectedItemChanged(
         object sender,
         RoutedPropertyChangedEventArgs<object> e)
@@ -850,13 +1073,16 @@ public partial class ResFileManagerDialog : Window
 
     private void ShowMessage(string message, bool isError)
     {
+        if (!isError)
+        {
+            OperationStatusText.Text = message;
+            MessageBorder.Visibility = Visibility.Collapsed;
+            return;
+        }
+
         MessageText.Text = message;
-        MessageBorder.Background = isError
-            ? (System.Windows.Media.Brush)FindResource("DangerSurfaceBrush")
-            : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(24, 53, 45));
-        MessageBorder.BorderBrush = isError
-            ? (System.Windows.Media.Brush)FindResource("DangerBrush")
-            : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(40, 97, 79));
+        MessageBorder.Background = (Brush)FindResource("DangerSurfaceBrush");
+        MessageBorder.BorderBrush = (Brush)FindResource("DangerBrush");
         MessageBorder.Visibility = Visibility.Visible;
     }
 
@@ -905,6 +1131,41 @@ public partial class ResFileManagerDialog : Window
 
     private void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
+    private void ApplyStoredLayout()
+    {
+        Width = _layout.ResManagerWindowWidth;
+        Height = _layout.ResManagerWindowHeight;
+        FoldersColumn.Width = new GridLength(_layout.ResManagerFoldersWidth);
+        _detailsWidth = _layout.ResManagerDetailsWidth;
+        ChangesExpander.IsExpanded = _layout.ResManagerChangesExpanded;
+        SetDetailsVisible(_layout.ResManagerDetailsVisible);
+    }
+
+    private void RememberLayout()
+    {
+        if (WindowState == WindowState.Normal)
+        {
+            _layout.ResManagerWindowWidth = ActualWidth >= MinWidth ? ActualWidth : Width;
+            _layout.ResManagerWindowHeight = ActualHeight >= MinHeight ? ActualHeight : Height;
+        }
+
+        if (FoldersColumn.ActualWidth >= 190)
+        {
+            _layout.ResManagerFoldersWidth = FoldersColumn.ActualWidth;
+        }
+
+        if (_detailsVisible && DetailsColumn.ActualWidth >= 240)
+        {
+            _detailsWidth = DetailsColumn.ActualWidth;
+        }
+
+        _layout.ResManagerDetailsWidth = _detailsWidth;
+        _layout.ResManagerDetailsVisible = _detailsVisible;
+        _layout.ResManagerChangesExpanded = ChangesExpander.IsExpanded;
+        _layout.ResManagerWindowMaximized = WindowState == WindowState.Maximized;
+        _preferences.RememberLayout(_layout);
+    }
+
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (_allowClose)
@@ -929,6 +1190,7 @@ public partial class ResFileManagerDialog : Window
             return;
         }
 
+        RememberLayout();
         _allowClose = true;
     }
 
@@ -946,6 +1208,8 @@ internal sealed class ResManagerFileRow
         int separator = resourceName.LastIndexOf('\\');
         FolderPath = separator < 0 ? string.Empty : resourceName[..separator];
         FileName = separator < 0 ? resourceName : resourceName[(separator + 1)..];
+        string extension = Path.GetExtension(FileName);
+        FileType = string.IsNullOrEmpty(extension) ? "Файл" : extension[1..].ToUpperInvariant();
     }
 
     public string ResourceName { get; }
@@ -954,6 +1218,8 @@ internal sealed class ResManagerFileRow
 
     public string FileName { get; }
 
+    public string FileType { get; }
+
     public long Size { get; }
 
     public string OffsetText { get; }
@@ -961,10 +1227,13 @@ internal sealed class ResManagerFileRow
     public string State { get; }
 }
 
+internal sealed record ResManagerChangeRow(string Action, string ResourceName);
+
 internal sealed class ResFolderNode : ObservableObject
 {
     private int _fileCount;
     private bool _isExpanded;
+    private bool _isSelected;
 
     public ResFolderNode(string name, string fullPath)
     {
@@ -988,5 +1257,11 @@ internal sealed class ResFolderNode : ObservableObject
     {
         get => _isExpanded;
         set => SetProperty(ref _isExpanded, value);
+    }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetProperty(ref _isSelected, value);
     }
 }

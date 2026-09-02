@@ -624,7 +624,7 @@ internal static class Program
 
         ResImportedFile importedProbe = await ResFileManagerArchive.InspectImportAsync(probeInputPath)
             .ConfigureAwait(false);
-        string genericAddedName = $@"verification\manager-{Guid.NewGuid():N}\added.wav";
+        string genericAddedName = $@"проверка\manager-{Guid.NewGuid():N}\добавлен.wav";
         string genericCopyPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-res-manager.res");
         ResFileManagerSaveResult genericCopy = await log.MeasureAsync(
             "Универсальный RES-менеджер: добавить/заменить/удалить",
@@ -665,7 +665,29 @@ internal static class Program
         log.Assert(
             await FileByteComparer.AreEqualAsync(probeInputPath, extractedAddedPath).ConfigureAwait(false) &&
             await FileByteComparer.AreEqualAsync(probeInputPath, extractedReplacementPath).ConfigureAwait(false),
-            "Добавленный и заменённый файлы извлекаются из RES побайтово без изменений.");
+            "Файл с кириллическим путём и заменённый файл извлекаются из RES побайтово без изменений.");
+
+        bool unsupportedNameRejected = false;
+        try
+        {
+            await fileManagerArchive.SaveCopyAsync(
+            [
+                new ResFileEdit(
+                    ResFileEditKind.AddOrReplace,
+                    $@"verification\emoji-{Guid.NewGuid():N}-😀.wav",
+                    importedProbe),
+            ],
+            staging.GetNewOutputPath($"{Guid.NewGuid():N}-unsupported-name.res")).ConfigureAwait(false);
+        }
+        catch (DatabaseFormatException exception) when (
+            exception.Message.Contains("Windows-1251", StringComparison.OrdinalIgnoreCase))
+        {
+            unsupportedNameRejected = true;
+        }
+
+        log.Assert(
+            unsupportedNameRejected,
+            "RES-менеджер отвергает имя вне Windows-1251 и больше не заменяет символы вопросительными знаками.");
 
         string originalUnchangedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-original-unchanged.bin");
         string rebuiltUnchangedPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-rebuilt-unchanged.bin");
