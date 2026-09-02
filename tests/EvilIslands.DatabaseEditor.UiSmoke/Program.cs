@@ -1363,29 +1363,97 @@ internal static class Program
 
         var prototypes = tables.Single(table => table.Key == "units.prototypes");
         var races = tables.Single(table => table.Key == "units.races");
+        var weaponTable = tables.Single(table => table.Key == "items.weapons");
+        var armorTable = tables.Single(table => table.Key == "items.armors");
+        var quickItems = tables.Single(table => table.Key == "items.quick_items");
         var questItems = tables.Single(table => table.Key == "items.quest_items");
         var lootItems = tables.Single(table => table.Key == "items.loot_items");
+        var levers = tables.Single(table => table.Key == "levers.prototypes");
+        var perks = tables.Single(table => table.Key == "perks.perks");
+        SpreadsheetColumnViewModel weaponClassColumn = weaponTable.Columns.Single(column =>
+            column.FieldId == 2 &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
+        SpreadsheetColumnViewModel armorClassColumn = armorTable.Columns.Single(column =>
+            column.FieldId == 2 &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
+        SpreadsheetColumnViewModel quickItemTypeColumn = quickItems.Columns.Single(column =>
+            column.FieldId == 21 &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
         SpreadsheetColumnViewModel lootTypeColumn = lootItems.Columns.Single(column =>
             column.FieldId == 21 &&
             column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
         SpreadsheetColumnViewModel instructionTypeColumn = lootItems.Columns.Single(column =>
             column.FieldId == 22 &&
             column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
-        if (questItems.Columns.Where(column => new[] { 2, 3, 4 }.Contains(column.FieldId))
+        if (weaponTable.Columns.Where(column => column.FieldId == 4).Any(column => column.ShowInReadableView) ||
+            armorTable.Columns.Where(column => column.FieldId == 4).Any(column => column.ShowInReadableView) ||
+            quickItems.Columns.Where(column => new[] { 2, 4 }.Contains(column.FieldId))
                 .Any(column => column.ShowInReadableView) ||
-            lootItems.Columns.Where(column => column.FieldId == 2)
+            questItems.Columns.Where(column => new[] { 2, 3, 4 }.Contains(column.FieldId))
+                .Any(column => column.ShowInReadableView) ||
+            lootItems.Columns.Where(column => new[] { 2, 4 }.Contains(column.FieldId))
                 .Any(column => column.ShowInReadableView) ||
             questItems.Columns.Where(column => new[] { 2, 3, 4 }.Contains(column.FieldId) && column.Projection is null)
                 .Any(column => !column.IsEditable) ||
             lootItems.Columns.Single(column => column.FieldId == 2 && column.Projection is null).IsEditable is false ||
+            weaponClassColumn.Title != "Класс оружия" ||
+            weaponClassColumn.Projection?.ValueLabels?.GetValueOrDefault(13) != "Двуручный топор" ||
+            armorClassColumn.Title != "Тип части брони" ||
+            armorClassColumn.Projection?.ValueLabels?.GetValueOrDefault(6) != "Перчатки" ||
+            quickItemTypeColumn.Title != "Тип быстрого предмета" ||
+            quickItemTypeColumn.Projection?.ValueLabels?.GetValueOrDefault(5) != "Жезл" ||
             lootTypeColumn.Title != "Тип лута" ||
             instructionTypeColumn.Title != "Тип инструкции" ||
             lootTypeColumn.Projection?.ValueLabels?.Count != 6 ||
             instructionTypeColumn.Projection?.ValueLabels?.Count != 8)
         {
             throw new InvalidOperationException(
-                "Понятный режим должен скрывать неиспользуемые наследованные поля квестовых предметов и лута, " +
-                "а типы лута и инструкций — показывать полными русскими перечислениями.");
+                "Понятный режим должен скрывать неиспользуемые наследованные поля всех предметных таблиц, " +
+                "а рабочие типы — показывать полными русскими перечислениями.");
+        }
+
+        string[] expectedLeverPointColumns =
+            ["Точка 1 — X", "Точка 1 — Y", "Точка 2 — X", "Точка 2 — Y"];
+        if (!levers.Columns
+                .Where(column => column.FieldId == 1 &&
+                                 column.Projection?.Kind ==
+                                 EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement)
+                .OrderBy(column => column.Projection!.Index)
+                .Select(column => column.Title)
+                .SequenceEqual(expectedLeverPointColumns, StringComparer.Ordinal) ||
+            levers.Columns.Single(column => column.FieldId == 2 && column.Projection is null).Title !=
+                "Количество активных точек (0–2)")
+        {
+            throw new InvalidOperationException(
+                "Две native-точки взаимодействия рычага должны показываться как две понятные пары X/Y.");
+        }
+        DatabaseFieldProjection leverPointProjection = levers.Columns.First(column =>
+                column.FieldId == 1 &&
+                column.Projection?.Kind ==
+                EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement)
+            .Projection!;
+        if (SpreadsheetProjectionValue.Format("NaN", leverPointProjection) !=
+                SpreadsheetProjectionValue.UnavailableText ||
+            SpreadsheetProjectionValue.Format("1.7445577E-39", leverPointProjection) !=
+                SpreadsheetProjectionValue.UnavailableText)
+        {
+            throw new InvalidOperationException(
+                "NaN и денормальные значения неиспользуемых точек рычага должны отображаться как «—», а не как числа.");
+        }
+
+        SpreadsheetColumnViewModel perkAutoSkill = perks.Columns.Single(column =>
+            column.FieldId == 12 &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
+        SpreadsheetColumnViewModel perkManualSkill = perks.Columns.Single(column =>
+            column.FieldId == 13 &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
+        if (perkAutoSkill.Projection?.ValueLabels?.GetValueOrDefault(3) != "Стихийная магия" ||
+            perkAutoSkill.Projection?.ValueLabels?.GetValueOrDefault(int.MaxValue) != "Не применяется" ||
+            perkManualSkill.Projection?.ValueLabels?.GetValueOrDefault(0) != "Наука" ||
+            perkManualSkill.Projection?.ValueLabels?.GetValueOrDefault(int.MaxValue) != "Не применяется")
+        {
+            throw new InvalidOperationException(
+                "Перки должны показывать автоматические и ручные навыки из разных native-перечислений.");
         }
         SpreadsheetColumnViewModel raceReferenceColumn = prototypes.Columns.Single(column => column.FieldId == 1);
         HashSet<string> raceNames = races.Records
@@ -1758,10 +1826,10 @@ internal static class Program
         int physicalColumnCount = tables.Sum(table => table.Columns.Count(column => column.Projection is null));
         int displayedColumnCount = tables.Sum(table => table.Columns.Count);
         int rawEditorCount = tables.Sum(table => table.Columns.Count(column => column.Kind == "RawHex"));
-        if (physicalColumnCount != 380 || displayedColumnCount != 700 || rawColumns.Length != 0 || rawEditorCount == 0)
+        if (physicalColumnCount != 380 || displayedColumnCount != 702 || rawColumns.Length != 0 || rawEditorCount == 0)
         {
             throw new InvalidOperationException(
-                $"Полный каталог должен дать 380 редактируемых физических полей, 700 понятных колонок, расшифрованные проекции и raw-редакторы сложных структур; " +
+                $"Полный каталог должен дать 380 редактируемых физических полей, 702 понятные колонки, расшифрованные проекции и raw-редакторы сложных структур; " +
                 $"получено физических/всего/Hex/raw {physicalColumnCount}/{displayedColumnCount}/{rawColumns.Length}/{rawEditorCount}.");
         }
 
@@ -2289,6 +2357,11 @@ internal static class Program
         VerifyFormulaBar(window, viewModel, recordsGrid, materials, prototypes);
         VerifyTextsFormulaBar(window, viewModel, materials);
         VerifyAuxiliarySpreadsheetClipboard(window, viewModel, materials);
+        // The helper checks temporarily navigate through texts.res and auxiliary grids.
+        // Re-select the table and let the column rebuild finish before exercising the
+        // mixed DB + localization clipboard range below.
+        viewModel.SelectTableCommand.Execute(materials);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.Render);
 
         // The localization columns intentionally follow the database name column. Use two
         // adjacent physical database fields to verify rectangular Excel copy/paste semantics.

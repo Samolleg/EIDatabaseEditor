@@ -511,7 +511,18 @@ internal static class SpreadsheetProjectionValue
                             values[projection.Index],
                             NumberStyles.Float,
                             CultureInfo.InvariantCulture,
-                            out _))
+                            out float parsed))
+                    {
+                        return UnavailableText;
+                    }
+
+                    // Old fixed-size native arrays may retain NaN or denormal garbage in
+                    // unused slots. Keep the raw bytes intact, but do not present that tail
+                    // as a meaningful coordinate or coefficient in the readable table.
+                    const float minimumNormal = 1.17549435E-38f;
+                    if (projection.ValueKind == "Float32" &&
+                        (!float.IsFinite(parsed) ||
+                         (parsed != 0f && MathF.Abs(parsed) < minimumNormal)))
                     {
                         return UnavailableText;
                     }
@@ -1659,6 +1670,11 @@ internal sealed class RecordFieldViewModel : ObservableObject
 
     public string GetProjectedText(DatabaseFieldProjection projection)
     {
+        if (projection.Kind == DatabaseFieldProjectionKind.ListElement)
+        {
+            return SpreadsheetProjectionValue.Format(_editorText, projection);
+        }
+
         object? value = _field.GetProjectedValue(projection);
         return value is null ? SpreadsheetProjectionValue.UnavailableText : FormatValue(value);
     }

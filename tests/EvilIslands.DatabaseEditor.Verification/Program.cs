@@ -1415,6 +1415,41 @@ internal static class Program
             "Броня",
             log);
 
+        DatabaseTable weapons = RequireTable(tables, "items.weapons");
+        DatabaseField weaponClass = RequireField(weapons.Records[0], 2);
+        DatabaseFieldProjection weaponClassProjection = weaponClass.Projections.Single(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        DatabaseTable armors = RequireTable(tables, "items.armors");
+        DatabaseField armorClass = RequireField(armors.Records[0], 2);
+        DatabaseFieldProjection armorClassProjection = armorClass.Projections.Single(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        log.Assert(
+            weapons.Records.All(record =>
+                !RequireField(record, 4).ShowInReadableView && RequireField(record, 4).IsEditable) &&
+            armors.Records.All(record =>
+                !RequireField(record, 4).ShowInReadableView && RequireField(record, 4).IsEditable) &&
+            weaponClass.DisplayName == "Класс оружия" &&
+            weaponClassProjection.ValueLabels?[13] == "Двуручный топор" &&
+            armorClass.DisplayName == "Тип части брони" &&
+            armorClassProjection.ValueLabels?[6] == "Перчатки",
+            "Оружие и броня показывают рабочий ID типа как native/addon enum, а неиспользуемый " +
+            "кэш материала скрывают только в понятном режиме.");
+
+        DatabaseTable quickItems = RequireTable(tables, "items.quick_items");
+        DatabaseField quickItemTypeFieldForSchema = RequireField(quickItems.Records[0], 21);
+        DatabaseFieldProjection quickItemTypeProjectionForSchema = quickItemTypeFieldForSchema.Projections.Single(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        log.Assert(
+            quickItems.Records.All(record => new[] { 2, 4 }.All(fieldId =>
+                !RequireField(record, fieldId).ShowInReadableView && RequireField(record, fieldId).IsEditable)) &&
+            RequireField(quickItems.Records[0], 2).DisplayName == "Служебный ID типа (не используется)" &&
+            quickItemTypeFieldForSchema.DisplayName == "Тип быстрого предмета" &&
+            quickItemTypeProjectionForSchema.ValueLabels?[5] == "Жезл" &&
+            quickItemTypeProjectionForSchema.ValueLabels?[8] == "Свиток" &&
+            quickItemTypeProjectionForSchema.ValueLabels?[int.MaxValue] == "Не применяется",
+            "Быстрые предметы скрывают два неиспользуемых наследованных индекса, " +
+            "но сохраняют их редактируемыми в техническом режиме и расшифровывают рабочий тип.");
+
         DatabaseTable questItems = RequireTable(tables, "items.quest_items");
         log.Assert(
             questItems.Records.All(record =>
@@ -1458,8 +1493,8 @@ internal static class Program
             .Select(record => RequireField(record, 22))
             .FirstOrDefault(field => Convert.ToInt32(field.Value, CultureInfo.InvariantCulture) == int.MaxValue);
         log.Assert(
-            lootItems.Records.All(record =>
-                !RequireField(record, 2).ShowInReadableView && RequireField(record, 2).IsEditable) &&
+            lootItems.Records.All(record => new[] { 2, 4 }.All(fieldId =>
+                !RequireField(record, fieldId).ShowInReadableView && RequireField(record, fieldId).IsEditable)) &&
             lootType.DisplayName == "Тип лута" &&
             instructionType.DisplayName == "Тип инструкции" &&
             lootTypeProjection.ValueLabels is not null &&
@@ -1472,8 +1507,35 @@ internal static class Program
                 instructionTypeProjection.ValueLabels.TryGetValue(pair.Key, out string? label) && label == pair.Value) &&
             unusedInstructionType?.GetProjectedValue(instructionTypeProjection)?.ToString() ==
                 $"{int.MaxValue} — Не применяется",
-            "Лут скрывает неиспользуемый ID типа и показывает полные native/addon перечисления " +
+            "Лут скрывает неиспользуемые ID и кэш материала, а также показывает полные native/addon перечисления " +
             "типов лута и инструкций, включая служебное «Не применяется».");
+
+        DatabaseTable levers = RequireTable(tables, "levers.prototypes");
+        DatabaseField leverPoints = RequireField(levers.Records[0], 1);
+        string[] expectedLeverPointNames =
+            ["Точка 1 — X", "Точка 1 — Y", "Точка 2 — X", "Точка 2 — Y"];
+        log.Assert(
+            leverPoints.DisplayName == "Точки взаимодействия" &&
+            leverPoints.Projections.Select(projection => projection.DisplayName)
+                .SequenceEqual(expectedLeverPointNames, StringComparer.Ordinal) &&
+            RequireField(levers.Records[0], 2).DisplayName == "Количество активных точек (0–2)",
+            "Рычаги показывают native CPlot2D[2] как две именованные пары X/Y и отдельное число активных точек.");
+
+        DatabaseTable perks = RequireTable(tables, "perks.perks");
+        DatabaseField autoSkill = RequireField(perks.Records[0], 12);
+        DatabaseField manualSkill = RequireField(perks.Records[0], 13);
+        DatabaseFieldProjection autoSkillProjection = autoSkill.Projections.Single(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        DatabaseFieldProjection manualSkillProjection = manualSkill.Projections.Single(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        log.Assert(
+            autoSkillProjection.ValueLabels?[3] == "Стихийная магия" &&
+            autoSkillProjection.ValueLabels?[int.MaxValue] == "Не применяется" &&
+            manualSkillProjection.ValueLabels?[0] == "Наука" &&
+            manualSkillProjection.ValueLabels?[101013] == "Обыск (служебный навык)" &&
+            manualSkillProjection.ValueLabels?[int.MaxValue] == "Не применяется",
+            "Перки используют правильные native-перечисления автоматических и ручных навыков, " +
+            "включая служебные значения.");
 
         DatabaseField packedAbsorption = RequireField(
             RequireTable(tables, "items.armors").Records[0],

@@ -166,38 +166,73 @@ internal static partial class LegacySchemaCatalog
     {
         if (table == new TableKey("Items", 2))
         {
-            Rename(fields, 2, "ID типа предмета");
-            Rename(fields, 4, "Индекс типа материала");
+            Rename(fields, 2, "Класс оружия");
+            Rename(fields, 4, "Служебный индекс материала (не используется)");
+            ReplaceEnum(fields, 2, new Dictionary<int, string>
+            {
+                [0] = "Меч",
+                [1] = "Топор",
+                [2] = "Кинжал",
+                [3] = "Копьё",
+                [4] = "Молот",
+                [5] = "Лук",
+                [6] = "Арбалет",
+                [7] = "Неизвестный",
+                [8] = "Без оружия",
+                [9] = "Щит",
+                [10] = "Двуручное копьё",
+                [11] = "Посох",
+                [12] = "Двуручный меч",
+                [13] = "Двуручный топор",
+                [14] = "Двуручный молот",
+                [15] = "Двуручный посох",
+                [16] = "Магия",
+            });
             ReplaceList(fields, 22, DatabaseValueKind.UInt32List, "Модификаторы характеристик", ["Модификатор 1", "Модификатор 2"]);
             ReplaceList(fields, 27, DatabaseValueKind.ByteList, "Ручные навыки", ManualSkillNames);
             ReplaceList(fields, 28, DatabaseValueKind.ByteList, "Автонавыки", AutoSkillNames);
+            HideInReadableView(fields, 4);
         }
         else if (table == new TableKey("Items", 3))
         {
-            Rename(fields, 2, "ID типа предмета");
-            Rename(fields, 4, "Индекс типа материала");
+            Rename(fields, 2, "Тип части брони");
+            Rename(fields, 4, "Служебный индекс материала (не используется)");
+            ReplaceEnum(fields, 2,
+                "Шлем", "Доспех", "Поножи", "Рубаха", "Штаны", "Ботинки", "Перчатки", "Неизвестный");
             ReplaceArmorAbsorption(fields, 21, "Основное");
             ReplaceArmorAbsorption(fields, 22, "Дополнительное");
             ReplaceList(fields, 25, DatabaseValueKind.ByteList, "Ручные навыки", ManualSkillNames);
             ReplaceList(fields, 26, DatabaseValueKind.ByteList, "Автонавыки", AutoSkillNames);
+            HideInReadableView(fields, 4);
         }
         else if (table == new TableKey("Items", 4))
         {
-            Rename(fields, 2, "ID типа предмета");
-            Rename(fields, 4, "Индекс типа материала");
-            ReplaceKind(fields, 21, DatabaseValueKind.Int32, "Quick item type");
+            Rename(fields, 2, "Служебный ID типа (не используется)");
+            Rename(fields, 4, "Служебный индекс материала (не используется)");
+            ReplaceKind(fields, 21, DatabaseValueKind.Int32, "Тип быстрого предмета");
+            ReplaceEnum(fields, 21, new Dictionary<int, string>
+            {
+                [0] = "Датчик опасности",
+                [1] = "Убеждение",
+                [2] = "Ловушка",
+                [3] = "Отмычка",
+                [4] = "Лом",
+                [5] = "Жезл",
+                [6] = "Ключ",
+                [7] = "Заглушка",
+                [8] = "Свиток",
+                [int.MaxValue] = "Не применяется",
+            });
             Rename(fields, 22, "Уровень навыка");
             Rename(fields, 23, "Урон");
             ReplaceKind(fields, 24, DatabaseValueKind.Int32, "Damage type");
             Rename(fields, 25, "Заклинание");
             ReplaceList(fields, 26, DatabaseValueKind.ByteList, "Ручные навыки", ManualSkillNames);
             ReplaceList(fields, 27, DatabaseValueKind.ByteList, "Автонавыки", AutoSkillNames);
-            ReplaceEnum(fields, 21,
-                "Датчик опасности", "Убеждение", "Ловушка", "Отмычка", "Лом",
-                "Жезл", "Ключ", "Заглушка", "Свиток");
             ReplaceEnum(fields, 24,
                 "Колющий", "Рубящий", "Дробящий", "Термический", "Химический",
                 "Электрический", "Общий");
+            HideInReadableView(fields, 2, 4);
         }
         else if (table == new TableKey("Items", 5))
         {
@@ -211,7 +246,7 @@ internal static partial class LegacySchemaCatalog
         else if (table == new TableKey("Items", 6))
         {
             Rename(fields, 2, "Служебный ID типа (не используется)");
-            Rename(fields, 4, "Индекс типа материала");
+            Rename(fields, 4, "Служебный индекс материала (не используется)");
             ReplaceKind(fields, 21, DatabaseValueKind.Int32, "Тип лута");
             ReplaceKind(fields, 22, DatabaseValueKind.Int32, "Тип инструкции");
             Rename(fields, 23, "Индекс материала");
@@ -235,12 +270,13 @@ internal static partial class LegacySchemaCatalog
                 [6] = "Руна зелья",
                 [int.MaxValue] = "Не применяется",
             });
-            HideInReadableView(fields, 2);
+            HideInReadableView(fields, 2, 4);
         }
         else if (table == new TableKey("Levers", 1))
         {
-            Rename(fields, 1, "Координаты мест использования");
-            Rename(fields, 2, "Количество мест использования");
+            ReplaceList(fields, 1, DatabaseValueKind.Float32List, "Точки взаимодействия",
+                ["Точка 1 — X", "Точка 1 — Y", "Точка 2 — X", "Точка 2 — Y"]);
+            Rename(fields, 2, "Количество активных точек (0–2)");
             Rename(fields, 3, "Минимальный масштаб");
             Rename(fields, 4, "Время переключения");
             Rename(fields, 5, "Материал");
@@ -269,11 +305,26 @@ internal static partial class LegacySchemaCatalog
             {
                 Rename(fields, (byte)(10 + index), names[index]);
             }
-            ReplaceEnum(fields, 12,
-                "Наука", "Кража", "Приручение");
-            ReplaceEnum(fields, 13,
-                "Ближний бой", "Стрельба", "Удар в спину", "Стихийная магия",
-                "Магия чувств", "Астральная магия", "Скрытность", "Внимательность");
+            ReplaceEnum(fields, 12, new Dictionary<int, string>
+            {
+                [0] = "Ближний бой",
+                [1] = "Стрельба",
+                [2] = "Удар в спину",
+                [3] = "Стихийная магия",
+                [4] = "Магия чувств",
+                [5] = "Астральная магия",
+                [6] = "Скрытность",
+                [7] = "Внимательность",
+                [int.MaxValue] = "Не применяется",
+            });
+            ReplaceEnum(fields, 13, new Dictionary<int, string>
+            {
+                [0] = "Наука",
+                [1] = "Кража",
+                [2] = "Приручение",
+                [101013] = "Обыск (служебный навык)",
+                [int.MaxValue] = "Не применяется",
+            });
         }
         else if (table.Group == "Prints")
         {
