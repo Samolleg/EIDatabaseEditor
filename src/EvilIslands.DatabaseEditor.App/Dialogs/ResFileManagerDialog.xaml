@@ -21,7 +21,7 @@
                 </Border>
             </Grid>
         </HierarchicalDataTemplate>
-        <Style TargetType="TreeViewItem">
+        <Style TargetType="TreeViewItem" BasedOn="{StaticResource DarkTreeViewItem}">
             <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}"/>
             <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
             <Setter Property="Padding" Value="5,4"/><Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
@@ -101,7 +101,7 @@
                                   ItemTemplate="{StaticResource FolderTemplate}" SelectedItemChanged="FoldersTree_SelectedItemChanged"/>
                     </Grid>
                 </Border>
-                <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent"
+                <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                               ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" DragCompleted="GridSplitter_DragCompleted"/>
                 <Border Grid.Column="2" Background="{StaticResource WindowBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9"
                         ClipToBounds="True" AllowDrop="True" DragEnter="FilesGrid_DragEnter" DragLeave="FilesGrid_DragLeave" Drop="FilesGrid_Drop">
@@ -114,7 +114,7 @@
                                   SelectionMode="Extended" SelectionUnit="FullRow" ClipboardCopyMode="IncludeHeader" SelectionChanged="FilesGrid_SelectionChanged"
                                   VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                   EnableRowVirtualization="True" EnableColumnVirtualization="True">
-                            <DataGrid.RowStyle><Style TargetType="DataGridRow"><Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                            <DataGrid.RowStyle><Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}"><Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding State}" Value="Будет удалён"><Setter Property="Foreground" Value="{StaticResource DangerBrush}"/><Setter Property="Opacity" Value="0.62"/></DataTrigger>
                                     <DataTrigger Binding="{Binding State}" Value="Добавлен"><Setter Property="Background" Value="#183528"/></DataTrigger>
@@ -136,7 +136,7 @@
                         </Border>
                     </Grid>
                 </Border>
-                <GridSplitter x:Name="DetailsSplitter" Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Background="Transparent"
+                <GridSplitter x:Name="DetailsSplitter" Grid.Column="3" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                               ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" DragCompleted="GridSplitter_DragCompleted"/>
                 <Border x:Name="DetailsPanel" Grid.Column="4" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9">
                     <Grid Margin="15,13">

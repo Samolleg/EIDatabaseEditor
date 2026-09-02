@@ -70,7 +70,7 @@
                      BorderThickness="1"
                      SelectionChanged="RecoveryList_SelectionChanged">
                 <ListBox.ItemContainerStyle>
-                    <Style TargetType="ListBoxItem">
+                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource DarkListBoxItem}">
                         <Setter Property="Padding" Value="12,10" />
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />

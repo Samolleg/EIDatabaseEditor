@@ -50,36 +50,12 @@
             <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
             <Setter Property="Margin" Value="1,0,0,5" />
         </Style>
-        <Style x:Key="MagicComboBox" TargetType="ComboBox">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Padding" Value="8,6" />
-            <Setter Property="MinHeight" Value="34" />
+        <Style x:Key="MagicComboBox" TargetType="ComboBox" BasedOn="{StaticResource DarkComboBox}">
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="MinHeight" Value="38" />
             <Setter Property="MaxDropDownHeight" Value="300" />
-            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
-            <Setter Property="ItemContainerStyle">
-                <Setter.Value>
-                    <Style TargetType="ComboBoxItem">
-                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-                        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-                        <Setter Property="Padding" Value="8,6" />
-                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                        <Style.Triggers>
-                            <Trigger Property="IsHighlighted" Value="True">
-                                <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsSelected" Value="True">
-                                <Setter Property="Background" Value="{StaticResource SelectedBrush}" />
-                                <Setter Property="Foreground" Value="White" />
-                            </Trigger>
-                        </Style.Triggers>
-                    </Style>
-                </Setter.Value>
-            </Setter>
         </Style>
-        <Style x:Key="ReferenceResultItem" TargetType="ListBoxItem">
+        <Style x:Key="ReferenceResultItem" TargetType="ListBoxItem" BasedOn="{StaticResource DarkListBoxItem}">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Padding" Value="9,6" />
@@ -220,7 +196,7 @@
                         </Border>
 
                         <GridSplitter Grid.Column="1" Width="10" HorizontalAlignment="Stretch"
-                                      Background="Transparent" Cursor="SizeWE" />
+                                      Cursor="SizeWE" />
 
                         <Border Grid.Column="2" Background="{StaticResource SidebarBrush}"
                                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"

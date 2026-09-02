@@ -49,6 +49,7 @@ internal static class Program
                 ShutdownMode = ShutdownMode.OnExplicitShutdown,
             };
             application.InitializeComponent();
+            VerifyUnifiedControlStyles(application);
             var recoveryStore = new RecoverySnapshotStore(Path.Combine(uiSettingsRoot, "recovery"));
             var window = new MainWindow(preferences, recoveryStore);
             VerifyBranding(window);
@@ -147,6 +148,85 @@ internal static class Program
 
     }
 
+    private static void VerifyUnifiedControlStyles(Application application)
+    {
+        VerifyTemplatedStyle(application.Resources["RoundedButton"] as Style, Button.TemplateProperty, "RoundedButton");
+        VerifyTemplatedStyle(application.Resources["DarkTextBox"] as Style, TextBox.TemplateProperty, "DarkTextBox");
+        VerifyTemplatedStyle(application.Resources["DarkComboBox"] as Style, ComboBox.TemplateProperty, "DarkComboBox");
+        VerifyTemplatedStyle(application.Resources["DarkComboBoxItem"] as Style, ComboBoxItem.TemplateProperty, "DarkComboBoxItem");
+        VerifyTemplatedStyle(application.Resources["DarkListBoxItem"] as Style, ListBoxItem.TemplateProperty, "DarkListBoxItem");
+
+        var implicitComboBoxStyle = application.Resources[typeof(ComboBox)] as Style;
+        var implicitComboBoxItemStyle = application.Resources[typeof(ComboBoxItem)] as Style;
+        var implicitTextBoxStyle = application.Resources[typeof(TextBox)] as Style;
+        var implicitListBoxStyle = application.Resources[typeof(ListBox)] as Style;
+        var implicitCheckBoxStyle = application.Resources[typeof(CheckBox)] as Style;
+        var implicitExpanderStyle = application.Resources[typeof(Expander)] as Style;
+        var implicitSplitterStyle = application.Resources[typeof(GridSplitter)] as Style;
+        var implicitProgressStyle = application.Resources[typeof(ProgressBar)] as Style;
+        if (implicitComboBoxStyle?.BasedOn != application.Resources["DarkComboBox"] ||
+            implicitComboBoxItemStyle?.BasedOn != application.Resources["DarkComboBoxItem"] ||
+            implicitTextBoxStyle?.BasedOn != application.Resources["DarkTextBox"] ||
+            implicitListBoxStyle is null ||
+            implicitCheckBoxStyle is null ||
+            implicitExpanderStyle is null ||
+            implicitSplitterStyle is null ||
+            implicitProgressStyle is null)
+        {
+            throw new InvalidOperationException(
+                "Кнопки, поля, выпадающие и обычные списки, флажки, раскрывающиеся панели и разделители должны использовать общую тему приложения.");
+        }
+
+        VerifyTemplatedStyle(implicitCheckBoxStyle, CheckBox.TemplateProperty, "CheckBox");
+        VerifyTemplatedStyle(implicitExpanderStyle, Expander.TemplateProperty, "Expander");
+        VerifyTemplatedStyle(implicitProgressStyle, ProgressBar.TemplateProperty, "ProgressBar");
+
+        var comboBoxBackground = FindSetterValue(
+            (Style)application.Resources["DarkComboBox"],
+            Control.BackgroundProperty);
+        var expectedInputBackground = application.Resources["InputBrush"] as SolidColorBrush;
+        if (comboBoxBackground is not SolidColorBrush actualInputBackground ||
+            expectedInputBackground is null ||
+            actualInputBackground.Color != expectedInputBackground.Color)
+        {
+            throw new InvalidOperationException(
+                "Выпадающие списки должны использовать общий тёмный фон поля, а не системный светлый шаблон Windows.");
+        }
+
+        var dataGridStyle = application.Resources[typeof(DataGrid)] as Style;
+        if (!Equals(FindSetterValue(dataGridStyle, DataGrid.RowHeightProperty), 38d) ||
+            !Equals(FindSetterValue(dataGridStyle, DataGrid.ColumnHeaderHeightProperty), 42d) ||
+            !Equals(FindSetterValue(dataGridStyle, ScrollViewer.IsDeferredScrollingEnabledProperty), false))
+        {
+            throw new InvalidOperationException(
+                "Все таблицы должны наследовать единые размеры строк и заголовков и живую прокрутку.");
+        }
+
+        static void VerifyTemplatedStyle(Style? style, DependencyProperty property, string name)
+        {
+            if (FindSetterValue(style, property) is not ControlTemplate)
+            {
+                throw new InvalidOperationException(
+                    $"Стиль {name} обязан иметь собственный шаблон и не зависеть от системной темы Windows.");
+            }
+        }
+
+        static object? FindSetterValue(Style? style, DependencyProperty property)
+        {
+            for (Style? current = style; current is not null; current = current.BasedOn)
+            {
+                Setter? setter = current.Setters.OfType<Setter>()
+                    .LastOrDefault(candidate => candidate.Property == property);
+                if (setter is not null)
+                {
+                    return setter.Value;
+                }
+            }
+
+            return null;
+        }
+    }
+
     private static void VerifyBranding(MainWindow window)
     {
         if (window.Title != "Редактор БД от Атамана — Preview" ||
@@ -235,8 +315,58 @@ internal static class Program
         }
     }
 
+    private static void VerifyDarkComboBoxTemplate(ComboBox comboBox, string controlName)
+    {
+        comboBox.ApplyTemplate();
+        if (comboBox.Template is null ||
+            comboBox.Template.FindName("InputBorder", comboBox) is not Border inputBorder ||
+            comboBox.Template.FindName("PART_Popup", comboBox) is not Popup ||
+            inputBorder.Background is not SolidColorBrush inputBackground ||
+            RelativeLuminance(inputBackground.Color) > 0.12)
+        {
+            throw new InvalidOperationException(
+                $"{controlName} обязан создавать собственные тёмные поле и popup, а не системный светлый ComboBox.");
+        }
+
+        if (comboBox.Foreground is not SolidColorBrush foreground ||
+            ContrastRatio(foreground.Color, inputBackground.Color) < 4.5)
+        {
+            throw new InvalidOperationException(
+                $"{controlName} обязан сохранять читаемый контраст текста на тёмном фоне.");
+        }
+
+        static double ContrastRatio(Color first, Color second)
+        {
+            double light = Math.Max(RelativeLuminance(first), RelativeLuminance(second));
+            double dark = Math.Min(RelativeLuminance(first), RelativeLuminance(second));
+            return (light + 0.05) / (dark + 0.05);
+        }
+
+        static double RelativeLuminance(Color color)
+        {
+            static double Linear(byte channel)
+            {
+                double value = channel / 255d;
+                return value <= 0.04045
+                    ? value / 12.92
+                    : Math.Pow((value + 0.055) / 1.055, 2.4);
+            }
+
+            return 0.2126 * Linear(color.R) +
+                   0.7152 * Linear(color.G) +
+                   0.0722 * Linear(color.B);
+        }
+    }
+
     private static void VerifySpreadsheetGridDefinition(MainWindow window)
     {
+        if (window.Resources["SpreadsheetCellEditor"] is not Style spreadsheetCellEditor ||
+            spreadsheetCellEditor.BasedOn != Application.Current.Resources["DarkTextBox"])
+        {
+            throw new InvalidOperationException(
+                "Редактор значения внутри таблицы обязан наследовать общий тёмный шаблон текстового поля.");
+        }
+
         if (MainWindow.RecoveryAutosaveInterval != TimeSpan.FromMinutes(5))
         {
             throw new InvalidOperationException(
@@ -2777,11 +2907,15 @@ internal static class Program
             dialog.DataContext is not DatabaseComparisonDialogViewModel viewModel ||
             viewModel.Differences.Count != 2 ||
             viewModel.ModifiedRecordCount != 1 ||
-            viewModel.OnlyInComparedCount != 1)
+            viewModel.OnlyInComparedCount != 1 ||
+            dialog.FindName("KindFilter") is not ComboBox { Template: not null } kindFilter ||
+            kindFilter.ItemContainerStyle is null)
         {
             throw new InvalidOperationException(
                 "Диалог сравнения обязан показывать read-only Excel-совместимый отчёт и корректную сводку.");
         }
+
+        VerifyDarkComboBoxTemplate(kindFilter, "Фильтр сравнения баз");
 
         viewModel.SearchText = "Metal";
         if (viewModel.DifferencesView.Cast<object>().Count() != 1)
@@ -4030,7 +4164,8 @@ internal static class Program
                 $"raw={dialog.FindName("RawEditorBox") is TextBox}, model={dialog.Items.Count}, visual={itemsGrid?.Items.Count ?? -1}.");
         }
 
-        if (magicShapeComboBox.ItemContainerStyle is null ||
+        if (magicShapeComboBox.Template is null ||
+            magicShapeComboBox.ItemContainerStyle is null ||
             magicShapeComboBox.MaxDropDownHeight > 300.1 ||
             !magicShapeComboBox.ItemContainerStyle.Setters.OfType<Setter>()
                 .Any(setter => setter.Property == Control.BackgroundProperty) ||
@@ -4040,6 +4175,18 @@ internal static class Program
             throw new InvalidOperationException(
                 "Выпадающие списки конструктора должны явно задавать тёмный фон, читаемый цвет текста и ограниченную высоту.");
         }
+
+
+        VerifyDarkComboBoxTemplate(magicShapeComboBox, "Форма оружия или доспеха");
+        VerifyDarkComboBoxTemplate(
+            (ComboBox)dialog.FindName("MagicMaterialComboBox"),
+            "Материал предмета");
+        VerifyDarkComboBoxTemplate(
+            (ComboBox)dialog.FindName("MagicSpellComboBox"),
+            "Заклинание предмета");
+        VerifyDarkComboBoxTemplate(
+            (ComboBox)dialog.FindName("MagicModifierComboBox"),
+            "Руны и модификаторы");
 
         IReadOnlyList<string>? appliedSingleValue = null;
         var singleValueDialog = new StructuredStringListEditorDialog(

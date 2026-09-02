@@ -347,7 +347,9 @@
             <Setter Property="ToolTipService.ShowDuration" Value="12000" />
         </Style>
 
-        <Style x:Key="SpreadsheetCellEditor" TargetType="TextBox">
+        <Style x:Key="SpreadsheetCellEditor"
+               TargetType="TextBox"
+               BasedOn="{StaticResource DarkTextBox}">
             <Setter Property="Background" Value="#111417" />
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
             <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}" />
@@ -1805,7 +1807,8 @@
                                                          VirtualizingPanel.IsVirtualizing="True"
                                                          VirtualizingPanel.VirtualizationMode="Recycling">
                                                     <ListBox.ItemContainerStyle>
-                                                        <Style TargetType="ListBoxItem">
+                                                        <Style TargetType="ListBoxItem"
+                                                               BasedOn="{StaticResource DarkListBoxItem}">
                                                             <Setter Property="Padding" Value="12,9" />
                                                             <Setter Property="Margin" Value="5,2" />
                                                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -1908,7 +1911,7 @@
                                                           HorizontalGridLinesBrush="{StaticResource GridLineBrush}"
                                                           ScrollViewer.CanContentScroll="False">
                                                     <DataGrid.RowStyle>
-                                                        <Style TargetType="DataGridRow">
+                                                        <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                                             <Setter Property="Background" Value="Transparent" />
                                                             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                                                             <Style.Triggers>

@@ -81,21 +81,8 @@
                                VerticalAlignment="Center" HorizontalAlignment="Left" IsHitTestVisible="False" />
                 </Grid>
                 <ComboBox x:Name="KindFilter" Grid.Column="6" Margin="10,0,0,0" SelectedIndex="0"
-                          SelectionChanged="KindFilter_SelectionChanged" Padding="9,7"
-                          Background="#262626" Foreground="{StaticResource TextBrush}"
-                          BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                    <ComboBox.ItemContainerStyle>
-                        <Style TargetType="ComboBoxItem">
-                            <Setter Property="Background" Value="#262626" />
-                            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-                            <Setter Property="Padding" Value="9,6" />
-                            <Style.Triggers>
-                                <Trigger Property="IsHighlighted" Value="True">
-                                    <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
-                                </Trigger>
-                            </Style.Triggers>
-                        </Style>
-                    </ComboBox.ItemContainerStyle>
+                          SelectionChanged="KindFilter_SelectionChanged" MinWidth="190"
+                          ToolTip="Фильтр различий по типу">
                     <ComboBoxItem Content="Все различия" Tag="All" />
                     <ComboBoxItem Content="Изменённые поля" Tag="Changed" />
                     <ComboBoxItem Content="Только в текущей" Tag="Current" />
