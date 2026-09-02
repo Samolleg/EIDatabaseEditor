@@ -7,6 +7,22 @@ internal sealed record EmbeddedMagicChoice(string Value, string DisplayText)
     public override string ToString() => DisplayText;
 }
 
+internal enum StructuredElementKind
+{
+    RawValue,
+    Spell,
+    Weapon,
+    Armor,
+}
+
+internal sealed record StructuredElementKindChoice(
+    StructuredElementKind Kind,
+    string DisplayText,
+    string Description)
+{
+    public override string ToString() => DisplayText;
+}
+
 internal sealed class EmbeddedMagicEditorContext
 {
     private readonly IReadOnlyDictionary<string, string> _localizedTitles;
@@ -20,9 +36,11 @@ internal sealed class EmbeddedMagicEditorContext
         Shapes = catalog.Shapes
             .Select(shape => new EmbeddedMagicChoice(
                 shape.Value,
-                $"{shape.Kind}: {shape.Value}"))
+                CreateShapeDisplayText(shape)))
             .OrderBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
+        Weapons = CreateShapeChoices("items.weapons");
+        Armors = CreateShapeChoices("items.armors");
         Spells = catalog.Spells
             .Select(spell => CreateChoice(spell.Value, "SPELL"))
             .OrderBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
@@ -37,9 +55,35 @@ internal sealed class EmbeddedMagicEditorContext
 
     public IReadOnlyList<EmbeddedMagicChoice> Shapes { get; }
 
+    public IReadOnlyList<EmbeddedMagicChoice> Weapons { get; }
+
+    public IReadOnlyList<EmbeddedMagicChoice> Armors { get; }
+
     public IReadOnlyList<EmbeddedMagicChoice> Spells { get; }
 
     public IReadOnlyList<EmbeddedMagicChoice> Modifiers { get; }
+
+    public IReadOnlyList<EmbeddedMagicChoice> GetShapes(StructuredElementKind kind) => kind switch
+    {
+        StructuredElementKind.Weapon => Weapons,
+        StructuredElementKind.Armor => Armors,
+        _ => Shapes,
+    };
+
+    public StructuredElementKind? GetItemKind(string? itemValue)
+    {
+        string value = itemValue?.Trim() ?? string.Empty;
+        int separator = value.IndexOf('.');
+        string shapeValue = separator > 0 ? value[..separator].Trim() : value;
+        EmbeddedMagicShapeOption? shape = Catalog.Shapes.FirstOrDefault(option =>
+            option.Value.Equals(shapeValue, StringComparison.OrdinalIgnoreCase));
+        return shape?.TableKey switch
+        {
+            "items.weapons" => StructuredElementKind.Weapon,
+            "items.armors" => StructuredElementKind.Armor,
+            _ => null,
+        };
+    }
 
     public IReadOnlyList<EmbeddedMagicChoice> GetMaterials(string? shapeValue) =>
         Catalog.GetCompatibleMaterials(shapeValue)
@@ -58,6 +102,21 @@ internal sealed class EmbeddedMagicEditorContext
 
         string prefix = shape.TableKey == "items.weapons" ? "WEAPON" : "ARMOR";
         return FindTitle($"{prefix} {Normalize(shape.Value)} {Normalize(materialValue)}");
+    }
+
+    private IReadOnlyList<EmbeddedMagicChoice> CreateShapeChoices(string tableKey) => Catalog.Shapes
+        .Where(shape => shape.TableKey.Equals(tableKey, StringComparison.Ordinal))
+        .Select(shape => new EmbeddedMagicChoice(shape.Value, CreateShapeDisplayText(shape)))
+        .OrderBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
+        .ToArray();
+
+    private string CreateShapeDisplayText(EmbeddedMagicShapeOption shape)
+    {
+        string prefix = shape.TableKey == "items.weapons" ? "WEAPON" : "ARMOR";
+        string title = FindTitle($"{prefix} {Normalize(shape.Value)}");
+        return title.Length == 0
+            ? $"{shape.Kind}: {shape.Value}"
+            : $"{title} — {shape.Value}";
     }
 
     private EmbeddedMagicChoice CreateChoice(string value, string prefix)

@@ -3339,12 +3339,20 @@ internal static class Program
             .GroupBy(resource => resource.ResourceName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.OrdinalIgnoreCase);
         var context = new EmbeddedMagicEditorContext(EmbeddedMagicCatalog.Create(recordsByTable), titles);
-        EmbeddedMagicShapeOption shape = context.Catalog.Shapes.First();
-        EmbeddedMagicMaterialOption material = context.Catalog.GetCompatibleMaterials(shape.Value).First();
-        EmbeddedMagicSpellOption spell = context.Catalog.Spells.First();
         EmbeddedMagicModifierOption modifier = context.Catalog.Modifiers.First(option =>
-            option.Value.Equals("it", StringComparison.OrdinalIgnoreCase) ||
-            option.Value.Equals("ic", StringComparison.OrdinalIgnoreCase));
+            option.Value.Equals("it", StringComparison.OrdinalIgnoreCase));
+        (EmbeddedMagicShapeOption Shape, EmbeddedMagicMaterialOption Material, EmbeddedMagicSpellOption Spell) valid =
+            context.Catalog.Shapes
+                .SelectMany(shape => context.Catalog.GetCompatibleMaterials(shape.Value)
+                    .SelectMany(material => context.Catalog.Spells
+                        .Select(spell => (Shape: shape, Material: material, Spell: spell))))
+                .First(candidate => context.Catalog.Evaluate(
+                    $"{candidate.Shape.Value}.{candidate.Material.Value}",
+                    candidate.Spell.Value,
+                    [modifier.Value]).IsAllowedForManualInsertion);
+        EmbeddedMagicShapeOption shape = valid.Shape;
+        EmbeddedMagicMaterialOption material = valid.Material;
+        EmbeddedMagicSpellOption spell = valid.Spell;
         string value = $"{shape.Value}.{material.Value}[{spell.Value}{{{modifier.Value}}}]";
         var dialog = new StructuredStringListEditorDialog(
             "AX1",
@@ -3352,12 +3360,27 @@ internal static class Program
             [value],
             [],
             _ => (true, null),
-            magicContext: context);
+            magicContext: context,
+            allowedElementKinds:
+            [
+                StructuredElementKind.RawValue,
+                StructuredElementKind.Weapon,
+                StructuredElementKind.Armor,
+            ]);
 
-        if (dialog.FindName("MagicConstructorPanel") is not StackPanel magicPanel ||
+        StructuredElementKind expectedItemKind = shape.TableKey == "items.weapons"
+            ? StructuredElementKind.Weapon
+            : StructuredElementKind.Armor;
+        if (dialog.FindName("ElementTypeComboBox") is not ComboBox
+                { SelectedItem: StructuredElementKindChoice selectedType } ||
+            selectedType.Kind != expectedItemKind ||
+            dialog.FindName("MagicConstructorPanel") is not StackPanel magicPanel ||
             magicPanel.Visibility != Visibility.Visible ||
             dialog.FindName("GenericElementEditorPanel") is not StackPanel genericPanel ||
             genericPanel.Visibility != Visibility.Collapsed ||
+            dialog.FindName("ItemConstructorPanel") is not StackPanel { Visibility: Visibility.Visible } ||
+            dialog.FindName("EmbedSpellCheckBox") is not CheckBox { IsChecked: true } ||
+            dialog.FindName("SpellConstructorPanel") is not StackPanel { Visibility: Visibility.Visible } ||
             dialog.FindName("MagicShapeComboBox") is not ComboBox { SelectedItem: EmbeddedMagicChoice } ||
             dialog.FindName("MagicMaterialComboBox") is not ComboBox { SelectedItem: EmbeddedMagicChoice } ||
             dialog.FindName("MagicSpellComboBox") is not ComboBox { SelectedItem: EmbeddedMagicChoice } ||
@@ -3376,27 +3399,136 @@ internal static class Program
                 "Изменённая комбинация с неизвестной руной должна блокироваться до записи в RES.");
         }
 
-
-        var blankDialog = new StructuredStringListEditorDialog(
-            "AX2",
+        var itemBuilderDialog = new StructuredStringListEditorDialog(
+            "AX1B",
             "Гарантированный лут",
             [string.Empty],
             [],
             _ => (true, null),
-            magicContext: context);
-        if (blankDialog.FindName("OpenMagicConstructorButton") is not Button constructorButton ||
-            constructorButton.Visibility != Visibility.Visible)
+            magicContext: context,
+            allowedElementKinds: [StructuredElementKind.RawValue, expectedItemKind]);
+        var itemTypeComboBox = (ComboBox)itemBuilderDialog.FindName("ElementTypeComboBox")!;
+        itemTypeComboBox.SelectedItem = itemTypeComboBox.Items.Cast<StructuredElementKindChoice>()
+            .First(choice => choice.Kind == expectedItemKind);
+        var itemShapeComboBox = (ComboBox)itemBuilderDialog.FindName("MagicShapeComboBox")!;
+        itemShapeComboBox.SelectedItem = itemShapeComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(shape.Value, StringComparison.OrdinalIgnoreCase));
+        var itemMaterialComboBox = (ComboBox)itemBuilderDialog.FindName("MagicMaterialComboBox")!;
+        itemMaterialComboBox.SelectedItem = itemMaterialComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(material.Value, StringComparison.OrdinalIgnoreCase));
+        var itemEmbedSpellCheckBox = (CheckBox)itemBuilderDialog.FindName("EmbedSpellCheckBox")!;
+        itemEmbedSpellCheckBox.IsChecked = true;
+        var itemSpellComboBox = (ComboBox)itemBuilderDialog.FindName("MagicSpellComboBox")!;
+        itemSpellComboBox.SelectedItem = itemSpellComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(spell.Value, StringComparison.OrdinalIgnoreCase));
+        ((Button)itemBuilderDialog.FindName("UpdateElementButton")!).RaiseEvent(
+            new RoutedEventArgs(Button.ClickEvent));
+        if (itemBuilderDialog.Items[0].Value != value ||
+            itemBuilderDialog.Items[0].Kind != (expectedItemKind == StructuredElementKind.Weapon
+                ? "Оружие с магией"
+                : "Броня с магией"))
         {
             throw new InvalidOperationException(
-                "Для пустого нового элемента должно быть видно явное действие создания предмета с магией.");
+                "Новый предмет должен собираться из формы, совместимого материала, заклинания и руны без ручного ввода RES-строки.");
         }
 
-        constructorButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        if (blankDialog.Items[0].Kind != "Предмет с магией" ||
-            blankDialog.FindName("MagicConstructorPanel") is not StackPanel { Visibility: Visibility.Visible })
+        var spellDialog = new StructuredStringListEditorDialog(
+            "AX2",
+            "Заклинания",
+            [string.Empty],
+            [],
+            _ => (true, null),
+            magicContext: context,
+            allowedElementKinds: [StructuredElementKind.RawValue, StructuredElementKind.Spell]);
+        if (spellDialog.FindName("ElementTypeComboBox") is not ComboBox
+                { SelectedItem: StructuredElementKindChoice spellType } spellTypeComboBox ||
+            spellType.Kind != StructuredElementKind.Spell ||
+            spellTypeComboBox.Items.Count != 2 ||
+            spellDialog.FindName("ItemConstructorPanel") is not StackPanel { Visibility: Visibility.Collapsed } ||
+            spellDialog.FindName("SpellConstructorPanel") is not StackPanel { Visibility: Visibility.Visible } ||
+            spellDialog.FindName("MagicSpellComboBox") is not ComboBox spellComboBox ||
+            spellDialog.FindName("MagicModifierComboBox") is not ComboBox modifierComboBox ||
+            spellDialog.FindName("UpdateElementButton") is not Button spellUpdateButton)
         {
             throw new InvalidOperationException(
-                "Кнопка создания должна переводить пустую строку в типизированный конструктор вложенной магии.");
+                "Поле заклинаний должно сразу открывать выбор заклинания/боевого навыка и рун.");
+        }
+
+        spellComboBox.SelectedItem = spellComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(spell.Value, StringComparison.OrdinalIgnoreCase));
+        modifierComboBox.SelectedItem = modifierComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(modifier.Value, StringComparison.OrdinalIgnoreCase));
+        ((Button)spellDialog.FindName("AddMagicModifierButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        spellUpdateButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (spellDialog.Items[0].Value != $"{spell.Value}{{{modifier.Value}}}" ||
+            spellDialog.Items[0].Kind != "Заклинание")
+        {
+            throw new InvalidOperationException(
+                "Выбранные заклинание и руна должны собираться в один физический элемент RES.");
+        }
+
+        var armorDialog = new StructuredStringListEditorDialog(
+            "AX3",
+            "Варианты доспехов",
+            [string.Empty],
+            [],
+            _ => (true, null),
+            magicContext: context,
+            allowedElementKinds: [StructuredElementKind.RawValue, StructuredElementKind.Armor]);
+        if (armorDialog.FindName("ElementTypeComboBox") is not ComboBox
+                { SelectedItem: StructuredElementKindChoice armorType } ||
+            armorType.Kind != StructuredElementKind.Armor ||
+            ((ComboBox)armorDialog.FindName("ElementTypeComboBox")).Items.Count != 2 ||
+            armorDialog.FindName("MagicShapeComboBox") is not ComboBox armorShapeComboBox ||
+            armorShapeComboBox.Items.Cast<EmbeddedMagicChoice>().Any(choice =>
+                context.Catalog.Shapes.First(option => option.Value == choice.Value).TableKey != "items.armors") ||
+            armorDialog.FindName("EmbedSpellCheckBox") is not CheckBox { IsChecked: false })
+        {
+            throw new InvalidOperationException(
+                "Варианты доспехов должны сразу открывать конструктор брони без форм оружия.");
+        }
+
+        EmbeddedMagicShapeOption armorShape = context.Catalog.Shapes.First(option =>
+            option.TableKey == "items.armors" &&
+            context.Catalog.GetCompatibleMaterials(option.Value).Count > 0);
+        EmbeddedMagicMaterialOption armorMaterial = context.Catalog.GetCompatibleMaterials(armorShape.Value)[0];
+        armorShapeComboBox.SelectedItem = armorShapeComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(armorShape.Value, StringComparison.OrdinalIgnoreCase));
+        var armorMaterialComboBox = (ComboBox)armorDialog.FindName("MagicMaterialComboBox")!;
+        armorMaterialComboBox.SelectedItem = armorMaterialComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(armorMaterial.Value, StringComparison.OrdinalIgnoreCase));
+        ((Button)armorDialog.FindName("UpdateElementButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (armorDialog.Items[0].Value != $"{armorShape.Value}.{armorMaterial.Value}" ||
+            armorDialog.Items[0].Kind != "Броня")
+        {
+            throw new InvalidOperationException(
+                "Броня без магии должна собираться из формы и совместимого материала.");
+        }
+
+        var weaponDialog = new StructuredStringListEditorDialog(
+            "AX4",
+            "Оружие 1",
+            [string.Empty],
+            [],
+            _ => (true, null),
+            magicContext: context,
+            allowedElementKinds: [StructuredElementKind.RawValue, StructuredElementKind.Weapon]);
+        EmbeddedMagicShapeOption weaponShape = context.Catalog.Shapes.First(option =>
+            option.TableKey == "items.weapons" &&
+            context.Catalog.GetCompatibleMaterials(option.Value).Count > 0);
+        EmbeddedMagicMaterialOption weaponMaterial = context.Catalog.GetCompatibleMaterials(weaponShape.Value)[0];
+        var weaponShapeComboBox = (ComboBox)weaponDialog.FindName("MagicShapeComboBox")!;
+        weaponShapeComboBox.SelectedItem = weaponShapeComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(weaponShape.Value, StringComparison.OrdinalIgnoreCase));
+        var weaponMaterialComboBox = (ComboBox)weaponDialog.FindName("MagicMaterialComboBox")!;
+        weaponMaterialComboBox.SelectedItem = weaponMaterialComboBox.Items.Cast<EmbeddedMagicChoice>()
+            .First(choice => choice.Value.Equals(weaponMaterial.Value, StringComparison.OrdinalIgnoreCase));
+        ((Button)weaponDialog.FindName("UpdateElementButton")!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (weaponDialog.Items[0].Value != $"{weaponShape.Value}.{weaponMaterial.Value}" ||
+            weaponDialog.Items[0].Kind != "Оружие")
+        {
+            throw new InvalidOperationException(
+                "Оружие без магии должно собираться из формы и совместимого материала.");
         }
     }
 
@@ -4543,6 +4675,17 @@ internal static class Program
         {
             throw new InvalidOperationException(
                 "Фигурные параметры неизвестного немагического списка не должны автоматически называться заклинанием.");
+        }
+
+        StringListElementAnalysis bareSpell = StringListEditorCodec.AnalyzeElement(
+            "powerhit",
+            "Заклинания");
+        if (bareSpell.Kind != "Заклинание" ||
+            bareSpell.SpellCode != "powerhit" ||
+            bareSpell.Modifiers.Count != 0)
+        {
+            throw new InvalidOperationException(
+                "Заклинание или боевой навык без рун должны оставаться типизированным элементом.");
         }
 
         IReadOnlyList<string>? appliedValues = null;

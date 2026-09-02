@@ -116,6 +116,12 @@ public static class StringListEditorCodec
             return new("Предмет с магией", item, spell, modifiers, summary, null);
         }
 
+        if (IsExplicitStandaloneSpellField(fieldName) &&
+            text.IndexOfAny(['[', ']', '{', '}']) < 0)
+        {
+            return new("Заклинание", text, text, [], $"Заклинание: {text}", null);
+        }
+
         if (AllowsStandaloneSpell(fieldName) &&
             TryParseStandaloneSpell(text, out string spellCode, out string[] runeCodes))
         {
@@ -135,9 +141,14 @@ public static class StringListEditorCodec
 
     private static bool AllowsStandaloneSpell(string? fieldName) =>
         string.IsNullOrWhiteSpace(fieldName) ||
+        IsExplicitStandaloneSpellField(fieldName);
+
+    private static bool IsExplicitStandaloneSpellField(string? fieldName) =>
+        !string.IsNullOrWhiteSpace(fieldName) &&
+        (
         fieldName.Contains("заклин", StringComparison.CurrentCultureIgnoreCase) ||
         fieldName.Contains("маг", StringComparison.CurrentCultureIgnoreCase) ||
-        fieldName.Contains("spell", StringComparison.OrdinalIgnoreCase);
+        fieldName.Contains("spell", StringComparison.OrdinalIgnoreCase));
 
     private static bool TryAnalyzeResourcePath(
         string text,

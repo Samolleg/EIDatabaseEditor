@@ -1943,9 +1943,10 @@ public partial class MainWindow : Window
                     return (string.IsNullOrWhiteSpace(scalarError), scalarError);
                 },
                 singleValueMode: context.StructuredEditorIsSingleValue,
-                magicContext: SupportsEmbeddedMagicConstructor(context)
+                magicContext: SupportsStructuredContentBuilder(context)
                     ? BuildEmbeddedMagicEditorContext()
-                    : null)
+                    : null,
+                allowedElementKinds: GetSupportedBuilderKinds(context))
             {
                 Owner = this,
             };
@@ -2022,7 +2023,7 @@ public partial class MainWindow : Window
             localizedTitles);
     }
 
-    private static bool SupportsEmbeddedMagicConstructor(FormulaCellContext context)
+    private static bool SupportsStructuredContentBuilder(FormulaCellContext context)
     {
         if (context.Item is not RecordRowViewModel record ||
             context.StructuredField is not RecordFieldViewModel field)
@@ -2032,10 +2033,32 @@ public partial class MainWindow : Window
 
         return (record.TableKey, field.Id) switch
         {
-            ("units.prototypes", 29 or 32 or 33 or 42) => true,
-            ("units.npcs", 9) => true,
+            ("units.prototypes", 29 or 31 or 32 or 33 or 42) => true,
+            ("units.npcs", 9 or 11) => true,
             ("quests.briefings", 3 or 5) => true,
             _ => false,
+        };
+    }
+
+    private static IReadOnlyList<StructuredElementKind>? GetSupportedBuilderKinds(FormulaCellContext context)
+    {
+        if (context.Item is not RecordRowViewModel record ||
+            context.StructuredField is not RecordFieldViewModel field)
+        {
+            return null;
+        }
+
+        return (record.TableKey, field.Id) switch
+        {
+            ("units.prototypes", 31) or ("units.npcs", 11) =>
+                [StructuredElementKind.RawValue, StructuredElementKind.Spell],
+            ("units.prototypes", 32) =>
+                [StructuredElementKind.RawValue, StructuredElementKind.Armor],
+            ("units.prototypes", 33 or 42) or ("units.npcs", 9) =>
+                [StructuredElementKind.RawValue, StructuredElementKind.Weapon],
+            ("units.prototypes", 29) or ("quests.briefings", 3 or 5) =>
+                [StructuredElementKind.RawValue, StructuredElementKind.Weapon, StructuredElementKind.Armor],
+            _ => null,
         };
     }
 
