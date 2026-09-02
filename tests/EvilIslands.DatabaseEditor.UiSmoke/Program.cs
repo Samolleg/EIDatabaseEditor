@@ -1579,7 +1579,7 @@ internal static class Program
         }
 
         if (viewModel.ShowAllColumns ||
-            viewModel.ColumnModeButtonText != "Технические поля" ||
+            viewModel.SelectedColumnMode != "Понятные поля" ||
             viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex"))
         {
             throw new InvalidOperationException(
@@ -1594,10 +1594,10 @@ internal static class Program
                 "Ссылочное поле Base Race должно отрисовываться обычной текстовой колонкой без ComboBox.");
         }
 
-        viewModel.ToggleColumnModeCommand.Execute(null);
+        viewModel.SelectedColumnMode = "Все поля";
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (!viewModel.ShowAllColumns ||
-            viewModel.ColumnModeButtonText != "Понятные поля" ||
+            viewModel.SelectedColumnMode != "Все поля" ||
             viewModel.VisibleSpreadsheetColumns.Count != prototypes.Columns.Count ||
             recordsGrid.Columns.Count != prototypes.Columns.Count + (viewModel.HasTextsDocument ? 4 : 1))
         {
@@ -1605,7 +1605,7 @@ internal static class Program
                 "Режим технических полей должен восстановить все физические столбцы и расшифровки.");
         }
 
-        viewModel.ToggleColumnModeCommand.Execute(null);
+        viewModel.SelectedColumnMode = "Понятные поля";
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (viewModel.ShowAllColumns ||
             recordsGrid.Columns.Count != readablePrototypeColumnCount + (viewModel.HasTextsDocument ? 4 : 1) ||
@@ -1631,7 +1631,7 @@ internal static class Program
                 "Понятный режим квестовых предметов не должен показывать неиспользуемые ID и материал.");
         }
 
-        viewModel.ToggleColumnModeCommand.Execute(null);
+        viewModel.SelectedColumnMode = "Все поля";
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (!new[] { 2, 3, 4 }.All(fieldId => viewModel.VisibleSpreadsheetColumns.Any(column =>
                 column.FieldId == fieldId && column.Projection is null && column.IsEditable)))
@@ -1640,7 +1640,7 @@ internal static class Program
                 "Технический режим обязан вернуть три скрытых физических поля квестовых предметов для точного доступа.");
         }
 
-        viewModel.ToggleColumnModeCommand.Execute(null);
+        viewModel.SelectedColumnMode = "Понятные поля";
         viewModel.SelectTableCommand.Execute(lootItems);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (viewModel.VisibleSpreadsheetColumns.Any(column => column.FieldId == 2) ||
@@ -1970,6 +1970,55 @@ internal static class Program
                 "acks.db/Ответы и команды должен показывать только понятные составные списки; raw-код доступен отдельно в техническом режиме.");
         }
 
+        var cries = tables.Single(table => table.Key == "acks.cries");
+        viewModel.SelectTableCommand.Execute(cries);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (window.FindName("ColumnModeComboBox") is not ComboBox columnModeComboBox)
+        {
+            throw new InvalidOperationException("Над таблицей должен находиться явный выбор режима полей.");
+        }
+
+        if (cries.Columns.Count >= 12 ||
+            !columnModeComboBox.IsEnabled ||
+            columnModeComboBox.Items.Count != 3 ||
+            !Equals(columnModeComboBox.SelectedItem, "Понятные поля") ||
+            viewModel.VisibleSpreadsheetColumns.Count >= cries.Columns.Count ||
+            !viewModel.HasHiddenTechnicalColumns ||
+            !viewModel.SpreadsheetColumnCountText.StartsWith(
+                $"{viewModel.VisibleSpreadsheetColumns.Count:N0} из {cries.Columns.Count:N0} полей",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Малая таблица acks.db/Боевые крики должна разрешать открыть скрытые технические поля и ясно показывать счётчик.");
+        }
+
+        viewModel.SelectedColumnMode = "Все поля";
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (!viewModel.ShowAllColumns ||
+            viewModel.VisibleSpreadsheetColumns.Count != cries.Columns.Count ||
+            !viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex") ||
+            !viewModel.SpreadsheetColumnCountText.StartsWith(
+                $"Все {cries.Columns.Count:N0} полей",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Технический режим малой таблицы должен показать все исходные поля, включая RawHex.");
+        }
+
+        viewModel.SelectedColumnMode = "Исходные байты";
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (viewModel.VisibleSpreadsheetColumns.Count != cries.Columns.Count(column => column.Projection is null) ||
+            viewModel.VisibleSpreadsheetColumns.Any(column => column.Projection is not null) ||
+            !viewModel.VisibleSpreadsheetColumns.Any(column => column.Kind == "RawHex"))
+        {
+            throw new InvalidOperationException(
+                "Режим исходных байтов должен убрать расшифровки и оставить только физические поля database.res.");
+        }
+
+        viewModel.SelectedColumnMode = "Понятные поля";
+        viewModel.SelectTableCommand.Execute(acks);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+
         SpreadsheetColumnViewModel structuredAckColumn = viewModel.VisibleSpreadsheetColumns.First(column =>
             column.Kind == "StructuredListDecoded");
         RecordRowViewModel structuredAckRecord = acks.Records.First(record =>
@@ -2285,7 +2334,7 @@ internal static class Program
             window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         }
 
-        viewModel.ToggleColumnModeCommand.Execute(null);
+        viewModel.SelectedColumnMode = "Все поля";
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         var technicalHeaderStyle = (Style)window.Resources["TechnicalColumnHeaderStyle"];
         if (!recordsGrid.Columns.Any(column =>

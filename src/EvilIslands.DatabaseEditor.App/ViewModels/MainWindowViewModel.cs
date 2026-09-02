@@ -15,6 +15,10 @@ namespace EvilIslands.DatabaseEditor.App.ViewModels;
 
 internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 {
+    private const string ReadableColumnMode = "Понятные поля";
+    private const string AllColumnMode = "Все поля";
+    private const string SourceColumnMode = "Исходные байты";
+
     private readonly IDatabaseWorkspaceService _service;
     private readonly Stack<WorkspaceEditFrame> _undo = new();
     private readonly Stack<WorkspaceEditFrame> _redo = new();
@@ -60,7 +64,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private bool _isOperationCancelable;
     private string _busyText = string.Empty;
     private bool _isEditMode;
-    private bool _showAllColumns;
+    private string _selectedColumnMode = ReadableColumnMode;
     private int _filteredRecordCount;
     private int _filteredTextResourceCount;
     private string? _lastSavedPath;
@@ -132,9 +136,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearDiagnosticFiltersCommand = new RelayCommand(
             ClearDiagnosticFilters,
             () => HasActiveDiagnosticFilters);
-        ToggleColumnModeCommand = new RelayCommand(
-            ToggleColumnMode,
-            () => IsRecordsSection && SelectedTable is { Columns.Count: > 12 } && !IsBusy);
         FocusSearchCommand = new RelayCommand(() => SearchFocusRequested?.Invoke(this, EventArgs.Empty), () => HasDocument);
         CancelOperationCommand = new RelayCommand(CancelOperation, () => IsBusy && IsOperationCancelable);
         DismissNotificationCommand = new RelayCommand(() => NotificationMessage = null, () => HasNotification);
@@ -294,8 +295,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand ClearTextsSearchCommand { get; }
 
     public ICommand ClearDiagnosticFiltersCommand { get; }
-
-    public ICommand ToggleColumnModeCommand { get; }
 
     public ICommand FocusSearchCommand { get; }
 
@@ -461,7 +460,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(CanEditBriefingTitle));
             OnPropertyChanged(nameof(VisibleSpreadsheetColumns));
             OnPropertyChanged(nameof(SpreadsheetColumnCountText));
-            OnPropertyChanged(nameof(ColumnModeButtonText));
+            OnPropertyChanged(nameof(ColumnModeToolTip));
+            OnPropertyChanged(nameof(HasHiddenTechnicalColumns));
+            OnPropertyChanged(nameof(HasAlternativeColumnModes));
             RaiseCommandStates();
         }
     }
@@ -698,39 +699,60 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     {
         get
         {
-            if (SelectedTable is null || ShowAllColumns)
+            if (SelectedTable is null)
             {
-                return SelectedTable?.Columns ?? [];
+                return [];
             }
 
-            return BuildReadableColumns(SelectedTable.Columns);
+            return SelectedColumnMode switch
+            {
+                AllColumnMode => SelectedTable.Columns,
+                SourceColumnMode => BuildSourceColumns(SelectedTable.Columns),
+                _ => BuildReadableColumns(SelectedTable.Columns),
+            };
         }
     }
 
-    public bool ShowAllColumns
+    public bool ShowAllColumns => SelectedColumnMode == AllColumnMode;
+
+    public IReadOnlyList<string> ColumnModeOptions { get; } =
+        [ReadableColumnMode, AllColumnMode, SourceColumnMode];
+
+    public string SelectedColumnMode
     {
-        get => _showAllColumns;
-        private set
+        get => _selectedColumnMode;
+        set
         {
-            if (!SetProperty(ref _showAllColumns, value))
+            if (!ColumnModeOptions.Contains(value, StringComparer.Ordinal) ||
+                !SetProperty(ref _selectedColumnMode, value))
             {
                 return;
             }
 
+            OnPropertyChanged(nameof(ShowAllColumns));
             OnPropertyChanged(nameof(VisibleSpreadsheetColumns));
             OnPropertyChanged(nameof(SpreadsheetColumnCountText));
-            OnPropertyChanged(nameof(ColumnModeButtonText));
-            (ToggleColumnModeCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            OnPropertyChanged(nameof(ColumnModeToolTip));
         }
     }
 
+    public bool HasHiddenTechnicalColumns => SelectedTable is { } table &&
+        BuildReadableColumns(table.Columns).Count < table.Columns.Count;
+
+    public bool HasAlternativeColumnModes => SelectedTable is { } table &&
+        (BuildReadableColumns(table.Columns).Count != table.Columns.Count ||
+         BuildSourceColumns(table.Columns).Count != table.Columns.Count);
+
     public string SpreadsheetColumnCountText => SelectedTable is null
         ? "0 столбцов"
-        : $"{VisibleSpreadsheetColumns.Count:N0}/{SelectedTable.Columns.Count:N0} полей" +
+        : (SelectedColumnMode == AllColumnMode
+            ? $"Все {SelectedTable.Columns.Count:N0} полей"
+            : $"{VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} полей") +
           (HasTextsDocument ? " · +3 RU" : string.Empty) +
           (HasSoundArchives && CurrentTableSupportsSounds ? " · +2 звук" : string.Empty);
 
-    public string ColumnModeButtonText => ShowAllColumns ? "Понятные поля" : "Технические поля";
+    public string ColumnModeToolTip =>
+        "Понятные поля — расшифровки для обычной работы; Все поля — полный набор; Исходные байты — только физические поля database.res.";
 
     public string SearchText
     {
@@ -1872,19 +1894,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         RaiseCommandStates();
     }
 
-    private void ToggleColumnMode()
-    {
-        if (SelectedTable is null)
-        {
-            return;
-        }
-
-        ShowAllColumns = !ShowAllColumns;
-        StatusText = ShowAllColumns
-            ? $"Показаны технические исходные поля и их расшифровки: {SelectedTable.Columns.Count:N0} столбцов."
-            : $"Показаны понятные значения без дублирующих raw-полей: {VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} столбцов.";
-    }
-
     private static IReadOnlyList<SpreadsheetColumnViewModel> BuildReadableColumns(
         IReadOnlyList<SpreadsheetColumnViewModel> columns)
     {
@@ -1919,6 +1928,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             .ToArray();
     }
 
+    private static IReadOnlyList<SpreadsheetColumnViewModel> BuildSourceColumns(
+        IReadOnlyList<SpreadsheetColumnViewModel> columns) =>
+        columns.Where(column => column.Projection is null).ToArray();
+
     private void Navigate(NavigationItemViewModel? item)
     {
         if (item?.IsEnabled is not true)
@@ -1949,7 +1962,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         ApplyTableEditMode(SelectedTable, false);
         SearchText = string.Empty;
-        ShowAllColumns = false;
+        SelectedColumnMode = ReadableColumnMode;
         SelectedRecord = null;
         SelectedTable = table;
         CurrentSection = WorkspaceSection.Records;
@@ -4016,7 +4029,6 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         (AttachSoundsCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (SaveCopyCommand as RelayCommand)?.RaiseCanExecuteChanged();
-        (ToggleColumnModeCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (UndoCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (RedoCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (NavigateCommand as RelayCommand<NavigationItemViewModel>)?.RaiseCanExecuteChanged();

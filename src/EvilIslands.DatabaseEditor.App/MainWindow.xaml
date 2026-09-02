@@ -1320,12 +1320,14 @@
                                                 ToolTip="Найти точные ссылки и совпадения технического ключа выбранной записи во всех таблицах database.res"
                                                 Padding="11,6"
                                                 Margin="0,0,10,0" />
-                                        <Button Style="{StaticResource RoundedButton}"
-                                                Command="{Binding ToggleColumnModeCommand}"
-                                                Content="{Binding ColumnModeButtonText}"
-                                                ToolTip="Показать или скрыть исходные raw-поля. В понятном режиме вместо них выводятся отдельные значения и расшифровки."
-                                                Padding="11,6"
-                                                Margin="0,0,10,0" />
+                                        <ComboBox x:Name="ColumnModeComboBox"
+                                                  Width="150"
+                                                  ItemsSource="{Binding ColumnModeOptions}"
+                                                  SelectedItem="{Binding SelectedColumnMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  IsEnabled="{Binding HasAlternativeColumnModes}"
+                                                  ToolTip="{Binding ColumnModeToolTip}"
+                                                  ToolTipService.ShowOnDisabled="True"
+                                                  Margin="0,0,10,0" />
                                         <Border Background="{StaticResource DatabaseSurfaceBrush}"
                                                 BorderBrush="{StaticResource DatabaseBorderBrush}"
                                                 BorderThickness="1"
@@ -1349,7 +1351,7 @@
                                                    Foreground="{StaticResource MutedTextBrush}"
                                                    VerticalAlignment="Center"
                                                    Margin="0,0,12,0"
-                                                   ToolTip="Количество видимых полей database.res и добавленных столбцов texts.res" />
+                                                   ToolTip="Сколько полей database.res сейчас показано из полного набора; RU и звук добавляются отдельно" />
                                         <Border CornerRadius="7" Padding="9,4" Margin="0,0,10,0">
                                             <Border.Style>
                                                 <Style TargetType="Border">
