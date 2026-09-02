@@ -1363,6 +1363,30 @@ internal static class Program
 
         var prototypes = tables.Single(table => table.Key == "units.prototypes");
         var races = tables.Single(table => table.Key == "units.races");
+        var questItems = tables.Single(table => table.Key == "items.quest_items");
+        var lootItems = tables.Single(table => table.Key == "items.loot_items");
+        SpreadsheetColumnViewModel lootTypeColumn = lootItems.Columns.Single(column =>
+            column.FieldId == 21 &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
+        SpreadsheetColumnViewModel instructionTypeColumn = lootItems.Columns.Single(column =>
+            column.FieldId == 22 &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue);
+        if (questItems.Columns.Where(column => new[] { 2, 3, 4 }.Contains(column.FieldId))
+                .Any(column => column.ShowInReadableView) ||
+            lootItems.Columns.Where(column => column.FieldId == 2)
+                .Any(column => column.ShowInReadableView) ||
+            questItems.Columns.Where(column => new[] { 2, 3, 4 }.Contains(column.FieldId) && column.Projection is null)
+                .Any(column => !column.IsEditable) ||
+            lootItems.Columns.Single(column => column.FieldId == 2 && column.Projection is null).IsEditable is false ||
+            lootTypeColumn.Title != "Тип лута" ||
+            instructionTypeColumn.Title != "Тип инструкции" ||
+            lootTypeColumn.Projection?.ValueLabels?.Count != 6 ||
+            instructionTypeColumn.Projection?.ValueLabels?.Count != 8)
+        {
+            throw new InvalidOperationException(
+                "Понятный режим должен скрывать неиспользуемые наследованные поля квестовых предметов и лута, " +
+                "а типы лута и инструкций — показывать полными русскими перечислениями.");
+        }
         SpreadsheetColumnViewModel raceReferenceColumn = prototypes.Columns.Single(column => column.FieldId == 1);
         HashSet<string> raceNames = races.Records
             .Select(record => record.FieldDefinitions.First(field => field.Id == 0).Value.ToString() ?? string.Empty)
@@ -1529,6 +1553,37 @@ internal static class Program
             throw new InvalidOperationException(
                 $"Виртуализация должна создавать только видимые клетки: {materializedAfterRender} из {totalFieldCount}.");
         }
+
+        viewModel.SelectTableCommand.Execute(questItems);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (viewModel.VisibleSpreadsheetColumns.Any(column => new[] { 2, 3, 4 }.Contains(column.FieldId)))
+        {
+            throw new InvalidOperationException(
+                "Понятный режим квестовых предметов не должен показывать неиспользуемые ID и материал.");
+        }
+
+        viewModel.ToggleColumnModeCommand.Execute(null);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (!new[] { 2, 3, 4 }.All(fieldId => viewModel.VisibleSpreadsheetColumns.Any(column =>
+                column.FieldId == fieldId && column.Projection is null && column.IsEditable)))
+        {
+            throw new InvalidOperationException(
+                "Технический режим обязан вернуть три скрытых физических поля квестовых предметов для точного доступа.");
+        }
+
+        viewModel.ToggleColumnModeCommand.Execute(null);
+        viewModel.SelectTableCommand.Execute(lootItems);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        if (viewModel.VisibleSpreadsheetColumns.Any(column => column.FieldId == 2) ||
+            !viewModel.VisibleSpreadsheetColumns.Contains(lootTypeColumn) ||
+            !viewModel.VisibleSpreadsheetColumns.Contains(instructionTypeColumn))
+        {
+            throw new InvalidOperationException(
+                "Понятный режим лута должен скрывать служебный ID, но оставлять понятные типы лута и инструкции.");
+        }
+
+        viewModel.SelectTableCommand.Execute(prototypes);
+        window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
 
         viewModel.SelectedRecord = prototypes.Records[0];
         raceGridColumn = recordsGrid.Columns.Single(column =>
@@ -1774,7 +1829,6 @@ internal static class Program
                     $"expected={weaponWithVariants.RelatedTextCount}; title={weaponWithVariants.LocalizationTitle}");
             }
 
-            DatabaseTableViewModel lootItems = tables.Single(table => table.Key == "items.loot_items");
             RecordRowViewModel missingLocalization = lootItems.Records.FirstOrDefault(record =>
                     record.DisplayName.Equals("whitetigerhead01", StringComparison.OrdinalIgnoreCase) &&
                     record.MissingLocalizationCount > 0)

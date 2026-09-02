@@ -346,6 +346,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
             Kind = GetDisplayKind(field.Kind, projection);
             DisplayOrder = projection?.DisplayOrder ?? field.DisplayOrder;
             IsEditable = isEditable;
+            ShowInReadableView = field.ShowInReadableView;
         }
 
         public int FieldId { get; }
@@ -362,6 +363,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
         private bool IsEditable { get; set; }
 
+        private bool ShowInReadableView { get; }
+
         private bool MetadataMatches { get; set; } = true;
 
         public void Merge(
@@ -372,7 +375,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
             var metadataMatches = Equals(Projection, projection) &&
                                   string.Equals(Key, BuildKey(field, projection), StringComparison.Ordinal) &&
                                   string.Equals(Title, GetDisplayTitle(field, projection), StringComparison.Ordinal) &&
-                                  string.Equals(Kind, GetDisplayKind(field.Kind, projection), StringComparison.Ordinal);
+                                  string.Equals(Kind, GetDisplayKind(field.Kind, projection), StringComparison.Ordinal) &&
+                                  ShowInReadableView == field.ShowInReadableView;
             MetadataMatches &= metadataMatches;
             IsEditable |= tableIsEditable && IsColumnEditable(field, projection);
         }
@@ -386,7 +390,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                 IsEditable && MetadataMatches,
                 isNameField,
                 Projection,
-                DisplayOrder);
+                DisplayOrder,
+                ShowInReadableView);
 
         private static string BuildKey(DatabaseField field, DatabaseFieldProjection? projection) =>
             projection is null ? field.Key : $"{field.Key}[{projection.Index}]";
@@ -428,7 +433,8 @@ internal sealed record SpreadsheetColumnViewModel(
     bool IsEditable,
     bool IsNameField,
     DatabaseFieldProjection? Projection,
-    int DisplayOrder)
+    int DisplayOrder,
+    bool ShowInReadableView)
 {
     public string Subtitle => Kind == "StructuredListDecoded"
         ? "Варианты реплик · редактор ☷"

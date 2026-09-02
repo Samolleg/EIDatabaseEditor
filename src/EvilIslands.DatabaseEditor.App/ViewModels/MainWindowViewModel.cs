@@ -1732,22 +1732,25 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private static IReadOnlyList<SpreadsheetColumnViewModel> BuildReadableColumns(
         IReadOnlyList<SpreadsheetColumnViewModel> columns)
     {
-        var fieldsWithSpecificProjections = columns
+        SpreadsheetColumnViewModel[] readableCandidates = columns
+            .Where(column => column.ShowInReadableView)
+            .ToArray();
+        var fieldsWithSpecificProjections = readableCandidates
             .Where(column => column.Projection is not null &&
                              column.Projection.Kind != DatabaseFieldProjectionKind.DecodedValue)
             .Select(column => column.FieldId)
             .ToHashSet();
-        var fieldsWithDecodedProjection = columns
+        var fieldsWithDecodedProjection = readableCandidates
             .Where(column => column.Projection?.Kind == DatabaseFieldProjectionKind.DecodedValue)
             .Select(column => column.FieldId)
             .ToHashSet();
-        var fieldsWithEditableDecodedProjection = columns
+        var fieldsWithEditableDecodedProjection = readableCandidates
             .Where(column => column.Projection?.Kind == DatabaseFieldProjectionKind.DecodedValue &&
                              (column.IsEditable || column.Kind == "StructuredListDecoded"))
             .Select(column => column.FieldId)
             .ToHashSet();
 
-        return columns
+        return readableCandidates
             .Where(column => column.Projection switch
             {
                 null => !fieldsWithSpecificProjections.Contains(column.FieldId) &&

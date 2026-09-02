@@ -57,7 +57,8 @@ internal static partial class LegacySchemaCatalog
                 legacy.DisplayOrder,
                 legacy.FixedElementSize,
                 legacy.NestedFields,
-                legacy.ComplexEncoding));
+                legacy.ComplexEncoding,
+                legacy.ShowInReadableView));
         }
 
         foreach ((byte id, FieldSchema current) in explicitFields)
@@ -200,20 +201,41 @@ internal static partial class LegacySchemaCatalog
         }
         else if (table == new TableKey("Items", 5))
         {
-            Rename(fields, 2, "ID типа предмета");
-            Rename(fields, 4, "Индекс типа материала");
+            Rename(fields, 2, "Служебный ID типа (не используется)");
+            Rename(fields, 3, "Тип материала (не используется)");
+            Rename(fields, 4, "Индекс типа материала (не используется)");
             Rename(fields, 21, "ID сценария");
             Rename(fields, 22, "Зоны");
+            HideInReadableView(fields, 2, 3, 4);
         }
         else if (table == new TableKey("Items", 6))
         {
-            Rename(fields, 2, "ID типа предмета");
+            Rename(fields, 2, "Служебный ID типа (не используется)");
             Rename(fields, 4, "Индекс типа материала");
-            ReplaceKind(fields, 21, DatabaseValueKind.Int32, "Loot type");
-            ReplaceKind(fields, 22, DatabaseValueKind.Int32, "Instruction type");
+            ReplaceKind(fields, 21, DatabaseValueKind.Int32, "Тип лута");
+            ReplaceKind(fields, 22, DatabaseValueKind.Int32, "Тип инструкции");
             Rename(fields, 23, "Индекс материала");
-            ReplaceEnum(fields, 21, "Сокровище", "Материал", "Инструкция");
-            ReplaceEnum(fields, 22, "Оружие", "Броня", "Быстрый предмет", "Прототип", "Руна");
+            ReplaceEnum(fields, 21, new Dictionary<int, string>
+            {
+                [0] = "Сокровище",
+                [1] = "Материал",
+                [2] = "Инструкция",
+                [3] = "Сердце зелья",
+                [4] = "Руна зелья",
+                [int.MaxValue] = "Не применяется",
+            });
+            ReplaceEnum(fields, 22, new Dictionary<int, string>
+            {
+                [0] = "Оружие",
+                [1] = "Броня",
+                [2] = "Быстрый предмет",
+                [3] = "Прототип заклинания",
+                [4] = "Руна",
+                [5] = "Сердце зелья",
+                [6] = "Руна зелья",
+                [int.MaxValue] = "Не применяется",
+            });
+            HideInReadableView(fields, 2);
         }
         else if (table == new TableKey("Levers", 1))
         {
@@ -380,19 +402,41 @@ internal static partial class LegacySchemaCatalog
         }
     }
 
+    private static void HideInReadableView(
+        IDictionary<byte, FieldSchema> fields,
+        params byte[] fieldIds)
+    {
+        foreach (byte fieldId in fieldIds)
+        {
+            if (fields.TryGetValue(fieldId, out FieldSchema? source))
+            {
+                fields[fieldId] = source with { ShowInReadableView = false };
+            }
+        }
+    }
+
     private static void ReplaceEnum(
         IDictionary<byte, FieldSchema> fields,
         byte fieldId,
         params string[] labels)
+    {
+        ReplaceEnum(
+            fields,
+            fieldId,
+            labels.Select((label, index) => (label, index))
+                .ToDictionary(item => item.index, item => item.label));
+    }
+
+    private static void ReplaceEnum(
+        IDictionary<byte, FieldSchema> fields,
+        byte fieldId,
+        IReadOnlyDictionary<int, string> values)
     {
         if (!fields.TryGetValue(fieldId, out FieldSchema? source))
         {
             return;
         }
 
-        IReadOnlyDictionary<int, string> values = labels
-            .Select((label, index) => (label, index))
-            .ToDictionary(item => item.index, item => item.label);
         DatabaseFieldProjection projection = new(
             DatabaseFieldProjectionKind.EnumValue,
             0,

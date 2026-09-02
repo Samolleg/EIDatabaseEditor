@@ -283,6 +283,8 @@ public sealed class DatabaseField
 
     public int DisplayOrder => _schema.DisplayOrder;
 
+    public bool ShowInReadableView => _schema.ShowInReadableView;
+
     public object Value
     {
         get
@@ -739,7 +741,8 @@ internal sealed record FieldSchema(
     int DisplayOrder = int.MaxValue,
     int? FixedElementSize = null,
     IReadOnlyDictionary<byte, FieldSchema>? NestedFields = null,
-    DatabaseComplexEncoding ComplexEncoding = DatabaseComplexEncoding.None)
+    DatabaseComplexEncoding ComplexEncoding = DatabaseComplexEncoding.None,
+    bool ShowInReadableView = true)
 {
     public IReadOnlyList<DatabaseFieldProjection> Projections =>
         ProjectionMetadata ?? Array.Empty<DatabaseFieldProjection>();

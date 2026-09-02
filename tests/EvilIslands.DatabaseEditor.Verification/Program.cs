@@ -1415,6 +1415,66 @@ internal static class Program
             "Броня",
             log);
 
+        DatabaseTable questItems = RequireTable(tables, "items.quest_items");
+        log.Assert(
+            questItems.Records.All(record =>
+                new[] { 2, 3, 4 }.All(fieldId =>
+                    !RequireField(record, fieldId).ShowInReadableView &&
+                    RequireField(record, fieldId).IsEditable)) &&
+            RequireField(questItems.Records[0], 2).DisplayName == "Служебный ID типа (не используется)" &&
+            RequireField(questItems.Records[0], 3).DisplayName == "Тип материала (не используется)" &&
+            RequireField(questItems.Records[0], 4).DisplayName == "Индекс типа материала (не используется)",
+            "Квестовые предметы скрывают три неиспользуемых наследованных поля в понятном режиме, " +
+            "но сохраняют их редактируемыми в техническом режиме.");
+
+        DatabaseTable lootItems = RequireTable(tables, "items.loot_items");
+        DatabaseField lootType = RequireField(lootItems.Records[0], 21);
+        DatabaseField instructionType = RequireField(lootItems.Records[0], 22);
+        DatabaseFieldProjection lootTypeProjection = lootType.Projections.Single(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        DatabaseFieldProjection instructionTypeProjection = instructionType.Projections.Single(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        IReadOnlyDictionary<int, string> expectedLootTypes = new Dictionary<int, string>
+        {
+            [0] = "Сокровище",
+            [1] = "Материал",
+            [2] = "Инструкция",
+            [3] = "Сердце зелья",
+            [4] = "Руна зелья",
+            [int.MaxValue] = "Не применяется",
+        };
+        IReadOnlyDictionary<int, string> expectedInstructionTypes = new Dictionary<int, string>
+        {
+            [0] = "Оружие",
+            [1] = "Броня",
+            [2] = "Быстрый предмет",
+            [3] = "Прототип заклинания",
+            [4] = "Руна",
+            [5] = "Сердце зелья",
+            [6] = "Руна зелья",
+            [int.MaxValue] = "Не применяется",
+        };
+        DatabaseField? unusedInstructionType = lootItems.Records
+            .Select(record => RequireField(record, 22))
+            .FirstOrDefault(field => Convert.ToInt32(field.Value, CultureInfo.InvariantCulture) == int.MaxValue);
+        log.Assert(
+            lootItems.Records.All(record =>
+                !RequireField(record, 2).ShowInReadableView && RequireField(record, 2).IsEditable) &&
+            lootType.DisplayName == "Тип лута" &&
+            instructionType.DisplayName == "Тип инструкции" &&
+            lootTypeProjection.ValueLabels is not null &&
+            lootTypeProjection.ValueLabels.Count == expectedLootTypes.Count &&
+            expectedLootTypes.All(pair => lootTypeProjection.ValueLabels.TryGetValue(pair.Key, out string? label) &&
+                                                label == pair.Value) &&
+            instructionTypeProjection.ValueLabels is not null &&
+            instructionTypeProjection.ValueLabels.Count == expectedInstructionTypes.Count &&
+            expectedInstructionTypes.All(pair =>
+                instructionTypeProjection.ValueLabels.TryGetValue(pair.Key, out string? label) && label == pair.Value) &&
+            unusedInstructionType?.GetProjectedValue(instructionTypeProjection)?.ToString() ==
+                $"{int.MaxValue} — Не применяется",
+            "Лут скрывает неиспользуемый ID типа и показывает полные native/addon перечисления " +
+            "типов лута и инструкций, включая служебное «Не применяется».");
+
         DatabaseField packedAbsorption = RequireField(
             RequireTable(tables, "items.armors").Records[0],
             21);
