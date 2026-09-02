@@ -1035,10 +1035,27 @@ internal static class Program
                 .Any(column => column.IsEditable !=
                     (column.Projection!.Kind is
                         EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit or
-                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement)))
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement or
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.NestedField or
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.PackedField or
+                        EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue)))
         {
+            string projectionMismatches = string.Join(
+                "; ",
+                tables.SelectMany(table => table.Columns.Select(column => (table.Key, Column: column)))
+                    .Where(item => item.Column.Projection is not null &&
+                                   item.Column.IsEditable !=
+                                   (item.Column.Projection.Kind is
+                                       EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.Bit or
+                                       EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.ListElement or
+                                       EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.NestedField or
+                                       EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.PackedField or
+                                       EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.EnumValue))
+                    .Take(12)
+                    .Select(item => $"{item.Key}/{item.Column.Title}/{item.Column.Projection!.Kind}={item.Column.IsEditable}"));
             throw new InvalidOperationException(
-                "Все 26 таблиц и их физические поля должны редактироваться; битовые и числовые списочные проекции редактируются по ячейкам, остальные расшифровки остаются только для чтения.");
+                "Все 26 таблиц и их физические поля должны редактироваться; обратимые битовые, списочные, вложенные, упакованные и enum-проекции редактируются по ячейкам. " +
+                projectionMismatches);
         }
 
         if (records.Any(record => record.AreFieldsMaterialized))
@@ -1546,12 +1563,13 @@ internal static class Program
             .Where(item => item.Column.Kind == "Hex")
             .ToArray();
         int physicalColumnCount = tables.Sum(table => table.Columns.Count(column => column.Projection is null));
+        int displayedColumnCount = tables.Sum(table => table.Columns.Count);
         int rawEditorCount = tables.Sum(table => table.Columns.Count(column => column.Kind == "RawHex"));
-        if (physicalColumnCount != 380 || rawColumns.Length != 0 || rawEditorCount == 0)
+        if (physicalColumnCount != 380 || displayedColumnCount != 700 || rawColumns.Length != 0 || rawEditorCount == 0)
         {
             throw new InvalidOperationException(
-                $"Полный каталог должен дать 380 редактируемых физических полей, расшифрованные проекции и raw-редакторы сложных структур; " +
-                $"получено физических/Hex/raw {physicalColumnCount}/{rawColumns.Length}/{rawEditorCount}.");
+                $"Полный каталог должен дать 380 редактируемых физических полей, 700 понятных колонок, расшифрованные проекции и raw-редакторы сложных структур; " +
+                $"получено физических/всего/Hex/raw {physicalColumnCount}/{displayedColumnCount}/{rawColumns.Length}/{rawEditorCount}.");
         }
 
         var weapons = tables.Single(table => table.Key == "items.weapons");
@@ -1570,11 +1588,11 @@ internal static class Program
                 .Any(column => !column.IsEditable) ||
             armors.Columns.Where(column => column.Projection is null && protectedArmorFields.Contains(column.FieldId))
                 .Any(column => !column.IsEditable) ||
-            !weapons.Columns.Any(column => column.Title == "Science" && column.Kind == "Byte") ||
-            !weapons.Columns.Any(column => column.Title == "Awareness" && column.Kind == "Byte") ||
+            !weapons.Columns.Any(column => column.Title == "Наука" && column.Kind == "Byte") ||
+            !weapons.Columns.Any(column => column.Title == "Внимательность" && column.Kind == "Byte") ||
             armors.Columns.Count(column => column.Projection?.Kind ==
                 EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.PackedField) != 18 ||
-            armors.Columns.Count(column => column.Title.EndsWith("cripple mask", StringComparison.Ordinal)) != 2)
+            armors.Columns.Count(column => column.Title.EndsWith("маска травм", StringComparison.Ordinal)) != 2)
         {
             throw new InvalidOperationException(
                 "Оружие и броня должны редактировать все физические поля, разрешать клонирование строк " +
@@ -1669,7 +1687,7 @@ internal static class Program
                 .Where(column => column.Projection?.Kind ==
                     EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue)
                 .Select(column => GetSpreadsheetText(record, column)))
-            .FirstOrDefault(value => value?.Contains("File:", StringComparison.Ordinal) == true);
+            .FirstOrDefault(value => value?.Contains("Файл:", StringComparison.Ordinal) == true);
         if (string.IsNullOrWhiteSpace(nonEmptyAck) || nonEmptyAck.All(Uri.IsHexDigit))
         {
             throw new InvalidOperationException("Вложенные реплики должны показывать имена файлов и параметры, а не raw Hex.");
@@ -1678,9 +1696,9 @@ internal static class Program
         viewModel.SelectTableCommand.Execute(acks);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         if (viewModel.ShowAllColumns ||
-            viewModel.VisibleSpreadsheetColumns.Count >= acks.Columns.Count ||
-            viewModel.VisibleSpreadsheetColumns.Any(column =>
-                column.Kind == "RawHex" || column.Title.EndsWith(" · raw", StringComparison.Ordinal)) ||
+            viewModel.VisibleSpreadsheetColumns.Count != acks.Columns.Count ||
+            !viewModel.VisibleSpreadsheetColumns.Any(column =>
+                column.Kind == "RawHex" && column.IsEditable) ||
             !viewModel.VisibleSpreadsheetColumns.Any(column =>
                 column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue) ||
             recordsGrid.Columns.Count != viewModel.VisibleSpreadsheetColumns.Count +
@@ -1688,7 +1706,7 @@ internal static class Program
                 (viewModel.HasSoundArchives ? 2 : 0))
         {
             throw new InvalidOperationException(
-                "acks.db/Ответы и команды должен по умолчанию показывать File/параметры без соседних raw-hex столбцов.");
+                "acks.db/Ответы и команды должен показывать расшифровку и соседний редактируемый raw-источник для каждой необратимой структуры.");
         }
 
         if (viewModel.HasSoundArchives)
@@ -2251,25 +2269,26 @@ internal static class Program
                 "Изменение вычисляемого номера строки должно отклоняться до модификации модели.");
         }
 
-        viewModel.SelectTableCommand.Execute(armors);
+        viewModel.SelectTableCommand.Execute(acks);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
-        SpreadsheetColumnViewModel computedFloat = armors.Columns.First(column =>
-            !column.IsEditable && column.Kind == "Float32" &&
-            armors.Records.Any(record => GetSpreadsheetText(record, column).Contains('.')));
-        RecordRowViewModel computedRow = armors.Records.First(record =>
-            GetSpreadsheetText(record, computedFloat).Contains('.'));
+        SpreadsheetColumnViewModel computedFloat = acks.Columns.First(column =>
+            !column.IsEditable &&
+            column.Projection?.Kind == EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue &&
+            acks.Records.Any(record => !string.IsNullOrWhiteSpace(GetSpreadsheetText(record, column))));
+        RecordRowViewModel computedRow = acks.Records.First(record =>
+            !string.IsNullOrWhiteSpace(GetSpreadsheetText(record, computedFloat)));
         DataGridColumn computedGridColumn = recordsGrid.Columns.Single(column =>
             ReferenceEquals(column.Header, computedFloat));
         string computedValue = GetSpreadsheetText(computedRow, computedFloat);
         recordsGrid.CurrentCell = new DataGridCellInfo(computedRow, computedGridColumn);
         if (!window.TryBuildPasteCells(
-                [[computedValue.Replace('.', ',')]],
+                [[computedValue]],
                 out IReadOnlyList<SpreadsheetPasteCell> computedCells,
                 out string? computedError) ||
             computedCells.Count != 0)
         {
             throw new InvalidOperationException(
-                $"Неизменное вычисляемое число с десятичной запятой из Excel должно пропускаться автоматически: {computedError}");
+                $"Неизменная read-only расшифровка из Excel должна пропускаться автоматически: {computedError}");
         }
 
         if (window.TryBuildPasteCells([["999999"]], out _, out computedError) ||
@@ -3450,7 +3469,7 @@ internal static class Program
         viewModel.SelectTableCommand.Execute(npcs);
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
         RecordRowViewModel npc = npcs.Records[0];
-        SpreadsheetColumnViewModel tameColumn = npcs.Columns.Single(column => column.Title == "Tame");
+        SpreadsheetColumnViewModel tameColumn = npcs.Columns.Single(column => column.Title == "Приручение");
         DataGridColumn tameGridColumn = recordsGrid.Columns.Single(column => ReferenceEquals(column.Header, tameColumn));
         RecordFieldViewModel manualSkills = npc.GetCell(tameColumn.FieldId)
             ?? throw new InvalidOperationException("Не найден исходный список ручных навыков NPC.");
@@ -3475,7 +3494,7 @@ internal static class Program
             viewModel.ChangeCount != 1)
         {
             throw new InvalidOperationException(
-                $"Tame должен редактироваться как обычная ячейка и синхронизировать ByteList: {skillError}; " +
+                $"Приручение должно редактироваться как обычная ячейка и синхронизировать ByteList: {skillError}; " +
                 $"descriptorEditable={tameColumn.IsEditable}; gridReadOnly={tameGridColumn.IsReadOnly}; " +
                 $"formulaReadOnly={editorBox.IsReadOnly}; apply={applyButton.IsEnabled}; " +
                 $"projected={manualSkills.GetProjectedText(tameColumn.Projection!)}; expected={changedTame}; " +
@@ -3487,7 +3506,7 @@ internal static class Program
             manualSkills.GetProjectedText(tameColumn.Projection!) != changedTame)
         {
             throw new InvalidOperationException(
-                "Tame должен отклонять значение 256 без изменения уже записанного элемента.");
+                "Приручение должно отклонять значение 256 без изменения уже записанного элемента.");
         }
 
         viewModel.UndoCommand.Execute(null);
@@ -3497,10 +3516,10 @@ internal static class Program
             viewModel.ChangeCount != 0)
         {
             throw new InvalidOperationException(
-                "Undo должен одновременно восстановить Tame и исходный список ручных навыков.");
+                "Undo должен одновременно восстановить Приручение и исходный список ручных навыков.");
         }
 
-        SpreadsheetColumnViewModel[] manualSkillColumns = new[] { "Science", "Stealing", "Tame" }
+        SpreadsheetColumnViewModel[] manualSkillColumns = new[] { "Наука", "Кража", "Приручение" }
             .Select(title => npcs.Columns.Single(column => column.Title == title))
             .ToArray();
         string[] originalManualSkillValues = manualSkillColumns
@@ -3975,7 +3994,7 @@ internal static class Program
             dialog.FindName("RawPanel") is not Grid ||
             dialog.FindName("StructuredModeButton") is not System.Windows.Controls.Primitives.ToggleButton ||
             dialog.FindName("MagicConstructorPanel") is not StackPanel ||
-            dialog.FindName("MagicShapeComboBox") is not ComboBox ||
+            dialog.FindName("MagicShapeComboBox") is not ComboBox magicShapeComboBox ||
             dialog.FindName("MagicMaterialComboBox") is not ComboBox ||
             dialog.FindName("MagicSpellComboBox") is not ComboBox ||
             dialog.FindName("MagicModifiersList") is not ItemsControl ||
@@ -3987,6 +4006,17 @@ internal static class Program
                 "Структурный редактор списка должен открываться крупным и содержать табличный и сырой режимы. " +
                 $"width={dialog.Width}, height={dialog.Height}, grid={itemsGrid is not null}, " +
                 $"raw={dialog.FindName("RawEditorBox") is TextBox}, model={dialog.Items.Count}, visual={itemsGrid?.Items.Count ?? -1}.");
+        }
+
+        if (magicShapeComboBox.ItemContainerStyle is null ||
+            magicShapeComboBox.MaxDropDownHeight > 300.1 ||
+            !magicShapeComboBox.ItemContainerStyle.Setters.OfType<Setter>()
+                .Any(setter => setter.Property == Control.BackgroundProperty) ||
+            !magicShapeComboBox.ItemContainerStyle.Setters.OfType<Setter>()
+                .Any(setter => setter.Property == Control.ForegroundProperty))
+        {
+            throw new InvalidOperationException(
+                "Выпадающие списки конструктора должны явно задавать тёмный фон, читаемый цвет текста и ограниченную высоту.");
         }
 
         IReadOnlyList<string>? appliedSingleValue = null;

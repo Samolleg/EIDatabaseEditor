@@ -1379,6 +1379,22 @@ internal static class Program
         KnownDatabaseBaseline? baseline,
         VerificationLog log)
     {
+        string[] anonymousHeaders = tables
+            .Where(table => table.Records.Count > 0)
+            .SelectMany(table => table.Records[0].Fields.SelectMany(field =>
+                new[] { $"{table.Key}/field-{field.Id}/{field.DisplayName}" }
+                    .Concat(field.Projections.Select(projection =>
+                        $"{table.Key}/field-{field.Id}/{projection.DisplayName}"))))
+            .Where(name => name.Contains("/Unk", StringComparison.OrdinalIgnoreCase) ||
+                           name.Contains("/Unknown", StringComparison.OrdinalIgnoreCase) ||
+                           name.Contains("/Неизвестное", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        log.Assert(
+            anonymousHeaders.Length == 0,
+            anonymousHeaders.Length == 0
+                ? "Все ранее безымянные физические и вложенные поля получили подтверждённые названия из native-структур."
+                : $"Остались безымянные поля: {string.Join(", ", anonymousHeaders.Take(12))}");
+
         AssertMaterialsSchema(RequireTable(tables, "items.materials"), baseline, log);
         AssertEditableItemSchema(
             RequireTable(tables, "items.weapons"),
@@ -1392,6 +1408,96 @@ internal static class Program
             [14, 21, 22, 25, 26],
             "Броня",
             log);
+
+        DatabaseField packedAbsorption = RequireField(
+            RequireTable(tables, "items.armors").Records[0],
+            21);
+        DatabaseFieldProjection packedPiercing = packedAbsorption.Projections[1];
+        DatabaseFieldState originalPacked = packedAbsorption.CaptureState();
+        string[] originalPackedValues = packedAbsorption.Projections
+            .Select(projection => packedAbsorption.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+            .ToArray();
+        float changedPacked = float.Parse(
+            originalPackedValues[packedPiercing.Index],
+            System.Globalization.CultureInfo.InvariantCulture) + 0.125f;
+        bool packedAccepted = packedAbsorption.TrySetProjectedValue(
+            packedPiercing,
+            changedPacked.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            out string? packedError);
+        log.Assert(
+            packedAbsorption.Projections.Count == 9 &&
+            packedAbsorption.Projections.All(packedAbsorption.CanEditProjection) &&
+            packedAccepted && packedError is null &&
+            NearlyEqual(packedAbsorption.GetProjectedValue(packedPiercing)!, changedPacked) &&
+            packedAbsorption.Projections
+                .Where(projection => projection.Index != packedPiercing.Index)
+                .Select(projection => packedAbsorption.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+                .SequenceEqual(
+                    originalPackedValues.Where((_, index) => index != packedPiercing.Index),
+                    StringComparer.Ordinal),
+            "Упакованные параметры брони редактируются по одному члену без изменения соседних 32-битных значений.");
+        packedAbsorption.RestoreState(originalPacked);
+
+        DatabaseField nestedWeather = RequireField(
+            RequireTable(tables, "prints.blood").Records[0],
+            2);
+        DatabaseFieldProjection nestedPower = nestedWeather.Projections[0];
+        DatabaseFieldState originalNested = nestedWeather.CaptureState();
+        string[] originalNestedValues = nestedWeather.Projections
+            .Select(projection => nestedWeather.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+            .ToArray();
+        float changedNested = float.Parse(
+            originalNestedValues[0],
+            System.Globalization.CultureInfo.InvariantCulture) + 0.125f;
+        bool nestedAccepted = nestedWeather.TrySetProjectedValue(
+            nestedPower,
+            changedNested.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            out string? nestedError);
+        log.Assert(
+            nestedWeather.Projections.All(nestedWeather.CanEditProjection) &&
+            nestedAccepted && nestedError is null &&
+            NearlyEqual(nestedWeather.GetProjectedValue(nestedPower)!, changedNested) &&
+            nestedWeather.Projections.Skip(1)
+                .Select(projection => nestedWeather.GetProjectedValue(projection)?.ToString() ?? string.Empty)
+                .SequenceEqual(originalNestedValues.Skip(1), StringComparer.Ordinal),
+            "Вложенные TLV-параметры редактируются по одному члену с сохранением заголовков и соседних чанков.");
+        nestedWeather.RestoreState(originalNested);
+
+        DatabaseField quickItemType = RequireField(
+            RequireTable(tables, "items.quick_items").Records[0],
+            21);
+        DatabaseFieldProjection? quickItemTypeProjection = quickItemType.Projections.SingleOrDefault(projection =>
+            projection.Kind == DatabaseFieldProjectionKind.EnumValue);
+        if (quickItemTypeProjection is null)
+        {
+            throw new InvalidOperationException(
+                $"У поля типа быстрого предмета отсутствует enum-проекция. Найдено: " +
+                string.Join(", ", quickItemType.Projections.Select(projection =>
+                    $"{projection.Kind}/{projection.DisplayName}")));
+        }
+        DatabaseFieldState originalEnum = quickItemType.CaptureState();
+        int currentQuickItemType = Convert.ToInt32(
+            quickItemType.Value,
+            System.Globalization.CultureInfo.InvariantCulture);
+        int changedQuickItemType = currentQuickItemType == 0 ? 1 : 0;
+        string changedQuickItemLabel = quickItemTypeProjection.ValueLabels![changedQuickItemType];
+        bool enumAccepted = quickItemType.TrySetProjectedValue(
+            quickItemTypeProjection,
+            changedQuickItemLabel,
+            out string? enumError);
+        string enumText = quickItemType.GetProjectedValue(quickItemTypeProjection)?.ToString() ?? string.Empty;
+        bool invalidEnumAccepted = quickItemType.TrySetProjectedValue(
+            quickItemTypeProjection,
+            "несуществующее значение",
+            out string? invalidEnumError);
+        log.Assert(
+            quickItemType.CanEditProjection(quickItemTypeProjection) &&
+            enumAccepted && enumError is null &&
+            enumText == $"{changedQuickItemType} — {changedQuickItemLabel}" &&
+            !invalidEnumAccepted && !string.IsNullOrWhiteSpace(invalidEnumError) &&
+            quickItemType.GetProjectedValue(quickItemTypeProjection)?.ToString() == enumText,
+            "Подтверждённые enum-значения показывают номер и смысл, принимают название и отклоняют неизвестный текст.");
+        quickItemType.RestoreState(originalEnum);
 
         DatabaseRecord hitLocation = RequireTable(tables, "units.hit_locations").Records[0];
         DatabaseRecord race = RequireTable(tables, "units.races").Records[0];
@@ -1409,7 +1515,7 @@ internal static class Program
         DatabaseField manualSkills = RequireField(npc, 6);
         DatabaseField autoSkills = RequireField(npc, 7);
         DatabaseFieldProjection tame = manualSkills.Projections.Single(projection =>
-            projection.DisplayName == "Tame");
+            projection.DisplayName == "Приручение");
         DatabaseFieldState originalManualSkills = manualSkills.CaptureState();
         string[] originalManualSkillValues = manualSkills.Projections
             .Select(projection => manualSkills.GetProjectedValue(projection)?.ToString() ?? string.Empty)

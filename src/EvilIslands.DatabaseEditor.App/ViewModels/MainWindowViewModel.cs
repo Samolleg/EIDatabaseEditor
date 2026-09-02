@@ -1595,12 +1595,18 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             .Where(column => column.Projection?.Kind == DatabaseFieldProjectionKind.DecodedValue)
             .Select(column => column.FieldId)
             .ToHashSet();
+        var fieldsWithEditableDecodedProjection = columns
+            .Where(column => column.Projection?.Kind == DatabaseFieldProjectionKind.DecodedValue &&
+                             column.IsEditable)
+            .Select(column => column.FieldId)
+            .ToHashSet();
 
         return columns
             .Where(column => column.Projection switch
             {
                 null => !fieldsWithSpecificProjections.Contains(column.FieldId) &&
-                        !fieldsWithDecodedProjection.Contains(column.FieldId),
+                        (!fieldsWithDecodedProjection.Contains(column.FieldId) ||
+                         !fieldsWithEditableDecodedProjection.Contains(column.FieldId)),
                 { Kind: DatabaseFieldProjectionKind.DecodedValue } =>
                     !fieldsWithSpecificProjections.Contains(column.FieldId),
                 _ => true,

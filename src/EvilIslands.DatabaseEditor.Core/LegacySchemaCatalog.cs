@@ -19,10 +19,10 @@ internal enum DatabaseComplexEncoding
 /// </summary>
 internal static partial class LegacySchemaCatalog
 {
-    private static readonly string[] ManualSkillNames = ["Science", "Stealing", "Tame"];
+    private static readonly string[] ManualSkillNames = ["Наука", "Кража", "Приручение"];
 
     private static readonly string[] AutoSkillNames =
-        ["Melee", "Archery", "Backstab", "Elemental", "Senses", "Astral", "Stealth", "Awareness"];
+        ["Ближний бой", "Стрельба", "Удар в спину", "Стихийная магия", "Магия чувств", "Астральная магия", "Скрытность", "Внимательность"];
 
     private static readonly IReadOnlyDictionary<TableKey, IReadOnlyDictionary<byte, FieldSchema>> Tables = Build();
 
@@ -165,27 +165,103 @@ internal static partial class LegacySchemaCatalog
     {
         if (table == new TableKey("Items", 2))
         {
-            ReplaceList(fields, 22, DatabaseValueKind.UInt32List, ["Stat modifier 1", "Stat modifier 2"]);
-            ReplaceList(fields, 27, DatabaseValueKind.ByteList, ManualSkillNames);
-            ReplaceList(fields, 28, DatabaseValueKind.ByteList, AutoSkillNames);
+            Rename(fields, 2, "ID типа предмета");
+            Rename(fields, 4, "Индекс типа материала");
+            ReplaceList(fields, 22, DatabaseValueKind.UInt32List, "Модификаторы характеристик", ["Модификатор 1", "Модификатор 2"]);
+            ReplaceList(fields, 27, DatabaseValueKind.ByteList, "Ручные навыки", ManualSkillNames);
+            ReplaceList(fields, 28, DatabaseValueKind.ByteList, "Автонавыки", AutoSkillNames);
         }
         else if (table == new TableKey("Items", 3))
         {
-            ReplaceArmorAbsorption(fields, 21, "Main");
-            ReplaceArmorAbsorption(fields, 22, "Additional");
-            ReplaceList(fields, 25, DatabaseValueKind.ByteList, ManualSkillNames);
-            ReplaceList(fields, 26, DatabaseValueKind.ByteList, AutoSkillNames);
+            Rename(fields, 2, "ID типа предмета");
+            Rename(fields, 4, "Индекс типа материала");
+            ReplaceArmorAbsorption(fields, 21, "Основное");
+            ReplaceArmorAbsorption(fields, 22, "Дополнительное");
+            ReplaceList(fields, 25, DatabaseValueKind.ByteList, "Ручные навыки", ManualSkillNames);
+            ReplaceList(fields, 26, DatabaseValueKind.ByteList, "Автонавыки", AutoSkillNames);
         }
         else if (table == new TableKey("Items", 4))
         {
+            Rename(fields, 2, "ID типа предмета");
+            Rename(fields, 4, "Индекс типа материала");
             ReplaceKind(fields, 21, DatabaseValueKind.Int32, "Quick item type");
+            Rename(fields, 22, "Уровень навыка");
+            Rename(fields, 23, "Урон");
             ReplaceKind(fields, 24, DatabaseValueKind.Int32, "Damage type");
-            ReplaceList(fields, 27, DatabaseValueKind.ByteList, AutoSkillNames);
+            Rename(fields, 25, "Заклинание");
+            ReplaceList(fields, 26, DatabaseValueKind.ByteList, "Ручные навыки", ManualSkillNames);
+            ReplaceList(fields, 27, DatabaseValueKind.ByteList, "Автонавыки", AutoSkillNames);
+            ReplaceEnum(fields, 21,
+                "Датчик опасности", "Убеждение", "Ловушка", "Отмычка", "Лом",
+                "Жезл", "Ключ", "Заглушка", "Свиток");
+            ReplaceEnum(fields, 24,
+                "Колющий", "Рубящий", "Дробящий", "Термический", "Химический",
+                "Электрический", "Общий");
+        }
+        else if (table == new TableKey("Items", 5))
+        {
+            Rename(fields, 2, "ID типа предмета");
+            Rename(fields, 4, "Индекс типа материала");
+            Rename(fields, 21, "ID сценария");
+            Rename(fields, 22, "Зоны");
         }
         else if (table == new TableKey("Items", 6))
         {
+            Rename(fields, 2, "ID типа предмета");
+            Rename(fields, 4, "Индекс типа материала");
             ReplaceKind(fields, 21, DatabaseValueKind.Int32, "Loot type");
             ReplaceKind(fields, 22, DatabaseValueKind.Int32, "Instruction type");
+            Rename(fields, 23, "Индекс материала");
+            ReplaceEnum(fields, 21, "Сокровище", "Материал", "Инструкция");
+            ReplaceEnum(fields, 22, "Оружие", "Броня", "Быстрый предмет", "Прототип", "Руна");
+        }
+        else if (table == new TableKey("Levers", 1))
+        {
+            Rename(fields, 1, "Координаты мест использования");
+            Rename(fields, 2, "Количество мест использования");
+            Rename(fields, 3, "Минимальный масштаб");
+            Rename(fields, 4, "Время переключения");
+            Rename(fields, 5, "Материал");
+            Rename(fields, 6, "Звук переключения");
+            Rename(fields, 7, "Описание");
+        }
+        else if (table == new TableKey("Perks", 1))
+        {
+            Rename(fields, 0, "Имя");
+            Rename(fields, 1, "Код");
+            Rename(fields, 2, "Индекс текстуры");
+            Rename(fields, 10, "Базовые характеристики");
+        }
+        else if (table == new TableKey("Perks", 2))
+        {
+            string[] names =
+            [
+                "Требуемый перк", "Требуемый навык", "Автоматический навык", "Ручной навык",
+                "Уровень навыка", "Сила", "Ловкость", "Разум", "Стоимость", "Модификатор",
+                "Множитель", "Прибавка", "Активный", "Взаимоисключающий перк",
+            ];
+            Rename(fields, 0, "Имя");
+            Rename(fields, 1, "Код");
+            Rename(fields, 2, "Индекс текстуры");
+            for (var index = 0; index < names.Length; index++)
+            {
+                Rename(fields, (byte)(10 + index), names[index]);
+            }
+            ReplaceEnum(fields, 12,
+                "Наука", "Кража", "Приручение");
+            ReplaceEnum(fields, 13,
+                "Ближний бой", "Стрельба", "Удар в спину", "Стихийная магия",
+                "Магия чувств", "Астральная магия", "Скрытность", "Внимательность");
+        }
+        else if (table.Group == "Prints")
+        {
+            Rename(fields, 1, "Тип поверхности");
+            Rename(fields, 2, "Ясная погода");
+            Rename(fields, 3, "Осадки");
+            if (table.BlockId == 2)
+            {
+                Rename(fields, 10, "Кровавый след");
+            }
         }
         else if (table == new TableKey("Quests", 1))
         {
@@ -193,8 +269,40 @@ internal static partial class LegacySchemaCatalog
             ReplaceKind(fields, 5, DatabaseValueKind.Float32, "Money");
             ReplaceKind(fields, 7, DatabaseValueKind.Float32List, "Places (X, Y)", []);
         }
+        else if (table == new TableKey("Spells", 1))
+        {
+            ReplaceEnum(fields, 4, "Стихийная", "Чувства", "Астральная", "Неизвестная");
+            ReplaceEnum(fields, 19,
+                "Огонь", "Молния", "Кислота", "Иллюзия", "Прорицание",
+                "Чары", "Исцеление", "Подчинение", "Неизвестный");
+        }
+        else if (table == new TableKey("Spells", 2))
+        {
+            ReplaceEnum(fields, 3,
+                "Дальность", "Цели", "Область", "Эффект", "Длительность",
+                "Мана", "Фильтр", "Предмет", "Неизвестный");
+        }
+        else if (table == new TableKey("Quests", 2))
+        {
+            string[] names =
+            [
+                "Опыт", "Деньги", "Выдать предметы", "Сценарий брифинга", "Забрать предметы",
+                "Выдать квесты", "Завершить квесты", "Открыть зоны", "Завершить зоны", "Специальный номер",
+            ];
+            for (var index = 0; index < names.Length; index++)
+            {
+                Rename(fields, (byte)(1 + index), names[index]);
+            }
+        }
+        else if (table == new TableKey("Units", 1))
+        {
+            Rename(fields, 3, "Маска травм");
+            Rename(fields, 4, "Тип зоны попадания");
+            ReplaceEnum(fields, 4, "Голова", "Тело", "Рука", "Нога", "Неизвестный");
+        }
         else if (table == new TableKey("Units", 2))
         {
+            ReplaceEnum(fields, 5, "Ходьба", "Левитация", "Неподвижный", "Полёт");
             ReplaceKind(fields, 47, DatabaseValueKind.Int32);
             ReplaceKind(fields, 48, DatabaseValueKind.Int32);
             ReplaceKind(fields, 49, DatabaseValueKind.Int32);
@@ -203,9 +311,97 @@ internal static partial class LegacySchemaCatalog
         else if (table == new TableKey("Units", 3))
         {
             ReplaceKind(fields, 2, DatabaseValueKind.UInt32);
+            Rename(fields, 2, "Сохранённый индекс расы");
+            Rename(fields, 8, "Путь SFX");
             ReplaceKind(fields, 4, DatabaseValueKind.UInt32);
             ReplaceKind(fields, 41, DatabaseValueKind.Int32, "Base level");
+            string[] weaponTypes =
+            [
+                "Меч", "Топор", "Кинжал", "Копьё", "Молот", "Лук", "Арбалет",
+                "Неизвестный", "Без оружия", "Без оружия 1", "Без оружия 2", "Без оружия 3",
+                "Без оружия 4", "Без оружия 5", "Без оружия 6", "Без оружия 7", "Магия",
+            ];
+            ReplaceEnum(fields, 18, weaponTypes);
+            ReplaceEnum(fields, 39, weaponTypes);
         }
+        else if (table == new TableKey("Units", 4))
+        {
+            string[] names =
+            [
+                "ID типа персонажа", "Опыт", "Сила", "Ловкость", "Разум", "Ручные навыки",
+                "Автонавыки", "Перки", "Оружие", "Быстрые предметы", "Заклинания",
+                "Опыт к распределению", "Деньги", "Голосовой прототип",
+            ];
+            for (var index = 0; index < names.Length; index++)
+            {
+                Rename(fields, (byte)(1 + index), names[index]);
+            }
+            ReplaceList(fields, 6, DatabaseValueKind.ByteList, "Ручные навыки", ManualSkillNames);
+            ReplaceList(fields, 7, DatabaseValueKind.ByteList, "Автонавыки", AutoSkillNames);
+        }
+        else if (table == new TableKey("Acks", 1))
+        {
+            string[] names =
+            [
+                "Выбор", "Движение", "Атака", "Заклинание", "Подбор", "Использование объекта",
+                "Кража", "Следование", "Зелье", "Смена позы", "Нет пути для атаки",
+                "Нельзя сменить позу", "Путь не найден", "Нельзя колдовать", "Нельзя телепортироваться",
+                "Проверка науки не удалась", "Цель не видна", "Заклинание слишком сложное",
+                "Решил атаковать", "Нет выносливости", "Повреждена рука", "Повреждена нога",
+                "Скука", "Цель слишком высоко", "Перегрузка", "Травма", "Слишком большая атака",
+                "Повреждена броня", "Повреждено оружие", "Атакован при защите", "Ожидание спутников",
+                "Сценарная реплика", "Кража: пусто", "Шёпот: да", "Шёпот: нет",
+            ];
+            for (var index = 0; index < names.Length; index++)
+            {
+                Rename(fields, (byte)(10 + index), names[index]);
+            }
+        }
+        else if (table == new TableKey("Acks", 2))
+        {
+            string[] names = ["Агрессия", "Подозрение", "Убийство", "Отдых", "Агрессивное состояние"];
+            for (var index = 0; index < names.Length; index++)
+            {
+                Rename(fields, (byte)(10 + index), names[index]);
+            }
+        }
+        else if (table == new TableKey("Acks", 3))
+        {
+            Rename(fields, 10, "Выбран для разговора");
+            Rename(fields, 11, "Отдых");
+        }
+    }
+
+    private static void Rename(IDictionary<byte, FieldSchema> fields, byte fieldId, string displayName)
+    {
+        if (fields.TryGetValue(fieldId, out FieldSchema? source))
+        {
+            fields[fieldId] = source with { DisplayName = displayName };
+        }
+    }
+
+    private static void ReplaceEnum(
+        IDictionary<byte, FieldSchema> fields,
+        byte fieldId,
+        params string[] labels)
+    {
+        if (!fields.TryGetValue(fieldId, out FieldSchema? source))
+        {
+            return;
+        }
+
+        IReadOnlyDictionary<int, string> values = labels
+            .Select((label, index) => (label, index))
+            .ToDictionary(item => item.index, item => item.label);
+        DatabaseFieldProjection projection = new(
+            DatabaseFieldProjectionKind.EnumValue,
+            0,
+            source.DisplayName,
+            "Подтверждённое перечисление из штатных структур игры. Можно вводить номер или название.",
+            source.Kind.ToString(),
+            source.DisplayOrder,
+            values);
+        fields[fieldId] = source with { ProjectionMetadata = [projection] };
     }
 
     private static void ReplaceKind(
@@ -229,6 +425,7 @@ internal static partial class LegacySchemaCatalog
         IDictionary<byte, FieldSchema> fields,
         byte fieldId,
         DatabaseValueKind kind,
+        string displayName,
         IReadOnlyList<string> names)
     {
         FieldSchema source = fields[fieldId];
@@ -247,7 +444,7 @@ internal static partial class LegacySchemaCatalog
                 valueKind,
                 source.DisplayOrder + index))
             .ToArray();
-        ReplaceKind(fields, fieldId, kind, projections: projections);
+        ReplaceKind(fields, fieldId, kind, displayName, projections);
     }
 
     private static void ReplaceArmorAbsorption(
@@ -258,15 +455,15 @@ internal static partial class LegacySchemaCatalog
         FieldSchema source = fields[fieldId];
         string[] names =
         [
-            $"{prefix} absorption",
-            $"{prefix} piercing",
-            $"{prefix} slashing",
-            $"{prefix} bludgeoning",
-            $"{prefix} thermal",
-            $"{prefix} chemical",
-            $"{prefix} electrical",
-            $"{prefix} general",
-            $"{prefix} cripple mask",
+            $"{prefix} поглощение",
+            $"{prefix} — колющий",
+            $"{prefix} — рубящий",
+            $"{prefix} — дробящий",
+            $"{prefix} — термический",
+            $"{prefix} — химический",
+            $"{prefix} — электрический",
+            $"{prefix} — общий",
+            $"{prefix} — маска травм",
         ];
         DatabaseFieldProjection[] projections = names
             .Select((name, index) => new DatabaseFieldProjection(
@@ -277,7 +474,7 @@ internal static partial class LegacySchemaCatalog
                 index == 8 ? DatabaseValueKind.UInt32.ToString() : DatabaseValueKind.Float32.ToString(),
                 source.DisplayOrder + index))
             .ToArray();
-        ReplaceKind(fields, fieldId, DatabaseValueKind.PackedStructure, projections: projections);
+        ReplaceKind(fields, fieldId, DatabaseValueKind.PackedStructure, $"{prefix} поглощение", projections);
     }
 
     private static IReadOnlyList<DatabaseFieldProjection> BuildProjections(
@@ -329,10 +526,15 @@ internal static partial class LegacySchemaCatalog
                     nested.Kind.ToString(),
                 _ => parsedType.Kind.ToString(),
             };
+            string displayName = projectionKind == DatabaseFieldProjectionKind.NestedField &&
+                                 nestedFields is not null &&
+                                 nestedFields.TryGetValue((byte)index, out FieldSchema? nestedDisplay)
+                ? nestedDisplay.DisplayName
+                : header.Name;
             result.Add(new DatabaseFieldProjection(
                 projectionKind.Value,
                 index,
-                header.Name,
+                displayName,
                 header.Description,
                 valueKind,
                 header.SourceOrder));
@@ -342,22 +544,22 @@ internal static partial class LegacySchemaCatalog
     }
 
     private static FieldSchema CreateNestedField(string group, byte fieldId, DatabaseValueKind kind) =>
-        new(kind, GetNestedFieldName(group, fieldId), false, null, null, fieldId);
+        new(kind, GetNestedFieldName(group, fieldId), true, null, null, fieldId);
 
     private static string GetNestedFieldName(string group, byte fieldId) => (group, fieldId) switch
     {
-        ("Prints", 1) => "Power",
-        ("Prints", 2) => "Lifetime",
-        ("Prints", 3) => "Fadeout",
-        ("Units", 0) => "Type",
-        ("Units", 1) => "Type index",
-        ("Units", 2) => "Weight / minimum",
-        ("Units", 3) => "Vitality / maximum",
-        ("Acks", 1) => "File",
-        ("Acks", 2) => "Probability",
-        ("Acks", 3) => "Description",
-        ("Acks", 4) => "Key",
-        ("Acks", 10) => "Usage flags",
+        ("Prints", 1) => "Сила / прозрачность",
+        ("Prints", 2) => "Время жизни",
+        ("Prints", 3) => "Время затухания",
+        ("Units", 0) => "Тип / вероятность",
+        ("Units", 1) => "Индекс типа / маска",
+        ("Units", 2) => "Вес / минимальная цена",
+        ("Units", 3) => "Живучесть / максимальная цена",
+        ("Acks", 1) => "Файл",
+        ("Acks", 2) => "Вероятность",
+        ("Acks", 3) => "Описание",
+        ("Acks", 4) => "Ключ",
+        ("Acks", 10) => "Флаги условий",
         _ => $"Field {fieldId}",
     };
 

@@ -360,6 +360,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
         private bool IsEditable { get; set; }
 
+        private bool MetadataMatches { get; set; } = true;
+
         public void Merge(
             DatabaseField field,
             DatabaseFieldProjection? projection,
@@ -369,7 +371,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                                   string.Equals(Key, BuildKey(field, projection), StringComparison.Ordinal) &&
                                   string.Equals(Title, GetDisplayTitle(field, projection), StringComparison.Ordinal) &&
                                   string.Equals(Kind, GetDisplayKind(field.Kind, projection), StringComparison.Ordinal);
-            IsEditable = IsEditable && tableIsEditable && IsColumnEditable(field, projection) && metadataMatches;
+            MetadataMatches &= metadataMatches;
+            IsEditable |= tableIsEditable && IsColumnEditable(field, projection);
         }
 
         public SpreadsheetColumnViewModel ToViewModel(bool isNameField) =>
@@ -378,7 +381,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                 Key,
                 Title,
                 Kind,
-                IsEditable,
+                IsEditable && MetadataMatches,
                 isNameField,
                 Projection,
                 DisplayOrder);
@@ -400,6 +403,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "Float32List" => "Float32",
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "UInt32List" => "UInt32",
                 DatabaseFieldProjectionKind.ListElement when sourceKind == "ByteList" => "Byte",
+                DatabaseFieldProjectionKind.EnumValue => "Enum",
                 DatabaseFieldProjectionKind.DecodedValue => "Decoded",
                 _ => sourceKind,
             });

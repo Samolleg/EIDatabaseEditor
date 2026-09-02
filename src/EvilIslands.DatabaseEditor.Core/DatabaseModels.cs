@@ -383,6 +383,12 @@ public sealed class DatabaseField
                     projection.Index >= 0 &&
                     DatabaseValueCodec.TryGetPrimitiveListCount(_schema, Payload, out int count) &&
                     projection.Index < count,
+                DatabaseFieldProjectionKind.NestedField =>
+                    DatabaseValueCodec.CanEditNestedField(_schema, Payload, projection.Index),
+                DatabaseFieldProjectionKind.PackedField =>
+                    DatabaseValueCodec.CanEditPackedField(_schema, Payload, projection),
+                DatabaseFieldProjectionKind.EnumValue =>
+                    DatabaseValueCodec.CanEditEnumValue(_schema, Payload, projection),
                 _ => false,
             };
         }
@@ -417,6 +423,63 @@ public sealed class DatabaseField
                 }
 
                 _editedPayload = encodedList.AsSpan().SequenceEqual(OriginalPayload) ? null : encodedList;
+                return true;
+            }
+
+            if (projection.Kind == DatabaseFieldProjectionKind.NestedField)
+            {
+                if (!DatabaseValueCodec.TryEncodeNestedField(
+                        _schema,
+                        Payload,
+                        projection.Index,
+                        value,
+                        out byte[] encodedStructure,
+                        out error))
+                {
+                    return false;
+                }
+
+                _editedPayload = encodedStructure.AsSpan().SequenceEqual(OriginalPayload)
+                    ? null
+                    : encodedStructure;
+                return true;
+            }
+
+            if (projection.Kind == DatabaseFieldProjectionKind.PackedField)
+            {
+                if (!DatabaseValueCodec.TryEncodePackedField(
+                        _schema,
+                        Payload,
+                        projection,
+                        value,
+                        out byte[] encodedStructure,
+                        out error))
+                {
+                    return false;
+                }
+
+                _editedPayload = encodedStructure.AsSpan().SequenceEqual(OriginalPayload)
+                    ? null
+                    : encodedStructure;
+                return true;
+            }
+
+            if (projection.Kind == DatabaseFieldProjectionKind.EnumValue)
+            {
+                if (!DatabaseValueCodec.TryEncodeEnumValue(
+                        _schema,
+                        Payload,
+                        projection,
+                        value,
+                        out byte[] encodedValue,
+                        out error))
+                {
+                    return false;
+                }
+
+                _editedPayload = encodedValue.AsSpan().SequenceEqual(OriginalPayload)
+                    ? null
+                    : encodedValue;
                 return true;
             }
 
@@ -569,6 +632,7 @@ public enum DatabaseFieldProjectionKind
     Bit,
     NestedField,
     PackedField,
+    EnumValue,
     DecodedValue,
 }
 
@@ -578,7 +642,8 @@ public sealed record DatabaseFieldProjection(
     string DisplayName,
     string? Description = null,
     string? ValueKind = null,
-    int DisplayOrder = int.MaxValue);
+    int DisplayOrder = int.MaxValue,
+    IReadOnlyDictionary<int, string>? ValueLabels = null);
 
 internal enum DatabaseValueKind
 {
@@ -611,7 +676,7 @@ internal sealed record FieldSchema(
     IReadOnlyDictionary<byte, FieldSchema>? NestedFields = null,
     DatabaseComplexEncoding ComplexEncoding = DatabaseComplexEncoding.None)
 {
-    public IReadOnlyList<DatabaseFieldProjection> Projections { get; } =
+    public IReadOnlyList<DatabaseFieldProjection> Projections =>
         ProjectionMetadata ?? Array.Empty<DatabaseFieldProjection>();
 }
 
@@ -719,6 +784,7 @@ internal static class DatabaseValueCodec
                 DatabaseFieldProjectionKind.ListElement => DecodeListElement(schema.Kind, payload, projection.Index),
                 DatabaseFieldProjectionKind.NestedField => DecodeStructureField(schema, payload, projection.Index),
                 DatabaseFieldProjectionKind.PackedField => DecodePackedField(payload, projection),
+                DatabaseFieldProjectionKind.EnumValue => DecodeEnumValue(schema, payload, projection),
                 DatabaseFieldProjectionKind.DecodedValue => DecodeValue(schema, payload),
                 _ => null,
             };
@@ -843,6 +909,202 @@ internal static class DatabaseValueCodec
         {
             return false;
         }
+    }
+
+    public static bool CanEditNestedField(
+        FieldSchema schema,
+        ReadOnlySpan<byte> payload,
+        int fieldId)
+    {
+        if (schema.Kind != DatabaseValueKind.Nested ||
+            schema.ComplexEncoding != DatabaseComplexEncoding.Structure ||
+            fieldId is < 0 or > byte.MaxValue ||
+            schema.NestedFields is null ||
+            !schema.NestedFields.TryGetValue((byte)fieldId, out FieldSchema? nestedSchema) ||
+            !nestedSchema.Editable)
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (ChunkSlice chunk in ChunkCodec.ReadList(
+                         payload,
+                         0,
+                         payload.Length,
+                         "editable-nested-value"))
+            {
+                if (chunk.Id == (byte)fieldId &&
+                    CanEdit(nestedSchema, payload.Slice(chunk.DataOffset, chunk.DataLength)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (DatabaseFormatException)
+        {
+            return false;
+        }
+    }
+
+    public static bool CanEditPackedField(
+        FieldSchema schema,
+        ReadOnlySpan<byte> payload,
+        DatabaseFieldProjection projection) =>
+        schema.Kind == DatabaseValueKind.PackedStructure &&
+        payload.Length == 36 &&
+        projection.Index is >= 0 and <= 8 &&
+        projection.ValueKind is nameof(DatabaseValueKind.Float32) or nameof(DatabaseValueKind.UInt32);
+
+    public static bool CanEditEnumValue(
+        FieldSchema schema,
+        ReadOnlySpan<byte> payload,
+        DatabaseFieldProjection projection) =>
+        projection.ValueLabels is not null &&
+        schema.Kind switch
+        {
+            DatabaseValueKind.Int32 or DatabaseValueKind.UInt32 => payload.Length == sizeof(uint),
+            DatabaseValueKind.Byte => payload.Length == sizeof(byte),
+            _ => false,
+        };
+
+    public static bool TryEncodeNestedField(
+        FieldSchema schema,
+        ReadOnlySpan<byte> original,
+        int fieldId,
+        string text,
+        out byte[] encoded,
+        out string? error)
+    {
+        encoded = [];
+        error = null;
+        if (!CanEditNestedField(schema, original, fieldId) || schema.NestedFields is null)
+        {
+            error = $"Вложенное поле {fieldId} отсутствует или имеет неподдерживаемый тип.";
+            return false;
+        }
+
+        FieldSchema nestedSchema = schema.NestedFields[(byte)fieldId];
+        IReadOnlyList<ChunkSlice> chunks;
+        try
+        {
+            chunks = ChunkCodec.ReadList(original, 0, original.Length, "editable-nested-value");
+        }
+        catch (DatabaseFormatException exception)
+        {
+            error = $"Нарушена внутренняя структура поля: {exception.Message}";
+            return false;
+        }
+
+        var replaced = false;
+        using var output = new MemoryStream(original.Length);
+        foreach (ChunkSlice chunk in chunks)
+        {
+            if (!replaced && chunk.Id == (byte)fieldId)
+            {
+                if (!TryEncode(
+                        nestedSchema,
+                        text,
+                        original.Slice(chunk.DataOffset, chunk.DataLength),
+                        out byte[] nestedPayload,
+                        out error))
+                {
+                    return false;
+                }
+
+                output.Write(ChunkCodec.Encode(chunk.Id, nestedPayload, chunk.HeaderSize));
+                replaced = true;
+            }
+            else
+            {
+                output.Write(original.Slice(chunk.HeaderOffset, chunk.TotalLength));
+            }
+        }
+
+        if (!replaced)
+        {
+            error = $"Вложенное поле {fieldId} отсутствует.";
+            return false;
+        }
+
+        encoded = output.ToArray();
+        return true;
+    }
+
+    public static bool TryEncodePackedField(
+        FieldSchema schema,
+        ReadOnlySpan<byte> original,
+        DatabaseFieldProjection projection,
+        string text,
+        out byte[] encoded,
+        out string? error)
+    {
+        encoded = [];
+        error = null;
+        if (!CanEditPackedField(schema, original, projection))
+        {
+            error = "Упакованное поле имеет неподдерживаемый размер или тип.";
+            return false;
+        }
+
+        DatabaseValueKind valueKind = string.Equals(
+            projection.ValueKind,
+            DatabaseValueKind.UInt32.ToString(),
+            StringComparison.Ordinal)
+            ? DatabaseValueKind.UInt32
+            : DatabaseValueKind.Float32;
+        int offset = projection.Index * sizeof(uint);
+        if (!TryEncode(
+                new FieldSchema(valueKind, projection.DisplayName),
+                text,
+                original.Slice(offset, sizeof(uint)),
+                out byte[] member,
+                out error))
+        {
+            return false;
+        }
+
+        encoded = original.ToArray();
+        member.CopyTo(encoded, offset);
+        return true;
+    }
+
+    public static bool TryEncodeEnumValue(
+        FieldSchema schema,
+        ReadOnlySpan<byte> original,
+        DatabaseFieldProjection projection,
+        string text,
+        out byte[] encoded,
+        out string? error)
+    {
+        encoded = [];
+        error = null;
+        if (!CanEditEnumValue(schema, original, projection) || projection.ValueLabels is null)
+        {
+            error = "Поле не является поддерживаемым перечислением.";
+            return false;
+        }
+
+        string normalized = text.Trim();
+        KeyValuePair<int, string> labelMatch = projection.ValueLabels
+            .FirstOrDefault(pair => string.Equals(pair.Value, normalized, StringComparison.OrdinalIgnoreCase));
+        if (labelMatch.Value is not null &&
+            string.Equals(labelMatch.Value, normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = labelMatch.Key.ToString(CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            int separator = normalized.IndexOf('—');
+            if (separator > 0)
+            {
+                normalized = normalized[..separator].Trim();
+            }
+        }
+
+        return TryEncode(schema, normalized, original, out encoded, out error);
     }
 
     public static bool TryEncodePrimitiveListElement(
@@ -1638,6 +1900,30 @@ internal static class DatabaseValueCodec
         return string.Equals(projection.ValueKind, DatabaseValueKind.UInt32.ToString(), StringComparison.Ordinal)
             ? (object)BinaryPrimitives.ReadUInt32LittleEndian(value)
             : BinaryPrimitives.ReadSingleLittleEndian(value);
+    }
+
+    private static string? DecodeEnumValue(
+        FieldSchema schema,
+        ReadOnlySpan<byte> payload,
+        DatabaseFieldProjection projection)
+    {
+        if (!CanEditEnumValue(schema, payload, projection) || projection.ValueLabels is null)
+        {
+            return null;
+        }
+
+        long value = schema.Kind switch
+        {
+            DatabaseValueKind.Int32 => BinaryPrimitives.ReadInt32LittleEndian(payload),
+            DatabaseValueKind.UInt32 => BinaryPrimitives.ReadUInt32LittleEndian(payload),
+            DatabaseValueKind.Byte => payload[0],
+            _ => 0,
+        };
+        string label = value is >= int.MinValue and <= int.MaxValue &&
+                       projection.ValueLabels.TryGetValue((int)value, out string? known)
+            ? known
+            : "неизвестное значение";
+        return $"{value.ToString(CultureInfo.InvariantCulture)} — {label}";
     }
 
     private static byte[][]? TryDecodePrimitiveChunkList(ReadOnlySpan<byte> payload, int elementSize)
