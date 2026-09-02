@@ -2313,9 +2313,123 @@ internal static class Program
             probe.Field.EditorText.Equals(originalHex, StringComparison.Ordinal),
             $"Возврат исходных понятных значений побайтово восстанавливает составное поле: {restoreError}");
 
+        if (originalEntries.Count > 1)
+        {
+            StructuredListEntryValue[] reorderedEntries = originalEntries
+                .Reverse()
+                .Select((entry, index) => new StructuredListEntryValue(
+                    index,
+                    new Dictionary<int, string>(entry.Fields))
+                {
+                    SourceIndex = entry.SourceIndex,
+                })
+                .ToArray();
+            log.Assert(
+                probe.Field.TrySetStructuredListEntries(reorderedEntries, out string? reorderError) &&
+                probe.Field.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> decodedReordered) &&
+                decodedReordered[0].Fields[1] == originalEntries[^1].Fields[1],
+                $"Порядок вариантов реплики можно изменить без ручной пересборки TLV: {reorderError}");
+            log.Assert(
+                probe.Field.TrySetValue(originalHex, out restoreError),
+                $"После проверки перестановки исходное поле восстановлено: {restoreError}");
+        }
+
+        StructuredListEntryValue[] shortenedEntries = originalEntries
+            .Take(originalEntries.Count - 1)
+            .Select((entry, index) => new StructuredListEntryValue(
+                index,
+                new Dictionary<int, string>(entry.Fields))
+            {
+                SourceIndex = entry.SourceIndex,
+            })
+            .ToArray();
         log.Assert(
-            probe.Field.TrySetStructuredListEntries(editedEntries, out editError),
-            $"Повторное структурное изменение подготовлено для Save As: {editError}");
+            probe.Field.TrySetStructuredListEntries(shortenedEntries, out string? deleteError) &&
+            probe.Field.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> decodedShortened) &&
+            decodedShortened.Count == originalEntries.Count - 1,
+            $"Выбранный вариант реплики можно удалить из составного списка: {deleteError}");
+        log.Assert(
+            probe.Field.TrySetValue(originalHex, out restoreError),
+            $"После проверки удаления исходное поле восстановлено: {restoreError}");
+
+        var expandedEntries = originalEntries
+            .Select(entry => new StructuredListEntryValue(
+                entry.Index,
+                new Dictionary<int, string>(entry.Fields))
+            {
+                SourceIndex = entry.SourceIndex,
+            })
+            .ToList();
+        var duplicateFields = new Dictionary<int, string>(originalEntries[entryIndex].Fields)
+        {
+            [2] = editedProbability,
+            [3] = editedDescription,
+        };
+        expandedEntries.Insert(
+            entryIndex + 1,
+            new StructuredListEntryValue(entryIndex + 1, duplicateFields)
+            {
+                SourceIndex = originalEntries[entryIndex].SourceIndex,
+            });
+        expandedEntries = expandedEntries
+            .Select((entry, index) => entry with { Index = index })
+            .ToList();
+        log.Assert(
+            probe.Field.TrySetStructuredListEntries(expandedEntries, out editError) &&
+            probe.Field.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> decodedExpanded) &&
+            decodedExpanded.Count == originalEntries.Count + 1 &&
+            decodedExpanded[entryIndex + 1].Fields[2] == editedProbability &&
+            decodedExpanded[entryIndex + 1].Fields[3] == editedDescription,
+            $"Дублированный вариант добавлен в составной список перед Save As: {editError}");
+
+        (DatabaseRecord Record, DatabaseField Field)? emptyProbe = table.Records
+            .SelectMany(record => record.Fields.Select(field => (Record: record, Field: field)))
+            .Select(item => ((DatabaseRecord Record, DatabaseField Field)?)item)
+            .FirstOrDefault(item =>
+                item is { } value &&
+                value.Field.CanEditStructuredList &&
+                value.Field.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> entries) &&
+                entries.Count == 0);
+        int? emptyRecordIndex = null;
+        int? emptyFieldId = null;
+        if (emptyProbe is { } empty)
+        {
+            string? emptyAddError = null;
+            bool decodedEmpty = empty.Field.TryGetStructuredListEntries(
+                out IReadOnlyList<StructuredListFieldDescriptor> emptyDescriptors,
+                out _);
+            bool addedFirst = decodedEmpty && empty.Field.TrySetStructuredListEntries(
+                [new StructuredListEntryValue(
+                    0,
+                    emptyDescriptors.ToDictionary(
+                        descriptor => descriptor.Id,
+                        descriptor => descriptor.Id switch
+                        {
+                            1 => @"Acks\Codex\Variant01.wav",
+                            2 => "100",
+                            3 => "Проверка добавления",
+                            4 => "CodexVariant01",
+                            10 => "0",
+                            _ when descriptor.Kind is "Int32" or "UInt32" or "Float32" or "Byte" => "0",
+                            _ when descriptor.Kind == "Boolean" => "false",
+                            _ => string.Empty,
+                        }))],
+                out emptyAddError);
+            log.Assert(
+                addedFirst &&
+                empty.Field.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> addedToEmpty) &&
+                addedToEmpty is [{ Fields: var addedFields }] &&
+                addedFields[1] == @"Acks\Codex\Variant01.wav" &&
+                addedFields[2] == "100",
+                $"В пустом поле acks.db можно создать первый вариант реплики: {emptyAddError}");
+            emptyRecordIndex = empty.Record.RecordIndex;
+            emptyFieldId = empty.Field.Id;
+        }
+        else
+        {
+            log.Skip("В этой базе нет пустого составного поля acks.db для проверки добавления первого варианта.");
+        }
+
         string targetPath = staging.GetNewOutputPath($"{Guid.NewGuid():N}-acks-structured-list.res");
         staging.AssertOutputPath(targetPath, allSourcePaths);
         await document.SaveAsAsync(targetPath).ConfigureAwait(false);
@@ -2327,9 +2441,24 @@ internal static class Program
             probe.Field.Id);
         log.Assert(
             reopenedField.TryGetStructuredListEntries(out _, out IReadOnlyList<StructuredListEntryValue> reopenedEntries) &&
-            reopenedEntries[entryIndex].Fields[2] == editedProbability &&
-            reopenedEntries[entryIndex].Fields[3] == editedDescription,
-            "Понятные числовое и строковое изменения acks.db сохранились в тестовую копию и повторно открылись.");
+            reopenedEntries.Count == originalEntries.Count + 1 &&
+            reopenedEntries[entryIndex + 1].Fields[2] == editedProbability &&
+            reopenedEntries[entryIndex + 1].Fields[3] == editedDescription,
+            "Добавленный вариант acks.db сохранился в тестовую копию и повторно открылся.");
+        if (emptyRecordIndex is int emptyRecord && emptyFieldId is int emptyField)
+        {
+            DatabaseField reopenedEmptyField = RequireField(
+                RequireTable(reopened.Databases.SelectMany(group => group.Tables), "acks.answers")
+                    .Records[emptyRecord],
+                emptyField);
+            log.Assert(
+                reopenedEmptyField.TryGetStructuredListEntries(
+                    out _,
+                    out IReadOnlyList<StructuredListEntryValue> reopenedAddedToEmpty) &&
+                reopenedAddedToEmpty is [{ Fields: var reopenedAddedFields }] &&
+                reopenedAddedFields[1] == @"Acks\Codex\Variant01.wav",
+                "Первый вариант, добавленный в ранее пустое поле acks.db, сохранился и повторно открылся.");
+        }
         log.Assert(
             reopened.Validate().All(diagnostic => !diagnostic.IsBlocking),
             "Копия с изменённым структурным списком acks.db не содержит блокирующих ошибок.");

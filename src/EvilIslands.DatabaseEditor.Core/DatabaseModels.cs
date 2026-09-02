@@ -731,7 +731,10 @@ public sealed record StructuredListFieldDescriptor(
 
 public sealed record StructuredListEntryValue(
     int Index,
-    IReadOnlyDictionary<int, string> Fields);
+    IReadOnlyDictionary<int, string> Fields)
+{
+    public int? SourceIndex { get; init; }
+}
 
 public enum DatabaseFieldProjectionKind
 {
@@ -987,7 +990,10 @@ internal static class DatabaseValueCodec
                     }
                 }
 
-                decodedEntries.Add(new StructuredListEntryValue(itemIndex, values));
+                decodedEntries.Add(new StructuredListEntryValue(itemIndex, values)
+                {
+                    SourceIndex = itemIndex,
+                });
                 itemIndex++;
             }
 
@@ -1029,109 +1035,245 @@ internal static class DatabaseValueCodec
             return false;
         }
 
-        int itemCount = outerChunks.Count(chunk => chunk.Id == 1);
-        if (entries.Count != itemCount)
+        ChunkSlice[] originalItems = outerChunks.Where(chunk => chunk.Id == 1).ToArray();
+        bool hasExplicitSources = entries.Any(entry => entry.SourceIndex.HasValue);
+        bool structureChanged = entries.Count != originalItems.Length ||
+            entries.Select((entry, index) => ResolveSourceIndex(entry, index, originalItems.Length, hasExplicitSources))
+                .Where(sourceIndex => sourceIndex.HasValue)
+                .Select(sourceIndex => sourceIndex!.Value)
+                .SequenceEqual(Enumerable.Range(0, originalItems.Length)) is false;
+        if (structureChanged && outerChunks.Any(chunk => chunk.Id != 1))
         {
-            error = $"Ожидалось вариантов: {itemCount}, передано: {entries.Count}.";
+            error = "В списке обнаружены неизвестные служебные блоки: менять количество или порядок вариантов небезопасно.";
             return false;
         }
 
-        using var output = new MemoryStream(original.Length);
-        var itemIndex = 0;
-        foreach (ChunkSlice outerChunk in outerChunks)
+        using var output = new MemoryStream(Math.Max(original.Length, entries.Count * 64));
+        if (!structureChanged)
         {
-            if (outerChunk.Id != 1)
+            var itemIndex = 0;
+            foreach (ChunkSlice outerChunk in outerChunks)
             {
-                output.Write(original.Slice(outerChunk.HeaderOffset, outerChunk.TotalLength));
-                continue;
-            }
-
-            StructuredListEntryValue entry = entries[itemIndex];
-            if (entry.Index != itemIndex)
-            {
-                error = $"Нарушен порядок вариантов: ожидался номер {itemIndex + 1}.";
-                return false;
-            }
-
-            if (entry.Fields.Keys.Any(fieldId =>
-                    fieldId is < 0 or > byte.MaxValue ||
-                    !schema.NestedFields.ContainsKey((byte)fieldId)))
-            {
-                error = $"Вариант {itemIndex + 1} содержит неизвестное поле.";
-                return false;
-            }
-
-            ReadOnlySpan<byte> itemPayload = original.Slice(outerChunk.DataOffset, outerChunk.DataLength);
-            IReadOnlyList<ChunkSlice> itemFields;
-            try
-            {
-                itemFields = ChunkCodec.ReadList(
-                    itemPayload,
-                    0,
-                    itemPayload.Length,
-                    $"editable-structured-list[{itemIndex}]");
-            }
-            catch (DatabaseFormatException exception)
-            {
-                error = $"Вариант {itemIndex + 1}: {exception.Message}";
-                return false;
-            }
-
-            var existingFieldIds = new HashSet<int>();
-            using var itemOutput = new MemoryStream(itemPayload.Length);
-            foreach (ChunkSlice itemField in itemFields)
-            {
-                if (!schema.NestedFields.TryGetValue(itemField.Id, out FieldSchema? fieldSchema) ||
-                    !entry.Fields.TryGetValue(itemField.Id, out string? newValue))
+                if (outerChunk.Id != 1)
                 {
-                    itemOutput.Write(itemPayload.Slice(itemField.HeaderOffset, itemField.TotalLength));
+                    output.Write(original.Slice(outerChunk.HeaderOffset, outerChunk.TotalLength));
                     continue;
                 }
 
-                existingFieldIds.Add(itemField.Id);
-                if (!fieldSchema.Editable ||
-                    !TryEncode(
-                        fieldSchema,
-                        newValue,
-                        itemPayload.Slice(itemField.DataOffset, itemField.DataLength),
-                        out byte[] nestedPayload,
+                if (!TryEncodeStructuredListEntry(
+                        schema,
+                        original,
+                        originalItems,
+                        entries[itemIndex],
+                        itemIndex,
+                        hasExplicitSources,
+                        out byte[] encodedItem,
                         out error))
                 {
-                    error = fieldSchema.Editable
-                        ? $"Вариант {itemIndex + 1}, «{fieldSchema.DisplayName}»: {error}"
-                        : $"Вариант {itemIndex + 1}, «{fieldSchema.DisplayName}» доступен только для чтения.";
                     return false;
                 }
 
-                itemOutput.Write(ChunkCodec.Encode(itemField.Id, nestedPayload, itemField.HeaderSize));
+                output.Write(encodedItem);
+                itemIndex++;
             }
-
-            foreach ((int fieldId, string value) in entry.Fields)
+        }
+        else
+        {
+            for (int itemIndex = 0; itemIndex < entries.Count; itemIndex++)
             {
-                if (!existingFieldIds.Contains(fieldId) && !string.IsNullOrEmpty(value))
+                if (!TryEncodeStructuredListEntry(
+                        schema,
+                        original,
+                        originalItems,
+                        entries[itemIndex],
+                        itemIndex,
+                        hasExplicitSources,
+                        out byte[] encodedItem,
+                        out error))
                 {
-                    string displayName = schema.NestedFields[(byte)fieldId].DisplayName;
-                    error = $"Вариант {itemIndex + 1}: отсутствующее поле «{displayName}» нельзя добавить автоматически.";
                     return false;
                 }
-            }
 
-            byte[] updatedItem = itemOutput.ToArray();
-            if (updatedItem.AsSpan().SequenceEqual(itemPayload))
-            {
-                output.Write(original.Slice(outerChunk.HeaderOffset, outerChunk.TotalLength));
+                output.Write(encodedItem);
             }
-            else
-            {
-                output.Write(ChunkCodec.Encode(outerChunk.Id, updatedItem, outerChunk.HeaderSize));
-            }
-
-            itemIndex++;
         }
 
         encoded = output.ToArray();
         return true;
     }
+
+    private static bool TryEncodeStructuredListEntry(
+        FieldSchema schema,
+        ReadOnlySpan<byte> original,
+        IReadOnlyList<ChunkSlice> originalItems,
+        StructuredListEntryValue entry,
+        int itemIndex,
+        bool hasExplicitSources,
+        out byte[] encoded,
+        out string? error)
+    {
+        encoded = [];
+        error = null;
+        if (schema.NestedFields is null)
+        {
+            error = "Для составного списка отсутствует схема вложенных полей.";
+            return false;
+        }
+
+        if (entry.Index != itemIndex)
+        {
+            error = $"Нарушен порядок вариантов: ожидался номер {itemIndex + 1}.";
+            return false;
+        }
+
+        if (entry.Fields.Keys.Any(fieldId =>
+                fieldId is < 0 or > byte.MaxValue ||
+                !schema.NestedFields.ContainsKey((byte)fieldId)))
+        {
+            error = $"Вариант {itemIndex + 1} содержит неизвестное поле.";
+            return false;
+        }
+
+        int? sourceIndex = ResolveSourceIndex(entry, itemIndex, originalItems.Count, hasExplicitSources);
+        if (sourceIndex is int invalidSource && (uint)invalidSource >= (uint)originalItems.Count)
+        {
+            error = $"Вариант {itemIndex + 1} ссылается на отсутствующий исходный вариант.";
+            return false;
+        }
+
+        if (sourceIndex is not int resolvedSource)
+        {
+            return TryCreateStructuredListEntry(schema, entry, itemIndex, out encoded, out error);
+        }
+
+        ChunkSlice sourceChunk = originalItems[resolvedSource];
+        ReadOnlySpan<byte> itemPayload = original.Slice(sourceChunk.DataOffset, sourceChunk.DataLength);
+        IReadOnlyList<ChunkSlice> itemFields;
+        try
+        {
+            itemFields = ChunkCodec.ReadList(
+                itemPayload,
+                0,
+                itemPayload.Length,
+                $"editable-structured-list[{resolvedSource}]");
+        }
+        catch (DatabaseFormatException exception)
+        {
+            error = $"Вариант {itemIndex + 1}: {exception.Message}";
+            return false;
+        }
+
+        var existingFieldIds = new HashSet<int>();
+        using var itemOutput = new MemoryStream(itemPayload.Length);
+        foreach (ChunkSlice itemField in itemFields)
+        {
+            if (!schema.NestedFields.TryGetValue(itemField.Id, out FieldSchema? fieldSchema) ||
+                !entry.Fields.TryGetValue(itemField.Id, out string? newValue))
+            {
+                itemOutput.Write(itemPayload.Slice(itemField.HeaderOffset, itemField.TotalLength));
+                continue;
+            }
+
+            existingFieldIds.Add(itemField.Id);
+            if (!fieldSchema.Editable ||
+                !TryEncode(
+                    fieldSchema,
+                    newValue,
+                    itemPayload.Slice(itemField.DataOffset, itemField.DataLength),
+                    out byte[] nestedPayload,
+                    out error))
+            {
+                error = fieldSchema.Editable
+                    ? $"Вариант {itemIndex + 1}, «{fieldSchema.DisplayName}»: {error}"
+                    : $"Вариант {itemIndex + 1}, «{fieldSchema.DisplayName}» доступен только для чтения.";
+                return false;
+            }
+
+            itemOutput.Write(ChunkCodec.Encode(itemField.Id, nestedPayload, itemField.HeaderSize));
+        }
+
+        foreach ((int fieldId, string value) in entry.Fields.OrderBy(pair => schema.NestedFields[(byte)pair.Key].DisplayOrder).ThenBy(pair => pair.Key))
+        {
+            if (existingFieldIds.Contains(fieldId) || string.IsNullOrEmpty(value))
+            {
+                continue;
+            }
+
+            FieldSchema fieldSchema = schema.NestedFields[(byte)fieldId];
+            if (!fieldSchema.Editable ||
+                !TryEncode(fieldSchema, value, [], out byte[] nestedPayload, out error))
+            {
+                error = fieldSchema.Editable
+                    ? $"Вариант {itemIndex + 1}, «{fieldSchema.DisplayName}»: {error}"
+                    : $"Вариант {itemIndex + 1}, «{fieldSchema.DisplayName}» доступен только для чтения.";
+                return false;
+            }
+
+            itemOutput.Write(ChunkCodec.Encode((byte)fieldId, nestedPayload, 2));
+        }
+
+        byte[] updatedItem = itemOutput.ToArray();
+        encoded = updatedItem.AsSpan().SequenceEqual(itemPayload)
+            ? original.Slice(sourceChunk.HeaderOffset, sourceChunk.TotalLength).ToArray()
+            : ChunkCodec.Encode(1, updatedItem, sourceChunk.HeaderSize);
+        return true;
+    }
+
+    private static bool TryCreateStructuredListEntry(
+        FieldSchema schema,
+        StructuredListEntryValue entry,
+        int itemIndex,
+        out byte[] encoded,
+        out string? error)
+    {
+        encoded = [];
+        error = null;
+        if (schema.NestedFields is null)
+        {
+            error = "Для составного списка отсутствует схема вложенных полей.";
+            return false;
+        }
+
+        using var itemOutput = new MemoryStream();
+        foreach ((byte fieldId, FieldSchema fieldSchema) in schema.NestedFields
+                     .OrderBy(pair => pair.Value.DisplayOrder)
+                     .ThenBy(pair => pair.Key))
+        {
+            string value = entry.Fields.GetValueOrDefault(fieldId, GetDefaultStructuredFieldValue(fieldSchema));
+            if (!TryEncode(fieldSchema, value, [], out byte[] nestedPayload, out error))
+            {
+                error = $"Вариант {itemIndex + 1}, «{fieldSchema.DisplayName}»: {error}";
+                return false;
+            }
+
+            itemOutput.Write(ChunkCodec.Encode(fieldId, nestedPayload, 2));
+        }
+
+        encoded = ChunkCodec.Encode(1, itemOutput.ToArray(), 2);
+        return true;
+    }
+
+    private static int? ResolveSourceIndex(
+        StructuredListEntryValue entry,
+        int itemIndex,
+        int originalItemCount,
+        bool hasExplicitSources)
+    {
+        if (entry.SourceIndex.HasValue)
+        {
+            return entry.SourceIndex;
+        }
+
+        return !hasExplicitSources && itemIndex < originalItemCount ? entry.Index : null;
+    }
+
+    private static string GetDefaultStructuredFieldValue(FieldSchema schema) => schema.Kind switch
+    {
+        DatabaseValueKind.Int32 or DatabaseValueKind.UInt32 or DatabaseValueKind.Float32 or
+            DatabaseValueKind.Byte => "0",
+        DatabaseValueKind.Boolean => "false",
+        _ => string.Empty,
+    };
 
     internal static IReadOnlyList<StructuredListStringValue> DecodeStructuredListStringValues(
         FieldSchema schema,

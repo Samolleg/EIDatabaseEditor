@@ -4680,26 +4680,75 @@ internal static class Program
             dialog.Height < 650 ||
             dialog.FindName("EntriesGrid") is not DataGrid entriesGrid ||
             entriesGrid.Items.Count != 1 ||
+            dialog.FindName("AddButton") is not Button { IsEnabled: true } ||
+            dialog.FindName("DuplicateButton") is not Button { IsEnabled: true } ||
+            dialog.FindName("DeleteButton") is not Button { IsEnabled: true } ||
+            dialog.FindName("MoveUpButton") is not Button { IsEnabled: false } ||
             dialog.FindName("ConditionsColumn") is not DataGridColumn { Visibility: Visibility.Visible } ||
             dialog.Entries[0].ConditionsText != "бег, день, снаружи")
         {
             throw new InvalidOperationException(
-                "Редактор вариантов реплики должен показывать крупную таблицу с понятными полями и расшифровкой условий.");
+                "Редактор вариантов реплики должен показывать таблицу, расшифровку условий и действия над вариантами.");
         }
 
         dialog.Entries[0].FileName = @"Acks\HH\Attack\10.wav";
         dialog.Entries[0].Probability = "30";
+        dialog.AddEntry();
+        dialog.Entries[1].FileName = @"Acks\HH\Attack\11.wav";
+        dialog.Entries[1].Probability = "20";
+        dialog.Entries[1].Description = "Новый вариант";
+        dialog.Entries[1].Key = "Attack11";
+        dialog.Entries[1].Conditions = "0";
+        dialog.DuplicateSelectedEntry();
+        dialog.MoveSelectedEntry(-1);
+        dialog.DeleteSelectedEntry();
         if (!dialog.TryCommit() ||
             !dialog.WasApplied ||
             applied is null ||
-            applied.Count != 1 ||
+            applied.Count != 2 ||
             applied[0].Fields[1] != @"Acks\HH\Attack\10.wav" ||
             applied[0].Fields[2] != "30" ||
             applied[0].Fields[3] != "Атака" ||
-            applied[0].Fields[10] != "641")
+            applied[0].Fields[10] != "641" ||
+            applied[1].Fields[1] != @"Acks\HH\Attack\11.wav" ||
+            applied[1].Fields[3] != "Новый вариант" ||
+            applied[1].SourceIndex is not null)
         {
             throw new InvalidOperationException(
-                "Редактор вариантов реплики должен применять изменённые понятные поля без потери остальных значений.");
+                "Редактор вариантов реплики должен добавлять, дублировать, перемещать и удалять строки без потери значений.");
+        }
+
+        IReadOnlyList<StructuredListEntryValue>? addedToEmpty = null;
+        var emptyDialog = new StructuredRecordListEditorDialog(
+            "G26",
+            "Выбор",
+            fields,
+            [],
+            values =>
+            {
+                addedToEmpty = values.ToArray();
+                return (true, null);
+            });
+        if (emptyDialog.FindName("DuplicateButton") is not Button { IsEnabled: false } ||
+            emptyDialog.FindName("DeleteButton") is not Button { IsEnabled: false })
+        {
+            throw new InvalidOperationException(
+                "В пустом редакторе действия, требующие выбранного варианта, должны быть отключены.");
+        }
+
+        emptyDialog.AddEntry();
+        emptyDialog.Entries[0].FileName = @"Acks\HH\Select\1.wav";
+        emptyDialog.Entries[0].Probability = "100";
+        emptyDialog.Entries[0].Description = "Выбор";
+        emptyDialog.Entries[0].Key = "Select01";
+        if (!emptyDialog.TryCommit() ||
+            addedToEmpty is not { Count: 1 } ||
+            addedToEmpty[0].Index != 0 ||
+            addedToEmpty[0].Fields[1] != @"Acks\HH\Select\1.wav" ||
+            addedToEmpty[0].Fields[2] != "100")
+        {
+            throw new InvalidOperationException(
+                "Пустой список вариантов должен позволять создать и применить первую реплику.");
         }
     }
 

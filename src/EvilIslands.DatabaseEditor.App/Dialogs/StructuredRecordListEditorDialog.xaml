@@ -61,18 +61,41 @@
 
             <Grid Grid.Row="2" Margin="18,0,18,12">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                <Border Grid.Row="0" Background="{StaticResource SidebarBrush}"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                        CornerRadius="8" Padding="8" Margin="0,0,0,10">
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="AddButton" Style="{StaticResource RoundedButton}"
+                                Content="＋ Вариант" Click="AddButton_Click" Padding="11,6"
+                                ToolTip="Добавить новый вариант после выбранного" />
+                        <Button x:Name="DuplicateButton" Style="{StaticResource RoundedButton}"
+                                Content="Дублировать" Click="DuplicateButton_Click" Margin="7,0,0,0" Padding="11,6"
+                                ToolTip="Создать точную копию выбранного варианта" />
+                        <Button x:Name="MoveUpButton" Style="{StaticResource RoundedButton}"
+                                Content="↑" Click="MoveUpButton_Click" Margin="7,0,0,0" MinWidth="40" Padding="8,6"
+                                ToolTip="Поднять выбранный вариант" />
+                        <Button x:Name="MoveDownButton" Style="{StaticResource RoundedButton}"
+                                Content="↓" Click="MoveDownButton_Click" Margin="7,0,0,0" MinWidth="40" Padding="8,6"
+                                ToolTip="Опустить выбранный вариант" />
+                        <Button x:Name="DeleteButton" Style="{StaticResource RoundedButton}"
+                                Content="Удалить" Click="DeleteButton_Click" Margin="7,0,0,0" Padding="11,6"
+                                ToolTip="Удалить выбранный вариант" />
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="1" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                         CornerRadius="8" ClipToBounds="True">
                     <DataGrid x:Name="EntriesGrid" BorderThickness="0" AutoGenerateColumns="False"
                               CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False"
-                              CanUserReorderColumns="True" SelectionMode="Extended" SelectionUnit="CellOrRowHeader"
+                              CanUserReorderColumns="True" SelectionMode="Single" SelectionUnit="FullRow"
+                              SelectionChanged="EntriesGrid_SelectionChanged"
                               FrozenColumnCount="2">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="#" Binding="{Binding Number}" IsReadOnly="True" Width="52" />
-                            <DataGridTextColumn Header="Файл" Binding="{Binding FileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            <DataGridTextColumn x:Name="FileNameColumn" Header="Файл" Binding="{Binding FileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                 Width="2*" MinWidth="210" />
                             <DataGridTextColumn Header="Вероятность" Binding="{Binding Probability, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                 Width="115" />
@@ -88,7 +111,7 @@
                         </DataGrid.Columns>
                     </DataGrid>
                 </Border>
-                <TextBlock x:Name="ConditionsHelpText" Grid.Row="1" Margin="2,8,0,0"
+                <TextBlock x:Name="ConditionsHelpText" Grid.Row="2" Margin="2,8,0,0"
                            Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
                            Text="Флаги условий расшифровываются справа. Значение 0 означает: без дополнительных условий." />
             </Grid>
