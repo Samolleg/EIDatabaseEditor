@@ -2332,7 +2332,7 @@
                                             <ColumnDefinition Width="2*" MinWidth="250" />
                                             <ColumnDefinition Width="160" />
                                             <ColumnDefinition Width="150" />
-                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <Grid.RowDefinitions>
@@ -2363,14 +2363,6 @@
                                                   IsChecked="{Binding ShowOnlyBlockingDiagnostics}"
                                                   Content="Только блокирующие"
                                                   VerticalAlignment="Center" />
-                                        <CheckBox x:Name="ValidationGroupToggle"
-                                                  Grid.Row="1"
-                                                  Grid.Column="1"
-                                                  Grid.ColumnSpan="2"
-                                                  Margin="10,10,0,0"
-                                                  IsChecked="{Binding GroupDiagnostics}"
-                                                  Content="Группировать похожие"
-                                                  VerticalAlignment="Center" />
                                         <Button x:Name="ValidationClearFiltersButton"
                                                 Grid.Column="4"
                                                 Style="{StaticResource RoundedButton}"
@@ -2382,46 +2374,121 @@
 
                                 <Grid Grid.Row="4">
                                     <Grid.ColumnDefinitions>
+                                        <ColumnDefinition x:Name="ValidationCategoriesColumn" Width="260" MinWidth="210" MaxWidth="420" />
+                                        <ColumnDefinition Width="8" />
                                         <ColumnDefinition Width="*" MinWidth="360" />
-                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="8" />
                                         <ColumnDefinition x:Name="ValidationDetailsColumn" Width="430" MinWidth="320" MaxWidth="760" />
                                     </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                    <Border Grid.Column="0" Style="{StaticResource SurfaceCard}" Padding="0" ClipToBounds="True">
                                         <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <Border Padding="14,13,14,11" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                                                <StackPanel>
+                                                    <TextBlock Text="ВИДЫ ПРОБЛЕМ" Style="{StaticResource MutedLabel}" />
+                                                    <TextBlock Text="Выберите причину" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,4,0,0" />
+                                                </StackPanel>
+                                            </Border>
+                                            <ListBox x:Name="ValidationCategoriesList"
+                                                     Grid.Row="1"
+                                                     ItemsSource="{Binding DiagnosticCategories}"
+                                                     SelectedItem="{Binding SelectedDiagnosticCategory}"
+                                                     Background="Transparent"
+                                                     BorderThickness="0"
+                                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                                <ListBox.ItemContainerStyle>
+                                                    <Style TargetType="ListBoxItem">
+                                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                                        <Setter Property="Padding" Value="0" />
+                                                        <Setter Property="Margin" Value="7,4" />
+                                                        <Setter Property="Background" Value="Transparent" />
+                                                        <Setter Property="Template">
+                                                            <Setter.Value>
+                                                                <ControlTemplate TargetType="ListBoxItem">
+                                                                    <Border x:Name="CategoryBorder"
+                                                                            Background="{TemplateBinding Background}"
+                                                                            BorderBrush="Transparent"
+                                                                            BorderThickness="1"
+                                                                            CornerRadius="7"
+                                                                            Padding="10,9">
+                                                                        <ContentPresenter />
+                                                                    </Border>
+                                                                    <ControlTemplate.Triggers>
+                                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                                            <Setter TargetName="CategoryBorder" Property="Background" Value="#1D2925" />
+                                                                        </Trigger>
+                                                                        <Trigger Property="IsSelected" Value="True">
+                                                                            <Setter TargetName="CategoryBorder" Property="Background" Value="#234137" />
+                                                                            <Setter TargetName="CategoryBorder" Property="BorderBrush" Value="#3B745F" />
+                                                                        </Trigger>
+                                                                    </ControlTemplate.Triggers>
+                                                                </ControlTemplate>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Style>
+                                                </ListBox.ItemContainerStyle>
+                                                <ListBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Text="●" FontSize="8" Foreground="{Binding Severity, Converter={StaticResource SeverityBrushConverter}}" VerticalAlignment="Center" Margin="0,0,9,0" />
+                                                            <StackPanel Grid.Column="1">
+                                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                                <TextBlock Text="{Binding SeverityText}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,3,0,0" />
+                                                            </StackPanel>
+                                                            <Border Grid.Column="2" Background="#2A3833" CornerRadius="9" Padding="7,2" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Count}" Foreground="{StaticResource AccentBrush}" FontSize="11" />
+                                                            </Border>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </ListBox.ItemTemplate>
+                                            </ListBox>
+                                        </Grid>
+                                    </Border>
+
+                                    <GridSplitter Grid.Column="1"
+                                                  Width="8"
+                                                  HorizontalAlignment="Stretch"
+                                                  VerticalAlignment="Stretch"
+                                                  Background="Transparent"
+                                                  DragCompleted="LayoutSplitter_DragCompleted"
+                                                  ToolTip="Изменить ширину списка видов проблем" />
+
+                                    <Border Grid.Column="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                        <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+                                        <Border Grid.Row="0" Padding="14,11" Background="#171D1B" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding SelectedDiagnosticCategoryTitle}" FontSize="15" FontWeight="SemiBold" />
+                                                    <TextBlock Text="Записи выбранного вида" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,3,0,0" />
+                                                </StackPanel>
+                                                <TextBlock Grid.Column="1" Text="{Binding DiagnosticFilterSummary}" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                            </Grid>
+                                        </Border>
                                         <DataGrid x:Name="ValidationGrid"
+                                                  Grid.Row="1"
                                                   ItemsSource="{Binding DiagnosticsView}"
                                                   SelectedItem="{Binding SelectedDiagnostic}"
                                                   BorderThickness="0"
                                                   IsReadOnly="True"
                                                   RowHeight="54"
                                                   MouseDoubleClick="ValidationGrid_MouseDoubleClick">
-                                            <DataGrid.GroupStyle>
-                                                <GroupStyle>
-                                                    <GroupStyle.ContainerStyle>
-                                                        <Style TargetType="GroupItem">
-                                                            <Setter Property="Template">
-                                                                <Setter.Value>
-                                                                    <ControlTemplate TargetType="GroupItem">
-                                                                        <Expander IsExpanded="False" Background="Transparent">
-                                                                            <Expander.Header>
-                                                                                <Border Background="#1D2A26" BorderBrush="#315044" BorderThickness="0,0,0,1" Padding="11,9">
-                                                                                    <StackPanel Orientation="Horizontal">
-                                                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
-                                                                                        <Border Background="#2B4239" CornerRadius="8" Padding="7,2" Margin="9,0,0,0">
-                                                                                            <TextBlock Text="{Binding ItemCount}" Foreground="{StaticResource AccentBrush}" FontSize="11" />
-                                                                                        </Border>
-                                                                                    </StackPanel>
-                                                                                </Border>
-                                                                            </Expander.Header>
-                                                                            <ItemsPresenter />
-                                                                        </Expander>
-                                                                    </ControlTemplate>
-                                                                </Setter.Value>
-                                                            </Setter>
-                                                        </Style>
-                                                    </GroupStyle.ContainerStyle>
-                                                </GroupStyle>
-                                            </DataGrid.GroupStyle>
                                             <DataGrid.Columns>
                                                 <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
                                                     <DataGridTemplateColumn.CellTemplate>
@@ -2430,24 +2497,14 @@
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Проблема" Width="210" SortMemberPath="CategoryText" ClipboardContentBinding="{Binding CategoryText}">
-                                                    <DataGridTemplateColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <StackPanel VerticalAlignment="Center">
-                                                                <TextBlock Text="{Binding CategoryText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock Text="{Binding ImpactText}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" />
-                                                            </StackPanel>
-                                                        </DataTemplate>
-                                                    </DataGridTemplateColumn.CellTemplate>
-                                                </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Где находится" Width="1.6*" MinWidth="220" SortMemberPath="Place" ClipboardContentBinding="{Binding Place}">
+                                                <DataGridTemplateColumn Header="Где находится" Width="1.35*" MinWidth="220" SortMemberPath="Place" ClipboardContentBinding="{Binding Place}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <TextBlock Text="{Binding Place}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="38" ToolTip="{Binding Detail}" />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Что обнаружено" Width="2.4*" MinWidth="300" SortMemberPath="Message" ClipboardContentBinding="{Binding Message}">
+                                                <DataGridTemplateColumn Header="Что обнаружено" Width="2*" MinWidth="300" SortMemberPath="Message" ClipboardContentBinding="{Binding Message}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <TextBlock Text="{Binding Message}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="38" ToolTip="{Binding Message}" />
@@ -2456,7 +2513,7 @@
                                                 </DataGridTemplateColumn>
                                             </DataGrid.Columns>
                                         </DataGrid>
-                                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <StackPanel Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center">
                                             <StackPanel.Style>
                                                 <Style TargetType="StackPanel">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -2474,15 +2531,15 @@
                                         </Grid>
                                     </Border>
 
-                                    <GridSplitter Grid.Column="1"
-                                                  Width="10"
+                                    <GridSplitter Grid.Column="3"
+                                                  Width="8"
                                                   HorizontalAlignment="Stretch"
                                                   VerticalAlignment="Stretch"
                                                   Background="Transparent"
                                                   DragCompleted="LayoutSplitter_DragCompleted"
                                                   ToolTip="Изменить ширину панели подробностей" />
 
-                                    <Border Grid.Column="2" Style="{StaticResource SurfaceCard}" Padding="16">
+                                    <Border Grid.Column="4" Style="{StaticResource SurfaceCard}" Padding="16">
                                         <Grid>
                                             <StackPanel Visibility="{Binding HasSelectedDiagnostic, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
                                                         HorizontalAlignment="Center" VerticalAlignment="Center">

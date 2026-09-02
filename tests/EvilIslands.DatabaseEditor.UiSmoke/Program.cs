@@ -714,6 +714,7 @@ internal static class Program
             TextsFormulaBarHeight = 164,
             BriefingScenesWidth = 288,
             BriefingTimelineWidth = 612,
+            ValidationCategoriesWidth = 294,
             ValidationDetailsWidth = 518,
             MainWindowWidth = 1730,
             MainWindowHeight = 1030,
@@ -751,6 +752,7 @@ internal static class Program
             reopenedLayout.TextsFormulaBarHeight != 164 ||
             reopenedLayout.BriefingScenesWidth != 288 ||
             reopenedLayout.BriefingTimelineWidth != 612 ||
+            reopenedLayout.ValidationCategoriesWidth != 294 ||
             reopenedLayout.ValidationDetailsWidth != 518 ||
             reopenedLayout.MainWindowWidth != 1730 ||
             reopenedLayout.MainWindowHeight != 1030 ||
@@ -778,6 +780,7 @@ internal static class Program
         EditorLayoutState resetLayout = new EditorPreferencesStore(settingsPath).GetLayout();
         if (resetLayout.SidebarWidth != 300 || resetLayout.DetailsPaneHeight != 360 ||
             resetLayout.FormulaBarHeight != 60 || resetLayout.BriefingTimelineWidth != 460 ||
+            resetLayout.ValidationCategoriesWidth != 260 ||
             resetLayout.ValidationDetailsWidth != 430 ||
             resetLayout.MainWindowMaximized || resetLayout.LongTextEditorMaximized ||
             resetLayout.DetailsPaneDetached || resetLayout.DetailsWindowWidth != 1080 ||
@@ -2822,17 +2825,18 @@ internal static class Program
     private static void VerifyValidationDashboard(MainWindow window, MainWindowViewModel viewModel)
     {
         if (window.FindName("ValidationGrid") is not DataGrid validationGrid ||
+            window.FindName("ValidationCategoriesList") is not ListBox validationCategoriesList ||
             window.FindName("ValidationSearchBox") is not TextBox ||
             window.FindName("ValidationSeverityFilter") is not ComboBox ||
             window.FindName("ValidationDomainFilter") is not ComboBox ||
             window.FindName("ValidationBlockingFilter") is not CheckBox ||
-            window.FindName("ValidationGroupToggle") is not CheckBox ||
             window.FindName("ValidationClearFiltersButton") is not Button ||
-            validationGrid.Columns.Count != 4 ||
-            !ReferenceEquals(validationGrid.ItemsSource, viewModel.DiagnosticsView))
+            validationGrid.Columns.Count != 3 ||
+            !ReferenceEquals(validationGrid.ItemsSource, viewModel.DiagnosticsView) ||
+            !ReferenceEquals(validationCategoriesList.ItemsSource, viewModel.DiagnosticCategories))
         {
             throw new InvalidOperationException(
-                "Проверка должна иметь единый компактный список, поиск, фильтры, группировку и панель подробностей.");
+                "Проверка должна иметь отдельный навигатор причин, чистый список записей, фильтры и панель подробностей.");
         }
 
         if (viewModel.Diagnostics.Count == 0)
@@ -2844,12 +2848,24 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(probe.CategoryText) ||
             probe.CategoryText.StartsWith("SEM_", StringComparison.Ordinal) ||
             string.IsNullOrWhiteSpace(probe.TableTitle) ||
-            viewModel.DiagnosticsView.GroupDescriptions.Count != 1)
+            viewModel.DiagnosticsView.GroupDescriptions.Count != 0 ||
+            viewModel.DiagnosticCategories.Count < 2 ||
+            viewModel.DiagnosticCategories[0] is not { IsAll: true } allCategory ||
+            allCategory.Count != viewModel.Diagnostics.Count)
         {
             throw new InvalidOperationException(
-                "Диагностика должна показывать понятную категорию и место, группировать одинаковые причины и выбирать запись для подробностей.");
+                "Диагностика должна отделять понятные виды проблем от записей и не смешивать группы со строками таблицы.");
         }
 
+        DiagnosticCategoryViewModel probeCategory = viewModel.DiagnosticCategories.First(item => item.Key == probe.GroupTitle);
+        viewModel.SelectedDiagnosticCategory = probeCategory;
+        int expectedByCategory = viewModel.Diagnostics.Count(item => item.GroupTitle == probe.GroupTitle);
+        if (viewModel.FilteredDiagnosticCount != expectedByCategory || expectedByCategory == 0)
+        {
+            throw new InvalidOperationException("Выбор вида проблемы должен показывать только относящиеся к нему записи.");
+        }
+
+        viewModel.SelectedDiagnosticCategory = viewModel.DiagnosticCategories[0];
 
         viewModel.SelectedDiagnostic = probe;
         if (!viewModel.HasSelectedDiagnostic)
@@ -2881,19 +2897,13 @@ internal static class Program
         }
 
         viewModel.ShowOnlyBlockingDiagnostics = false;
-        viewModel.GroupDiagnostics = false;
-        if (viewModel.DiagnosticsView.GroupDescriptions.Count != 0)
-        {
-            throw new InvalidOperationException("Пользователь должен иметь возможность отключить группировку диагностики.");
-        }
-
-        viewModel.GroupDiagnostics = true;
         viewModel.ClearDiagnosticFiltersCommand.Execute(null);
         if (viewModel.FilteredDiagnosticCount != viewModel.DiagnosticCount ||
             viewModel.HasActiveDiagnosticFilters ||
-            viewModel.DiagnosticsView.GroupDescriptions.Count != 1)
+            viewModel.DiagnosticsView.GroupDescriptions.Count != 0 ||
+            viewModel.SelectedDiagnosticCategory is not { IsAll: true })
         {
-            throw new InvalidOperationException("Сброс фильтров должен вернуть полный сгруппированный список диагностики.");
+            throw new InvalidOperationException("Сброс фильтров должен вернуть все виды проблем и полный список записей.");
         }
     }
 

@@ -2122,6 +2122,14 @@ internal sealed record ValidationMessageViewModel(
     public bool CanNavigate => !string.IsNullOrWhiteSpace(TableKey) && RecordIndex is >= 0;
 }
 
+internal sealed record DiagnosticCategoryViewModel(
+    string Key,
+    string Title,
+    string Severity,
+    string SeverityText,
+    int Count,
+    bool IsAll = false);
+
 internal sealed class WorkspaceSnapshot
 {
     public required string SourcePath { get; init; }
