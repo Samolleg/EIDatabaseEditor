@@ -2032,6 +2032,8 @@ internal static class Program
             Grid? briefingWorkspace = window.FindName("BriefingWorkspace") as Grid;
             Grid? genericRecordsWorkspace = window.FindName("GenericRecordsWorkspace") as Grid;
             DataGrid? briefingPhrasesGrid = window.FindName("BriefingPhrasesGrid") as DataGrid;
+            TextBox? briefingTitleTextBox = window.FindName("BriefingTitleTextBox") as TextBox;
+            Button? briefingTitleSaveButton = window.FindName("BriefingTitleSaveButton") as Button;
             BriefingPhraseViewModel editablePhrase = briefingWithSound.BriefingPhrases.First(briefingEvent =>
                 briefingEvent.IsPhrase && briefingEvent.HasText && briefingEvent.HasAudio);
             viewModel.SelectedBriefingPhrase = editablePhrase;
@@ -2046,6 +2048,9 @@ internal static class Program
                 briefingWorkspace?.Visibility != Visibility.Visible ||
                 genericRecordsWorkspace?.Visibility != Visibility.Collapsed ||
                 briefingPhrasesGrid is null ||
+                briefingTitleTextBox is null ||
+                briefingTitleSaveButton is null ||
+                !briefingTitleTextBox.IsEnabled ||
                 briefingPhrasesGrid.Items.Count != briefingWithSound.BriefingEventCount ||
                 !briefingWithSound.BriefingPhrases.Any(briefingEvent => briefingEvent.Kind == BriefingEventKind.Camera) ||
                 !briefingWithSound.BriefingPhrases.Any(briefingEvent => briefingEvent.Kind == BriefingEventKind.Animation) ||
@@ -2057,6 +2062,45 @@ internal static class Program
             {
                 throw new InvalidOperationException(
                     "Режим Брифингов должен показывать полную сценарную ленту, мысли, камеру, анимацию, реплики и найденные MP3.");
+            }
+
+            LocalizationEntryViewModel briefingText = briefingWithSound.RelatedTexts.Single(text =>
+                text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
+            string originalBriefingTitle = briefingText.Title;
+            string originalBriefingDescription = briefingText.Description;
+            string originalBriefingIdentity = briefingWithSound.DisplayName;
+            int titleChangeCount = viewModel.ChangeCount;
+            viewModel.BriefingTitleDraft = originalBriefingTitle + " — проверка названия";
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (!viewModel.ApplyBriefingTitleCommand.CanExecute(null) || !briefingTitleSaveButton.IsEnabled)
+            {
+                throw new InvalidOperationException(
+                    "Изменённое название Брифинга должно разрешать явное сохранение в связанном BRIEFING-ресурсе.");
+            }
+
+            viewModel.ApplyBriefingTitleCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (!briefingText.Title.EndsWith("проверка названия", StringComparison.Ordinal) ||
+                briefingWithSound.LocalizationTitle != briefingText.Title ||
+                briefingWithSound.DisplayName != originalBriefingIdentity ||
+                briefingText.Description != originalBriefingDescription ||
+                viewModel.ChangeCount != titleChangeCount + 1 ||
+                viewModel.ApplyBriefingTitleCommand.CanExecute(null))
+            {
+                throw new InvalidOperationException(
+                    "Редактор названия должен менять только заголовок BRIEFING в texts.res, не затрагивая технический ключ и сценарий.");
+            }
+
+            viewModel.UndoCommand.Execute(null);
+            window.Dispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+            if (briefingText.Title != originalBriefingTitle ||
+                briefingWithSound.LocalizationTitle != originalBriefingTitle ||
+                viewModel.BriefingTitleDraft != originalBriefingTitle ||
+                briefingText.Description != originalBriefingDescription ||
+                viewModel.ChangeCount != titleChangeCount)
+            {
+                throw new InvalidOperationException(
+                    "Undo должен полностью вернуть название Брифинга и синхронизировать поле редактора.");
             }
 
             var soundForExcel = briefingWithSound.RelatedSounds.First(sound => sound.HasTranscript);
@@ -2079,9 +2123,6 @@ internal static class Program
                     "Таблица «Связанные звуковые файлы» должна копировать текст реплики и путь RES в Excel.");
             }
 
-            LocalizationEntryViewModel briefingText = briefingWithSound.RelatedTexts.Single(text =>
-                text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
-            string originalBriefingDescription = briefingText.Description;
             int editedPhraseNumber = viewModel.SelectedBriefingPhrase.Number;
             viewModel.BriefingDraftText = viewModel.SelectedBriefingPhrase.Text + " проверка";
             if (!viewModel.ApplyBriefingPhraseCommand.CanExecute(null))
@@ -2095,7 +2136,10 @@ internal static class Program
                 !viewModel.SelectedBriefingPhrase.Text.EndsWith("проверка", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException(
-                    "Крупный редактор должен менять точный #phrase и сохранять выбор реплики после обновления texts.res.");
+                    "Крупный редактор должен менять точный #phrase и сохранять выбор реплики после обновления texts.res. " +
+                    $"descriptionChanged={briefingText.Description != originalBriefingDescription}; " +
+                    $"expectedNumber={editedPhraseNumber}; selectedNumber={viewModel.SelectedBriefingPhrase?.Number}; " +
+                    $"selectedText={viewModel.SelectedBriefingPhrase?.Text}");
             }
 
             viewModel.UndoCommand.Execute(null);

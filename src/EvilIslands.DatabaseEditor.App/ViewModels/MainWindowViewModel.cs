@@ -33,6 +33,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private BriefingPhraseViewModel? _selectedBriefingPhrase;
     private PendingSoundEditViewModel? _pendingSoundEdit;
     private bool _showOnlyBriefingProblems;
+    private string _briefingTitleDraft = string.Empty;
     private string _briefingDraftSpeaker = string.Empty;
     private string _briefingDraftText = string.Empty;
     private string _briefingDraftArguments = string.Empty;
@@ -146,6 +147,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         NewBriefingPhraseCommand = new RelayCommand(
             BeginNewBriefingPhrase,
             () => IsBriefingsTable && SelectedRecord is not null && HasTextsDocument && !IsBusy);
+        ApplyBriefingTitleCommand = new RelayCommand(
+            ApplyBriefingTitle,
+            CanApplyBriefingTitle);
         AddBriefingEventCommand = new RelayCommand<string>(
             AddBriefingEvent,
             kind => IsBriefingsTable && SelectedRecord is not null &&
@@ -305,6 +309,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public ICommand NewBriefingPhraseCommand { get; }
 
+    public ICommand ApplyBriefingTitleCommand { get; }
+
     public ICommand AddBriefingEventCommand { get; }
 
     public ICommand DeleteBriefingEventCommand { get; }
@@ -452,6 +458,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsCurrentTableAddable));
             OnPropertyChanged(nameof(CurrentTableSupportsSounds));
             OnPropertyChanged(nameof(IsBriefingsTable));
+            OnPropertyChanged(nameof(CanEditBriefingTitle));
             OnPropertyChanged(nameof(VisibleSpreadsheetColumns));
             OnPropertyChanged(nameof(SpreadsheetColumnCountText));
             OnPropertyChanged(nameof(ColumnModeButtonText));
@@ -506,6 +513,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(SelectedRecordHasSoundReferences));
                 OnPropertyChanged(nameof(SelectedRecordHasDetails));
                 OnPropertyChanged(nameof(SelectedRecordSoundCount));
+                RefreshBriefingTitleDraft();
                 RefreshBriefingPhraseSelection();
                 (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (AddMissingTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -533,6 +541,24 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public bool IsBriefingsTable => IsRecordsSection &&
                                     SelectedTable?.Key.Equals("quests.briefings", StringComparison.OrdinalIgnoreCase) is true;
+
+    public string BriefingTitleDraft
+    {
+        get => _briefingTitleDraft;
+        set
+        {
+            if (SetProperty(ref _briefingTitleDraft, value))
+            {
+                (ApplyBriefingTitleCommand as RelayCommand)?.RaiseCanExecuteChanged();
+            }
+        }
+    }
+
+    public bool CanEditBriefingTitle =>
+        IsBriefingsTable && GetSelectedBriefingText() is not null && !IsBusy;
+
+    public string BriefingTitleResourceName =>
+        GetSelectedBriefingText()?.ResourceName ?? "Связанный ресурс BRIEFING в texts.res не найден";
 
     public IEnumerable<BriefingPhraseViewModel> FilteredBriefingPhrases =>
         (SelectedRecord?.BriefingPhrases ?? [])
@@ -907,6 +933,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _isBusy, value))
             {
                 ApplyCurrentTableEditMode();
+                OnPropertyChanged(nameof(CanEditBriefingTitle));
                 RaiseCommandStates();
             }
         }
@@ -2331,6 +2358,42 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         SelectedRecord?.RelatedTexts.FirstOrDefault(text =>
             text.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase));
 
+    private bool CanApplyBriefingTitle()
+    {
+        LocalizationEntryViewModel? text = GetSelectedBriefingText();
+        return CanEditBriefingTitle && text is not null &&
+               !string.Equals(BriefingTitleDraft, text.Title, StringComparison.Ordinal);
+    }
+
+    private void ApplyBriefingTitle()
+    {
+        LocalizationEntryViewModel? text = GetSelectedBriefingText();
+        if (text is null)
+        {
+            ShowError("Для выбранного брифинга не найден ресурс BRIEFING в texts.res. Сначала создайте отсутствующий текст.");
+            return;
+        }
+
+        text.Title = BriefingTitleDraft;
+        if (text.HasError)
+        {
+            ShowError(text.ErrorMessage ?? "Не удалось изменить название брифинга.");
+            return;
+        }
+
+        RefreshBriefingTitleDraft();
+        StatusText = $"Название брифинга «{text.Title}» сохранено в {text.ResourceName}.";
+        RaiseBriefingCommandStates();
+    }
+
+    private void RefreshBriefingTitleDraft()
+    {
+        BriefingTitleDraft = GetSelectedBriefingText()?.Title ?? string.Empty;
+        OnPropertyChanged(nameof(CanEditBriefingTitle));
+        OnPropertyChanged(nameof(BriefingTitleResourceName));
+        (ApplyBriefingTitleCommand as RelayCommand)?.RaiseCanExecuteChanged();
+    }
+
     private int? GetBriefingInsertionOrdinal(string description)
     {
         if (SelectedBriefingPhrase?.IsTimelineEvent is true)
@@ -2344,6 +2407,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void SelectedRecord_PropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
     {
+        if (eventArgs.PropertyName == nameof(RecordRowViewModel.LocalizationTitle))
+        {
+            RefreshBriefingTitleDraft();
+            return;
+        }
+
         if (eventArgs.PropertyName != nameof(RecordRowViewModel.BriefingPhrases))
         {
             return;
@@ -2416,6 +2485,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RaiseBriefingCommandStates()
     {
         (NewBriefingPhraseCommand as RelayCommand)?.RaiseCanExecuteChanged();
+        (ApplyBriefingTitleCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (AddBriefingEventCommand as RelayCommand<string>)?.RaiseCanExecuteChanged();
         (DeleteBriefingEventCommand as RelayCommand)?.RaiseCanExecuteChanged();
         (DuplicateBriefingEventCommand as RelayCommand)?.RaiseCanExecuteChanged();
@@ -2609,10 +2679,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _undo.Push(new TextEditFrame(entry, eventArgs.BeforeState, eventArgs.AfterState));
+        bool refreshRelatedSounds = !eventArgs.FieldName.Equals("Название RU", StringComparison.Ordinal);
+        _undo.Push(new TextEditFrame(entry, eventArgs.BeforeState, eventArgs.AfterState, refreshRelatedSounds));
         _redo.Clear();
         RefreshLocalizationChanges(entry);
-        RefreshLocalizationOwners(entry);
+        RefreshLocalizationOwners(entry, refreshRelatedSounds);
         RefreshViewsAfterLocalizationEdit();
         StatusText = $"Изменён {entry.ResourceName} · {eventArgs.FieldName}";
         RaiseCommandStates();
@@ -3206,7 +3277,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 TextResourceState textState = undo ? textFrame.BeforeState : textFrame.AfterState;
                 textFrame.Entry.RestoreState(textState);
                 RefreshLocalizationChanges(textFrame.Entry);
-                RefreshLocalizationOwners(textFrame.Entry);
+                RefreshLocalizationOwners(textFrame.Entry, textFrame.RefreshRelatedSounds);
                 RefreshViewsAfterLocalizationEdit();
                 status = undo
                     ? $"Отменено: {textFrame.Entry.ResourceName}"
@@ -3282,7 +3353,14 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private void RefreshLocalizationOwners(LocalizationEntryViewModel entry) =>
         RefreshLocalizationOwners([entry]);
 
-    private void RefreshLocalizationOwners(IEnumerable<LocalizationEntryViewModel> entries)
+    private void RefreshLocalizationOwners(
+        LocalizationEntryViewModel entry,
+        bool refreshRelatedSounds) =>
+        RefreshLocalizationOwners([entry], refreshRelatedSounds);
+
+    private void RefreshLocalizationOwners(
+        IEnumerable<LocalizationEntryViewModel> entries,
+        bool refreshRelatedSounds = true)
     {
         HashSet<LocalizationEntryViewModel> entrySet = entries.ToHashSet();
         if (entrySet.Count == 0)
@@ -3296,7 +3374,10 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                      .Where(record => record.RelatedTexts.Any(entrySet.Contains)))
         {
             record.RefreshLocalizationState();
-            _service.RefreshRelatedSounds(record);
+            if (refreshRelatedSounds)
+            {
+                _service.RefreshRelatedSounds(record);
+            }
         }
     }
 
@@ -4062,7 +4143,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private sealed record TextEditFrame(
         LocalizationEntryViewModel Entry,
         TextResourceState BeforeState,
-        TextResourceState AfterState) : WorkspaceEditFrame;
+        TextResourceState AfterState,
+        bool RefreshRelatedSounds = true) : WorkspaceEditFrame;
 
     private sealed record TextPresenceBatchEditFrame(
         IReadOnlyList<LocalizationEntryViewModel> Entries,

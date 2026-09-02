@@ -1885,6 +1885,10 @@
                                                     <RowDefinition Height="*" />
                                                 </Grid.RowDefinitions>
                                                 <Grid Margin="14,11,12,9">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
                                                         <ColumnDefinition Width="Auto" />
@@ -1900,6 +1904,35 @@
                                                               IsChecked="{Binding ShowOnlyBriefingProblems}"
                                                               VerticalAlignment="Center"
                                                               Foreground="{StaticResource TextBrush}" />
+                                                    <Grid Grid.Row="1"
+                                                          Grid.ColumnSpan="2"
+                                                          Margin="0,9,0,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel>
+                                                            <TextBlock Text="Название брифинга"
+                                                                       Foreground="{StaticResource MutedTextBrush}"
+                                                                       FontSize="10"
+                                                                       Margin="1,0,0,3" />
+                                                            <TextBox x:Name="BriefingTitleTextBox"
+                                                                     Text="{Binding BriefingTitleDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                     IsEnabled="{Binding CanEditBriefingTitle}"
+                                                                     ToolTip="{Binding BriefingTitleResourceName}"
+                                                                     MinWidth="170"
+                                                                     Padding="8,5" />
+                                                        </StackPanel>
+                                                        <Button x:Name="BriefingTitleSaveButton"
+                                                                Grid.Column="1"
+                                                                Content="Сохранить"
+                                                                Command="{Binding ApplyBriefingTitleCommand}"
+                                                                Style="{StaticResource AccentButton}"
+                                                                VerticalAlignment="Bottom"
+                                                                Margin="8,0,0,0"
+                                                                Padding="10,6"
+                                                                ToolTip="Изменить только отображаемое название; технический ключ брифинга останется прежним" />
+                                                    </Grid>
                                                 </Grid>
                                                 <DataGrid x:Name="BriefingPhrasesGrid"
                                                           Grid.Row="1"
