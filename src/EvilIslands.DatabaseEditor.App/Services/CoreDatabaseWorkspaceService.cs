@@ -157,7 +157,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         var resources = MapResources(document.Resources, document.Databases, cancellationToken);
 
         cancellationToken.ThrowIfCancellationRequested();
-        var diagnostics = MapDiagnostics(document.Diagnostics, cancellationToken);
+        var diagnostics = MapDiagnostics(document.Diagnostics, databases, cancellationToken);
         var snapshot = new WorkspaceSnapshot
         {
             SourcePath = document.SourcePath,
@@ -190,7 +190,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
     {
         DatabaseDocument document = RequireDocument();
         return Task.Run<IReadOnlyList<ValidationMessageViewModel>>(
-            () => MapDiagnostics(document.Validate(cancellationToken), cancellationToken),
+            () => MapDiagnostics(document.Validate(cancellationToken), _mappedDatabases, cancellationToken),
             cancellationToken);
     }
 
@@ -1014,13 +1014,35 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 
     private static IReadOnlyList<ValidationMessageViewModel> MapDiagnostics(
         IEnumerable<ValidationDiagnostic> diagnostics,
+        IReadOnlyList<DatabaseGroupViewModel> databases,
         CancellationToken cancellationToken = default)
     {
+        var tables = databases
+            .SelectMany(group => group.Tables)
+            .GroupBy(table => table.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         var result = new List<ValidationMessageViewModel>();
         foreach (var diagnostic in diagnostics)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var path = diagnostic.Path ?? diagnostic.Location?.ResourceName ?? "—";
+            DatabaseTableViewModel? table = null;
+            if (!string.IsNullOrWhiteSpace(diagnostic.Location?.TableKey))
+            {
+                tables.TryGetValue(diagnostic.Location.TableKey, out table);
+            }
+
+            string tableTitle = table?.Title ?? diagnostic.Location?.TableKey ?? "Весь документ";
+            string recordTitle = diagnostic.Location is { RecordIndex: >= 0 } location
+                ? string.IsNullOrWhiteSpace(location.RecordName)
+                    ? $"Строка {location.RecordIndex + 1:N0}"
+                    : location.RecordName
+                : "—";
+            string fieldTitle = diagnostic.Location?.FieldId is int fieldId
+                ? table?.Columns.FirstOrDefault(column =>
+                    column.FieldId == fieldId && column.Projection is null)?.Title ??
+                  diagnostic.Location.FieldKey ?? $"Поле {fieldId}"
+                : "—";
             result.Add(new ValidationMessageViewModel(
                 diagnostic.Severity.ToString(),
                 FormatSeverity(diagnostic.Severity),
@@ -1028,7 +1050,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                 FormatDomain(diagnostic.Domain),
                 diagnostic.Code,
                 diagnostic.Message,
-                FormatPlace(diagnostic),
+                FormatPlace(diagnostic, tableTitle, recordTitle, fieldTitle),
                 FormatDetail(diagnostic, path),
                 path,
                 diagnostic.Offset,
@@ -1037,7 +1059,10 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                 diagnostic.Location?.TableKey,
                 diagnostic.Location?.RecordIndex,
                 diagnostic.Location?.FieldId,
-                diagnostic.Location?.FieldKey));
+                diagnostic.Location?.FieldKey,
+                tableTitle,
+                recordTitle,
+                fieldTitle));
         }
 
         return result;
@@ -1056,7 +1081,11 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         _ => "Структура",
     };
 
-    private static string FormatPlace(ValidationDiagnostic diagnostic)
+    private static string FormatPlace(
+        ValidationDiagnostic diagnostic,
+        string tableTitle,
+        string recordTitle,
+        string fieldTitle)
     {
         var location = diagnostic.Location;
         if (location is null)
@@ -1071,26 +1100,15 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                 : diagnostic.Path;
         }
 
-        var parts = new List<string>(3);
-        parts.Add(string.IsNullOrWhiteSpace(location.TableKey)
-            ? location.ResourceName
-            : location.TableKey);
+        var parts = new List<string>(3) { tableTitle };
         if (location.RecordIndex >= 0)
         {
-            var record = $"#{location.RecordIndex + 1:N0}";
-            if (!string.IsNullOrWhiteSpace(location.RecordName))
-            {
-                record += $" {location.RecordName}";
-            }
-
-            parts.Add(record);
+            parts.Add($"строка {location.RecordIndex + 1:N0} · {recordTitle}");
         }
 
-        if (location.FieldId is int fieldId)
+        if (location.FieldId is not null)
         {
-            parts.Add(string.IsNullOrWhiteSpace(location.FieldKey)
-                ? $"поле {fieldId}"
-                : $"{location.FieldKey} [{fieldId}]");
+            parts.Add(fieldTitle);
         }
 
         return string.Join(" · ", parts);

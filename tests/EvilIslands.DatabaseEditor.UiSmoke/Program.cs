@@ -714,6 +714,7 @@ internal static class Program
             TextsFormulaBarHeight = 164,
             BriefingScenesWidth = 288,
             BriefingTimelineWidth = 612,
+            ValidationDetailsWidth = 518,
             MainWindowWidth = 1730,
             MainWindowHeight = 1030,
             MainWindowMaximized = true,
@@ -750,6 +751,7 @@ internal static class Program
             reopenedLayout.TextsFormulaBarHeight != 164 ||
             reopenedLayout.BriefingScenesWidth != 288 ||
             reopenedLayout.BriefingTimelineWidth != 612 ||
+            reopenedLayout.ValidationDetailsWidth != 518 ||
             reopenedLayout.MainWindowWidth != 1730 ||
             reopenedLayout.MainWindowHeight != 1030 ||
             !reopenedLayout.MainWindowMaximized ||
@@ -776,6 +778,7 @@ internal static class Program
         EditorLayoutState resetLayout = new EditorPreferencesStore(settingsPath).GetLayout();
         if (resetLayout.SidebarWidth != 300 || resetLayout.DetailsPaneHeight != 360 ||
             resetLayout.FormulaBarHeight != 60 || resetLayout.BriefingTimelineWidth != 460 ||
+            resetLayout.ValidationDetailsWidth != 430 ||
             resetLayout.MainWindowMaximized || resetLayout.LongTextEditorMaximized ||
             resetLayout.DetailsPaneDetached || resetLayout.DetailsWindowWidth != 1080 ||
             resetLayout.DetailsWindowHeight != 620 || resetLayout.DetailsWindowMaximized ||
@@ -1440,6 +1443,7 @@ internal static class Program
         window.UpdateLayout();
         window.Dispatcher.Invoke(() => { }, DispatcherPriority.ApplicationIdle);
         VerifyMaximizedWindowFitsWorkArea(window);
+        VerifyValidationDashboard(window, viewModel);
         HashSet<int> prototypeFieldsWithSpecificProjections = prototypes.Columns
             .Where(column => column.Projection is not null &&
                              column.Projection.Kind != EvilIslands.DatabaseEditor.Core.DatabaseFieldProjectionKind.DecodedValue)
@@ -2813,6 +2817,84 @@ internal static class Program
         }
 
         VerifyUnsavedChangesClose(sourcePath);
+    }
+
+    private static void VerifyValidationDashboard(MainWindow window, MainWindowViewModel viewModel)
+    {
+        if (window.FindName("ValidationGrid") is not DataGrid validationGrid ||
+            window.FindName("ValidationSearchBox") is not TextBox ||
+            window.FindName("ValidationSeverityFilter") is not ComboBox ||
+            window.FindName("ValidationDomainFilter") is not ComboBox ||
+            window.FindName("ValidationBlockingFilter") is not CheckBox ||
+            window.FindName("ValidationGroupToggle") is not CheckBox ||
+            window.FindName("ValidationClearFiltersButton") is not Button ||
+            validationGrid.Columns.Count != 4 ||
+            !ReferenceEquals(validationGrid.ItemsSource, viewModel.DiagnosticsView))
+        {
+            throw new InvalidOperationException(
+                "Проверка должна иметь единый компактный список, поиск, фильтры, группировку и панель подробностей.");
+        }
+
+        if (viewModel.Diagnostics.Count == 0)
+        {
+            throw new InvalidOperationException("Реальная база должна содержать диагностические сообщения для проверки интерфейса.");
+        }
+
+        ValidationMessageViewModel probe = viewModel.Diagnostics.First();
+        if (string.IsNullOrWhiteSpace(probe.CategoryText) ||
+            probe.CategoryText.StartsWith("SEM_", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(probe.TableTitle) ||
+            viewModel.DiagnosticsView.GroupDescriptions.Count != 1)
+        {
+            throw new InvalidOperationException(
+                "Диагностика должна показывать понятную категорию и место, группировать одинаковые причины и выбирать запись для подробностей.");
+        }
+
+
+        viewModel.SelectedDiagnostic = probe;
+        if (!viewModel.HasSelectedDiagnostic)
+        {
+            throw new InvalidOperationException("Выбранная проблема должна открывать отдельную панель подробностей.");
+        }
+
+        viewModel.DiagnosticSearchText = probe.Code;
+        int expectedByCode = viewModel.Diagnostics.Count(item =>
+            item.SearchText.Contains(probe.Code, StringComparison.CurrentCultureIgnoreCase));
+        if (viewModel.FilteredDiagnosticCount != expectedByCode || expectedByCode == 0)
+        {
+            throw new InvalidOperationException("Поиск проверки должен находить и понятный текст, и скрытый технический код.");
+        }
+
+        viewModel.DiagnosticSearchText = string.Empty;
+        viewModel.SelectedDiagnosticDomainFilter = probe.DomainText;
+        int expectedByDomain = viewModel.Diagnostics.Count(item => item.DomainText == probe.DomainText);
+        if (viewModel.FilteredDiagnosticCount != expectedByDomain)
+        {
+            throw new InvalidOperationException("Фильтр области проверки должен отделять структуру от семантики.");
+        }
+
+        viewModel.SelectedDiagnosticDomainFilter = "Все области";
+        viewModel.ShowOnlyBlockingDiagnostics = true;
+        if (viewModel.FilteredDiagnosticCount != viewModel.Diagnostics.Count(item => item.IsBlocking))
+        {
+            throw new InvalidOperationException("Фильтр блокирующих проблем должен оставлять только ошибки, мешающие сохранению.");
+        }
+
+        viewModel.ShowOnlyBlockingDiagnostics = false;
+        viewModel.GroupDiagnostics = false;
+        if (viewModel.DiagnosticsView.GroupDescriptions.Count != 0)
+        {
+            throw new InvalidOperationException("Пользователь должен иметь возможность отключить группировку диагностики.");
+        }
+
+        viewModel.GroupDiagnostics = true;
+        viewModel.ClearDiagnosticFiltersCommand.Execute(null);
+        if (viewModel.FilteredDiagnosticCount != viewModel.DiagnosticCount ||
+            viewModel.HasActiveDiagnosticFilters ||
+            viewModel.DiagnosticsView.GroupDescriptions.Count != 1)
+        {
+            throw new InvalidOperationException("Сброс фильтров должен вернуть полный сгруппированный список диагностики.");
+        }
     }
 
     private static void VerifyResFileManagerDialog()

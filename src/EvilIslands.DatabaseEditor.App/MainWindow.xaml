@@ -2296,38 +2296,132 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="12" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="12" />
                                     <RowDefinition Height="*" />
                                 </Grid.RowDefinitions>
-                                <StackPanel Grid.Row="0">
+                                <Grid Grid.Row="0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Background="#452727" CornerRadius="8" Padding="12,7">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="●" Foreground="#FF8B8B" FontSize="9" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                            <TextBlock Text="{Binding ErrorCount, StringFormat={}{0} ошибок}" Foreground="#FFB4B4" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Background="#403821" CornerRadius="8" Padding="12,7" Margin="8,0,0,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="●" Foreground="#E7C45A" FontSize="9" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                            <TextBlock Text="{Binding WarningCount, StringFormat={}{0} предупреждений}" Foreground="#F1D58C" FontWeight="SemiBold" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="2" Background="#1D2A26" CornerRadius="8" Padding="12,7" Margin="8,0,0,0">
+                                        <TextBlock Text="{Binding DiagnosticFilterSummary}" Foreground="{StaticResource MutedTextBrush}" />
+                                    </Border>
+                                    <Button Grid.Column="4" Style="{StaticResource RoundedButton}" Command="{Binding RefreshValidationCommand}" Content="↻  Проверить снова  ·  F5" />
+                                </Grid>
+
+                                <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="2*" MinWidth="250" />
+                                            <ColumnDefinition Width="160" />
+                                            <ColumnDefinition Width="150" />
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Border Background="#452727" CornerRadius="7" Padding="10,5">
-                                                <TextBlock Text="{Binding ErrorCount, StringFormat={}{0} ошибок}" Foreground="#FFB4B4" />
-                                            </Border>
-                                            <Border Background="#403821" CornerRadius="7" Padding="10,5" Margin="8,0,0,0">
-                                                <TextBlock Text="{Binding WarningCount, StringFormat={}{0} предупреждений}" Foreground="#F1D58C" />
-                                            </Border>
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Command="{Binding RefreshValidationCommand}" Content="Проверить снова  ·  F5" />
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <Grid Grid.Column="0">
+                                            <TextBox x:Name="ValidationSearchBox"
+                                                     Text="{Binding DiagnosticSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Поиск по причине, месту, сообщению или техническому коду"
+                                                     Padding="32,8,10,8" />
+                                            <TextBlock Text="⌕" Foreground="{StaticResource MutedTextBrush}" FontSize="17" Margin="11,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" />
+                                        </Grid>
+                                        <ComboBox x:Name="ValidationSeverityFilter"
+                                                  Grid.Column="1"
+                                                  Margin="10,0,0,0"
+                                                  ItemsSource="{Binding DiagnosticSeverityOptions}"
+                                                  SelectedItem="{Binding SelectedDiagnosticSeverityFilter}" />
+                                        <ComboBox x:Name="ValidationDomainFilter"
+                                                  Grid.Column="2"
+                                                  Margin="10,0,0,0"
+                                                  ItemsSource="{Binding DiagnosticDomainOptions}"
+                                                  SelectedItem="{Binding SelectedDiagnosticDomainFilter}" />
+                                        <CheckBox x:Name="ValidationBlockingFilter"
+                                                  Grid.Row="1"
+                                                  Grid.Column="0"
+                                                  Margin="2,10,0,0"
+                                                  IsChecked="{Binding ShowOnlyBlockingDiagnostics}"
+                                                  Content="Только блокирующие"
+                                                  VerticalAlignment="Center" />
+                                        <CheckBox x:Name="ValidationGroupToggle"
+                                                  Grid.Row="1"
+                                                  Grid.Column="1"
+                                                  Grid.ColumnSpan="2"
+                                                  Margin="10,10,0,0"
+                                                  IsChecked="{Binding GroupDiagnostics}"
+                                                  Content="Группировать похожие"
+                                                  VerticalAlignment="Center" />
+                                        <Button x:Name="ValidationClearFiltersButton"
+                                                Grid.Column="4"
+                                                Style="{StaticResource RoundedButton}"
+                                                Command="{Binding ClearDiagnosticFiltersCommand}"
+                                                Content="Сбросить фильтры"
+                                                Margin="12,0,0,0" />
                                     </Grid>
-                                    <Border Background="#24352F" CornerRadius="7" Padding="10,7" Margin="0,10,0,0">
-                                        <TextBlock Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap">
-                                            <Run Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" Text="Семантические предупреждения" />
-                                            <Run Text=" — подсказки для ручной проверки. Они не исправляют данные автоматически. Блокирующие структурные ошибки отмечены в столбце «Область»." />
-                                        </TextBlock>
-                                    </Border>
-                                </StackPanel>
-                                <Border Grid.Row="2" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                                    <Grid>
+                                </Border>
+
+                                <Grid Grid.Row="4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" MinWidth="360" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition x:Name="ValidationDetailsColumn" Width="430" MinWidth="320" MaxWidth="760" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" CornerRadius="10" ClipToBounds="True" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                        <Grid>
                                         <DataGrid x:Name="ValidationGrid"
-                                                  ItemsSource="{Binding Diagnostics}"
+                                                  ItemsSource="{Binding DiagnosticsView}"
+                                                  SelectedItem="{Binding SelectedDiagnostic}"
                                                   BorderThickness="0"
                                                   IsReadOnly="True"
+                                                  RowHeight="54"
                                                   MouseDoubleClick="ValidationGrid_MouseDoubleClick">
+                                            <DataGrid.GroupStyle>
+                                                <GroupStyle>
+                                                    <GroupStyle.ContainerStyle>
+                                                        <Style TargetType="GroupItem">
+                                                            <Setter Property="Template">
+                                                                <Setter.Value>
+                                                                    <ControlTemplate TargetType="GroupItem">
+                                                                        <Expander IsExpanded="False" Background="Transparent">
+                                                                            <Expander.Header>
+                                                                                <Border Background="#1D2A26" BorderBrush="#315044" BorderThickness="0,0,0,1" Padding="11,9">
+                                                                                    <StackPanel Orientation="Horizontal">
+                                                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                                                                                        <Border Background="#2B4239" CornerRadius="8" Padding="7,2" Margin="9,0,0,0">
+                                                                                            <TextBlock Text="{Binding ItemCount}" Foreground="{StaticResource AccentBrush}" FontSize="11" />
+                                                                                        </Border>
+                                                                                    </StackPanel>
+                                                                                </Border>
+                                                                            </Expander.Header>
+                                                                            <ItemsPresenter />
+                                                                        </Expander>
+                                                                    </ControlTemplate>
+                                                                </Setter.Value>
+                                                            </Setter>
+                                                        </Style>
+                                                    </GroupStyle.ContainerStyle>
+                                                </GroupStyle>
+                                            </DataGrid.GroupStyle>
                                             <DataGrid.Columns>
                                                 <DataGridTemplateColumn Header="" Width="32" CanUserSort="False">
                                                     <DataGridTemplateColumn.CellTemplate>
@@ -2336,47 +2430,27 @@
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Область" Width="124" SortMemberPath="DomainText" ClipboardContentBinding="{Binding DomainText}">
+                                                <DataGridTemplateColumn Header="Проблема" Width="210" SortMemberPath="CategoryText" ClipboardContentBinding="{Binding CategoryText}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <StackPanel VerticalAlignment="Center">
-                                                                <TextBlock Text="{Binding DomainText}" FontWeight="SemiBold" />
-                                                                <TextBlock Text="{Binding BlockingText}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" Margin="0,2,0,0" />
+                                                                <TextBlock Text="{Binding CategoryText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock Text="{Binding ImpactText}" FontSize="10" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" />
                                                             </StackPanel>
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Место" Width="2*" MinWidth="240" SortMemberPath="Place" ClipboardContentBinding="{Binding Place}">
+                                                <DataGridTemplateColumn Header="Где находится" Width="1.6*" MinWidth="220" SortMemberPath="Place" ClipboardContentBinding="{Binding Place}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
-                                                            <TextBlock Text="{Binding Place}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}" />
+                                                            <TextBlock Text="{Binding Place}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="38" ToolTip="{Binding Detail}" />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
-                                                <DataGridTextColumn Header="Уровень" Binding="{Binding SeverityText}" Width="118" />
-                                                <DataGridTemplateColumn Header="Код" Width="170" SortMemberPath="Code" ClipboardContentBinding="{Binding Code}">
+                                                <DataGridTemplateColumn Header="Что обнаружено" Width="2.4*" MinWidth="300" SortMemberPath="Message" ClipboardContentBinding="{Binding Message}">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
-                                                            <TextBlock Text="{Binding Code}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Code}" FontFamily="Cascadia Mono, Consolas" FontSize="11" />
-                                                        </DataTemplate>
-                                                    </DataGridTemplateColumn.CellTemplate>
-                                                </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="Сообщение" Width="4*" MinWidth="320" SortMemberPath="Message" ClipboardContentBinding="{Binding Message}">
-                                                    <DataGridTemplateColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <TextBlock Text="{Binding Message}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Message}" />
-                                                        </DataTemplate>
-                                                    </DataGridTemplateColumn.CellTemplate>
-                                                </DataGridTemplateColumn>
-                                                <DataGridTemplateColumn Header="" Width="92" CanUserSort="False">
-                                                    <DataGridTemplateColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <Button Style="{StaticResource RoundedButton}"
-                                                                    Content="Открыть"
-                                                                    Padding="8,4"
-                                                                    MinHeight="28"
-                                                                    Command="{Binding DataContext.NavigateToDiagnosticCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
-                                                                    CommandParameter="{Binding}" />
+                                                            <TextBlock Text="{Binding Message}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="38" ToolTip="{Binding Message}" />
                                                         </DataTemplate>
                                                     </DataGridTemplateColumn.CellTemplate>
                                                 </DataGridTemplateColumn>
@@ -2387,18 +2461,86 @@
                                                 <Style TargetType="StackPanel">
                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                     <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding DiagnosticCount}" Value="0">
+                                                        <DataTrigger Binding="{Binding FilteredDiagnosticCount}" Value="0">
                                                             <Setter Property="Visibility" Value="Visible" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </StackPanel.Style>
                                             <TextBlock Text="✓" FontSize="34" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" />
-                                            <TextBlock Text="Структурных проблем не обнаружено" FontSize="16" FontWeight="SemiBold" Margin="0,10,0,0" />
-                                            <TextBlock Text="Перед использованием изменённой базы всё равно рекомендуется отдельное тестирование в игре." Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                            <TextBlock Text="{Binding DiagnosticEmptyTitle}" FontSize="16" FontWeight="SemiBold" Margin="0,10,0,0" />
+                                            <TextBlock Text="{Binding DiagnosticEmptyHint}" Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
                                         </StackPanel>
-                                    </Grid>
-                                </Border>
+                                        </Grid>
+                                    </Border>
+
+                                    <GridSplitter Grid.Column="1"
+                                                  Width="10"
+                                                  HorizontalAlignment="Stretch"
+                                                  VerticalAlignment="Stretch"
+                                                  Background="Transparent"
+                                                  DragCompleted="LayoutSplitter_DragCompleted"
+                                                  ToolTip="Изменить ширину панели подробностей" />
+
+                                    <Border Grid.Column="2" Style="{StaticResource SurfaceCard}" Padding="16">
+                                        <Grid>
+                                            <StackPanel Visibility="{Binding HasSelectedDiagnostic, Converter={StaticResource InverseBooleanToVisibilityConverter}}"
+                                                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <TextBlock Text="☑" FontSize="30" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
+                                                <TextBlock Text="Выберите проблему" FontSize="16" FontWeight="SemiBold" Margin="0,10,0,0" />
+                                                <TextBlock Text="Здесь появятся полное сообщение и место в базе." Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" />
+                                            </StackPanel>
+                                            <Grid Visibility="{Binding HasSelectedDiagnostic, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="*" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+                                                    <StackPanel>
+                                                        <TextBlock Text="ПОДРОБНОСТИ" Style="{StaticResource MutedLabel}" />
+                                                        <TextBlock Text="{Binding SelectedDiagnostic.CategoryText}" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                                            <TextBlock Text="●" FontSize="9" Foreground="{Binding SelectedDiagnostic.Severity, Converter={StaticResource SeverityBrushConverter}}" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                                            <TextBlock Text="{Binding SelectedDiagnostic.SeverityText}" />
+                                                            <TextBlock Text=" · " Foreground="{StaticResource MutedTextBrush}" />
+                                                            <TextBlock Text="{Binding SelectedDiagnostic.ImpactText}" Foreground="{StaticResource MutedTextBrush}" />
+                                                        </StackPanel>
+
+                                                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Margin="0,14,0,0" Padding="0,14,0,0">
+                                                            <StackPanel>
+                                                                <TextBlock Text="Что обнаружено" Style="{StaticResource MutedLabel}" />
+                                                                <TextBlock Text="{Binding SelectedDiagnostic.Message}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                                                            </StackPanel>
+                                                        </Border>
+
+                                                        <Border Background="#191F1D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,14,0,0">
+                                                            <StackPanel>
+                                                                <TextBlock Text="МЕСТО В БАЗЕ" Style="{StaticResource MutedLabel}" />
+                                                                <TextBlock Text="{Binding SelectedDiagnostic.TableTitle}" FontWeight="SemiBold" Margin="0,7,0,0" TextWrapping="Wrap" />
+                                                                <TextBlock Text="{Binding SelectedDiagnostic.RecordTitle, StringFormat=Запись: {0}}" Foreground="{StaticResource MutedTextBrush}" Margin="0,5,0,0" TextWrapping="Wrap" />
+                                                                <TextBlock Text="{Binding SelectedDiagnostic.FieldTitle, StringFormat=Поле: {0}}" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Border>
+
+                                                        <Expander Header="Технические сведения" Margin="0,14,0,0">
+                                                            <StackPanel Margin="0,8,0,0">
+                                                                <TextBlock Text="{Binding SelectedDiagnostic.Code}" FontFamily="Cascadia Mono, Consolas" FontSize="11" TextWrapping="Wrap" />
+                                                                <TextBlock Text="{Binding SelectedDiagnostic.Detail}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                                            </StackPanel>
+                                                        </Expander>
+                                                    </StackPanel>
+                                                </ScrollViewer>
+                                                <Button Grid.Row="1"
+                                                        Style="{StaticResource AccentButton}"
+                                                        Command="{Binding NavigateToDiagnosticCommand}"
+                                                        CommandParameter="{Binding SelectedDiagnostic}"
+                                                        Content="Открыть место в таблице"
+                                                        HorizontalAlignment="Stretch"
+                                                        Margin="0,14,0,0" />
+                                            </Grid>
+                                        </Grid>
+                                    </Border>
+                                </Grid>
                             </Grid>
                         </Grid>
 

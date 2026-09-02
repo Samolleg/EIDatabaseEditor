@@ -213,6 +213,7 @@ internal sealed class EditorPreferencesStore
         TextsFormulaBarHeight = Clamp(source.TextsFormulaBarHeight, 70, 300, 86),
         BriefingScenesWidth = Clamp(source.BriefingScenesWidth, 170, 520, 220),
         BriefingTimelineWidth = Clamp(source.BriefingTimelineWidth, 300, 900, 460),
+        ValidationDetailsWidth = Clamp(source.ValidationDetailsWidth, 320, 760, 430),
         MainWindowWidth = Clamp(source.MainWindowWidth, 1180, 5000, 1440),
         MainWindowHeight = Clamp(source.MainWindowHeight, 680, 3000, 900),
         MainWindowMaximized = source.MainWindowMaximized,
@@ -337,6 +338,8 @@ internal sealed class EditorLayoutState
     public double BriefingScenesWidth { get; set; } = 220;
 
     public double BriefingTimelineWidth { get; set; } = 460;
+
+    public double ValidationDetailsWidth { get; set; } = 430;
 
     public double MainWindowWidth { get; set; } = 1440;
 

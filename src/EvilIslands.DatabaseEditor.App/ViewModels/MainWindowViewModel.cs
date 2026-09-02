@@ -28,6 +28,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private ICollectionView _recordsView;
     private ICollectionView _resourcesView;
     private ICollectionView _textsView;
+    private ICollectionView _diagnosticsView;
     private RecordRowViewModel? _selectedRecord;
     private BriefingPhraseViewModel? _selectedBriefingPhrase;
     private PendingSoundEditViewModel? _pendingSoundEdit;
@@ -43,6 +44,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     private string _searchText = string.Empty;
     private string _resourceSearchText = string.Empty;
     private string _textsSearchText = string.Empty;
+    private string _diagnosticSearchText = string.Empty;
+    private string _selectedDiagnosticSeverityFilter = "Все уровни";
+    private string _selectedDiagnosticDomainFilter = "Все области";
+    private bool _showOnlyBlockingDiagnostics;
+    private bool _groupDiagnostics = true;
+    private ValidationMessageViewModel? _selectedDiagnostic;
+    private int _filteredDiagnosticCount;
     private string _statusText = "Готово. Откройте database.res для редактирования.";
     private string? _notificationMessage;
     private bool _notificationIsError;
@@ -75,6 +83,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         _recordsView = CollectionViewSource.GetDefaultView(Array.Empty<RecordRowViewModel>());
         _resourcesView = CollectionViewSource.GetDefaultView(Resources);
         _textsView = CollectionViewSource.GetDefaultView(TextResources);
+        _diagnosticsView = CollectionViewSource.GetDefaultView(Diagnostics);
+        _diagnosticsView.Filter = FilterDiagnostic;
+        ConfigureDiagnosticGrouping();
 
         NavigationItems =
         [
@@ -114,6 +125,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         ClearSearchCommand = new RelayCommand(() => SearchText = string.Empty, () => !string.IsNullOrEmpty(SearchText));
         ClearResourceSearchCommand = new RelayCommand(() => ResourceSearchText = string.Empty, () => !string.IsNullOrEmpty(ResourceSearchText));
         ClearTextsSearchCommand = new RelayCommand(() => TextsSearchText = string.Empty, () => !string.IsNullOrEmpty(TextsSearchText));
+        ClearDiagnosticFiltersCommand = new RelayCommand(
+            ClearDiagnosticFilters,
+            () => HasActiveDiagnosticFilters);
         ToggleColumnModeCommand = new RelayCommand(
             ToggleColumnMode,
             () => IsRecordsSection && SelectedTable is { Columns.Count: > 12 } && !IsBusy);
@@ -234,6 +248,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     public RangeObservableCollection<ValidationMessageViewModel> Diagnostics { get; }
 
+    public IReadOnlyList<string> DiagnosticSeverityOptions { get; } =
+        ["Все уровни", "Ошибки", "Предупреждения", "Информация"];
+
+    public IReadOnlyList<string> DiagnosticDomainOptions { get; } =
+        ["Все области", "Структура", "Семантика"];
+
     public ICommand OpenCommand { get; }
 
     public ICommand AttachTextsCommand { get; }
@@ -263,6 +283,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public ICommand ClearResourceSearchCommand { get; }
 
     public ICommand ClearTextsSearchCommand { get; }
+
+    public ICommand ClearDiagnosticFiltersCommand { get; }
 
     public ICommand ToggleColumnModeCommand { get; }
 
@@ -329,6 +351,8 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         get => _textsView;
         private set => SetProperty(ref _textsView, value);
     }
+
+    public ICollectionView DiagnosticsView => _diagnosticsView;
 
     public WorkspaceSection CurrentSection
     {
@@ -715,6 +739,113 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
             }
         }
     }
+
+    public string DiagnosticSearchText
+    {
+        get => _diagnosticSearchText;
+        set
+        {
+            if (SetProperty(ref _diagnosticSearchText, value))
+            {
+                RefreshDiagnosticsView();
+            }
+        }
+    }
+
+    public string SelectedDiagnosticSeverityFilter
+    {
+        get => _selectedDiagnosticSeverityFilter;
+        set
+        {
+            value ??= "Все уровни";
+            if (SetProperty(ref _selectedDiagnosticSeverityFilter, value))
+            {
+                RefreshDiagnosticsView();
+            }
+        }
+    }
+
+    public string SelectedDiagnosticDomainFilter
+    {
+        get => _selectedDiagnosticDomainFilter;
+        set
+        {
+            value ??= "Все области";
+            if (SetProperty(ref _selectedDiagnosticDomainFilter, value))
+            {
+                RefreshDiagnosticsView();
+            }
+        }
+    }
+
+    public bool ShowOnlyBlockingDiagnostics
+    {
+        get => _showOnlyBlockingDiagnostics;
+        set
+        {
+            if (SetProperty(ref _showOnlyBlockingDiagnostics, value))
+            {
+                RefreshDiagnosticsView();
+            }
+        }
+    }
+
+    public bool GroupDiagnostics
+    {
+        get => _groupDiagnostics;
+        set
+        {
+            if (SetProperty(ref _groupDiagnostics, value))
+            {
+                ConfigureDiagnosticGrouping();
+                RefreshDiagnosticsView();
+            }
+        }
+    }
+
+    public ValidationMessageViewModel? SelectedDiagnostic
+    {
+        get => _selectedDiagnostic;
+        set
+        {
+            if (SetProperty(ref _selectedDiagnostic, value))
+            {
+                OnPropertyChanged(nameof(HasSelectedDiagnostic));
+            }
+        }
+    }
+
+    public bool HasSelectedDiagnostic => SelectedDiagnostic is not null;
+
+    public int FilteredDiagnosticCount
+    {
+        get => _filteredDiagnosticCount;
+        private set
+        {
+            if (SetProperty(ref _filteredDiagnosticCount, value))
+            {
+                OnPropertyChanged(nameof(DiagnosticFilterSummary));
+            }
+        }
+    }
+
+    public string DiagnosticFilterSummary => FilteredDiagnosticCount == DiagnosticCount
+        ? $"Показано {DiagnosticCount:N0}"
+        : $"Показано {FilteredDiagnosticCount:N0} из {DiagnosticCount:N0}";
+
+    public string DiagnosticEmptyTitle => DiagnosticCount == 0
+        ? "Проблем не обнаружено"
+        : "По выбранным условиям ничего не найдено";
+
+    public string DiagnosticEmptyHint => DiagnosticCount == 0
+        ? "Перед использованием изменённой базы всё равно проверьте её в игре."
+        : "Сбросьте фильтры или запустите проверку снова.";
+
+    public bool HasActiveDiagnosticFilters =>
+        !string.IsNullOrWhiteSpace(DiagnosticSearchText) ||
+        SelectedDiagnosticSeverityFilter != "Все уровни" ||
+        SelectedDiagnosticDomainFilter != "Все области" ||
+        ShowOnlyBlockingDiagnostics;
 
     public int FilteredRecordCount
     {
@@ -1540,11 +1671,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         SearchText = string.Empty;
         ResourceSearchText = string.Empty;
         TextsSearchText = string.Empty;
+        ClearDiagnosticFilters();
 
         ReplaceCollection(Resources, workspace.Resources);
         ReplaceCollection(Databases, workspace.Databases);
         ReplaceCollection(TextResources, workspace.TextResources);
         ReplaceCollection(Diagnostics, workspace.Diagnostics);
+        RefreshDiagnosticsView();
         SubscribeWorkspaceRecords(Databases);
         SubscribeWorkspaceTexts(TextResources);
         ApplyDiagnosticsToRecords(Diagnostics);
@@ -3366,6 +3499,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 () =>
                 {
                     ReplaceCollection(Diagnostics, diagnostics);
+                    RefreshDiagnosticsView();
                     ApplyDiagnosticsToRecords(Diagnostics);
                     RefreshAllCounts();
                     StatusText = Diagnostics.Count == 0
@@ -3441,6 +3575,9 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(DiagnosticCount));
         OnPropertyChanged(nameof(ErrorCount));
         OnPropertyChanged(nameof(WarningCount));
+        OnPropertyChanged(nameof(DiagnosticFilterSummary));
+        OnPropertyChanged(nameof(DiagnosticEmptyTitle));
+        OnPropertyChanged(nameof(DiagnosticEmptyHint));
         OnPropertyChanged(nameof(FilteredTextResourceCount));
     }
 
@@ -3463,6 +3600,90 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                         : []);
             }
         }
+    }
+
+    private bool FilterDiagnostic(object item)
+    {
+        if (item is not ValidationMessageViewModel diagnostic)
+        {
+            return false;
+        }
+
+        if (ShowOnlyBlockingDiagnostics && !diagnostic.IsBlocking)
+        {
+            return false;
+        }
+
+        if (SelectedDiagnosticSeverityFilter != "Все уровни" &&
+            !string.Equals(
+                SelectedDiagnosticSeverityFilter,
+                diagnostic.SeverityText switch
+                {
+                    "Ошибка" => "Ошибки",
+                    "Предупреждение" => "Предупреждения",
+                    _ => "Информация",
+                },
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (SelectedDiagnosticDomainFilter != "Все области" &&
+            !string.Equals(SelectedDiagnosticDomainFilter, diagnostic.DomainText, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return string.IsNullOrWhiteSpace(DiagnosticSearchText) ||
+               diagnostic.SearchText.Contains(
+                   DiagnosticSearchText.Trim(),
+                   StringComparison.CurrentCultureIgnoreCase);
+    }
+
+    private void ConfigureDiagnosticGrouping()
+    {
+        using IDisposable defer = DiagnosticsView.DeferRefresh();
+        DiagnosticsView.GroupDescriptions.Clear();
+        DiagnosticsView.SortDescriptions.Clear();
+        DiagnosticsView.SortDescriptions.Add(
+            new SortDescription(nameof(ValidationMessageViewModel.SeverityRank), ListSortDirection.Descending));
+        DiagnosticsView.SortDescriptions.Add(
+            new SortDescription(nameof(ValidationMessageViewModel.CategoryText), ListSortDirection.Ascending));
+        DiagnosticsView.SortDescriptions.Add(
+            new SortDescription(nameof(ValidationMessageViewModel.Place), ListSortDirection.Ascending));
+        if (GroupDiagnostics)
+        {
+            DiagnosticsView.GroupDescriptions.Add(
+                new PropertyGroupDescription(nameof(ValidationMessageViewModel.GroupTitle)));
+        }
+    }
+
+    private void RefreshDiagnosticsView()
+    {
+        DiagnosticsView.Refresh();
+        FilteredDiagnosticCount = DiagnosticsView.Cast<object>().Count();
+        if (SelectedDiagnostic is null ||
+            !DiagnosticsView.Cast<ValidationMessageViewModel>()
+                .Any(item => ReferenceEquals(item, SelectedDiagnostic)))
+        {
+            SelectedDiagnostic = null;
+        }
+
+        OnPropertyChanged(nameof(HasActiveDiagnosticFilters));
+        (ClearDiagnosticFiltersCommand as RelayCommand)?.RaiseCanExecuteChanged();
+    }
+
+    private void ClearDiagnosticFilters()
+    {
+        _diagnosticSearchText = string.Empty;
+        _selectedDiagnosticSeverityFilter = "Все уровни";
+        _selectedDiagnosticDomainFilter = "Все области";
+        _showOnlyBlockingDiagnostics = false;
+        OnPropertyChanged(nameof(DiagnosticSearchText));
+        OnPropertyChanged(nameof(SelectedDiagnosticSeverityFilter));
+        OnPropertyChanged(nameof(SelectedDiagnosticDomainFilter));
+        OnPropertyChanged(nameof(ShowOnlyBlockingDiagnostics));
+        RefreshDiagnosticsView();
     }
 
     private void NotifyWorkspaceProperties()

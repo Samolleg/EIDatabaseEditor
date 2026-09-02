@@ -3127,6 +3127,7 @@ public partial class MainWindow : Window
         TextsFormulaPaneRow.Height = new GridLength(_layout.TextsFormulaBarHeight, GridUnitType.Pixel);
         BriefingScenesColumn.Width = new GridLength(_layout.BriefingScenesWidth, GridUnitType.Pixel);
         BriefingTimelineColumn.Width = new GridLength(_layout.BriefingTimelineWidth, GridUnitType.Pixel);
+        ValidationDetailsColumn.Width = new GridLength(_layout.ValidationDetailsWidth, GridUnitType.Pixel);
         if (_layout.MainWindowMaximized)
         {
             WindowState = WindowState.Maximized;
@@ -3196,6 +3197,11 @@ public partial class MainWindow : Window
         if (BriefingTimelineColumn.ActualWidth > 0)
         {
             _layout.BriefingTimelineWidth = BriefingTimelineColumn.ActualWidth;
+        }
+
+        if (ValidationDetailsColumn.ActualWidth >= ValidationDetailsColumn.MinWidth)
+        {
+            _layout.ValidationDetailsWidth = ValidationDetailsColumn.ActualWidth;
         }
 
         if (_detailsWindow is null &&

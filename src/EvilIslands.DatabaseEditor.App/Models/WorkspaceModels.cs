@@ -2066,9 +2066,58 @@ internal sealed record ValidationMessageViewModel(
     string? TableKey,
     int? RecordIndex,
     int? FieldId,
-    string? FieldKey)
+    string? FieldKey,
+    string TableTitle,
+    string RecordTitle,
+    string FieldTitle)
 {
     public string BlockingText => IsBlocking ? "Блокирует" : "Не блокирует";
+
+    public string ImpactText => IsBlocking
+        ? "Блокирует сохранение"
+        : "Требует ручной проверки";
+
+    public int SeverityRank => Severity.Equals("Error", StringComparison.OrdinalIgnoreCase) ? 2 :
+        Severity.Equals("Warning", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+
+    public string CategoryText => Code switch
+    {
+        "DB_RESOURCE_MISSING" => "Не найден ресурс базы",
+        "DB_PARSE_FAILED" => "Ресурс базы повреждён",
+        "RES_RESOURCE_OVERLAP_DIRECTORY" => "Ресурс пересекается с каталогом",
+        "RES_RESOURCE_OVERLAP" => "Ресурсы пересекаются",
+        "RES_DUPLICATE_NAME" => "Повторяется имя ресурса",
+        "SEM_ITEM_MATERIAL_TYPE_MISMATCH" => "Не подходит тип материала",
+        "SEM_EMBEDDED_MAGIC_TOO_MANY_RUNES" => "Слишком много рун",
+        "SEM_EMBEDDED_MAGIC_ITEM_RUNE_REQUIRED" => "Для предмета нужна предметная руна",
+        "SEM_EMBEDDED_MAGIC_COMPLEXITY_EXCEEDED" => "Превышена сложность магии",
+        "SEM_EMBEDDED_MAGIC_ENERGY_EXCEEDED" => "Не хватает энергии для магии",
+        "SEM_REQUIRED_VALUE_MISSING" => "Не заполнено обязательное значение",
+        "SEM_NONFINITE_FLOAT" => "Некорректное число",
+        "SEM_VALUE_OUT_OF_RANGE" => "Значение вне допустимого диапазона",
+        "SEM_STRING_LIST_JOINED" => "Элементы списка слиты",
+        "SEM_REFERENCE_NOT_FOUND" => "Ссылка не найдена",
+        "SEM_VALUE_FORMAT" => "Некорректный формат значения",
+        "SEM_LIST_LENGTH" => "Некорректное число элементов",
+        "SEM_STRUCTURE_MEMBER_MISSING" => "Не хватает части структуры",
+        "SEM_UNKNOWN_MASK_BITS" => "Неизвестные флаги значения",
+        "SEM_DUPLICATE_KEY" => "Повторяется ключ",
+        "SEM_EMBEDDED_MAGIC_FORMAT" => "Некорректная запись встроенной магии",
+        "SEM_EMBEDDED_MAGIC_MATERIAL_NOT_FOUND" => "Материал встроенной магии не найден",
+        _ => DomainText == "Структура" ? "Структурная проблема" : "Семантическое предупреждение",
+    };
+
+    public string GroupTitle => $"{CategoryText} · {SeverityText}";
+
+    public string SearchText => string.Join(
+        ' ',
+        CategoryText,
+        Message,
+        Place,
+        TableTitle,
+        RecordTitle,
+        FieldTitle,
+        Code);
 
     public bool CanNavigate => !string.IsNullOrWhiteSpace(TableKey) && RecordIndex is >= 0;
 }
