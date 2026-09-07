@@ -5,6 +5,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="EvilIslands.DatabaseEditor.UiSmoke" />
     <EmbeddedResource Include="LegacySchemas\dbtypes.txt" />
     <EmbeddedResource Include="LegacySchemas\dbheaders.txt" />
   </ItemGroup>

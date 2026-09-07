@@ -13,7 +13,7 @@ using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.App.ViewModels;
 
-internal sealed class MainWindowViewModel : ObservableObject, IDisposable
+internal sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private const string ReadableColumnMode = "Понятные поля";
     private const string AllColumnMode = "Все поля";
@@ -516,6 +516,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(SelectedRecordSoundCount));
                 RefreshBriefingTitleDraft();
                 RefreshBriefingPhraseSelection();
+                QueueTextureRefresh();
                 (AppendRecordCommand as RelayCommand)?.RaiseCanExecuteChanged();
                 (AddMissingTextsCommand as RelayCommand)?.RaiseCanExecuteChanged();
             }
@@ -531,7 +532,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
     public bool SelectedRecordHasSoundReferences => SelectedRecord?.HasSoundReferences is true;
 
     public bool SelectedRecordHasDetails =>
-        SelectedRecord?.HasLocalizationReferences is true || SelectedRecordHasSoundReferences;
+        SelectedRecord is not null;
 
     public int SelectedRecordSoundCount => SelectedRecord?.ResolvedSoundCount ?? 0;
 
@@ -1110,8 +1111,13 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         try
         {
-            var workspace = await _service.OpenAsync(path, cancellationToken);
+            string databasePath = await TextureSources.ResolveDatabasePathAsync(path, cancellationToken);
+            var workspace = await _service.OpenAsync(databasePath, cancellationToken);
             ApplyWorkspace(workspace);
+            BusyText = "Поиск текстур рядом с database.res…";
+            await LoadNearbyTexturesAsync(cancellationToken);
+            if (!Path.GetFullPath(path).Equals(databasePath, StringComparison.OrdinalIgnoreCase))
+                NotificationMessage = $"Выбран архив текстур {Path.GetFileName(path)}. Открыта соседняя database.res; текстуры подключены из её папки.";
             StatusText = $"Открыто безопасно: {Path.GetFileName(workspace.SourcePath)} · {DatabaseCount} БД · {TableCount} таблиц · {RecordCount:N0} записей";
         }
         catch (OperationCanceledException)
@@ -1725,6 +1731,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
         var selectedTableKey = SelectedTable?.Key;
         var selectedRecordIndex = SelectedRecord?.SourceRecordIndex;
+        var selectedPhraseNumber = SelectedBriefingPhrase?.Number;
         CancelValidation();
         CancelOperation();
         _operationCancellation = new CancellationTokenSource();
@@ -1738,7 +1745,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         try
         {
             var result = await _service.SaveCurrentAsync(allowGameInstallationPath, cancellationToken);
-            ApplyWorkspace(result.Workspace);
+            ApplyWorkspace(result.Workspace, preserveSoundEdits: true);
             if (selectedTableKey is not null)
             {
                 var table = Databases.SelectMany(database => database.Tables)
@@ -1750,6 +1757,11 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                     {
                         SelectedRecord = table.Records.FirstOrDefault(
                             record => record.SourceRecordIndex == recordIndex);
+                        if (selectedPhraseNumber is int phraseNumber)
+                        {
+                            SelectedBriefingPhrase = SelectedRecord?.BriefingPhrases.FirstOrDefault(
+                                phrase => phrase.IsPhrase && phrase.Number == phraseNumber);
+                        }
                     }
                 }
             }
@@ -1836,6 +1848,12 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         _disposed = true;
+        _textureRefresh?.Cancel();
+        _textureRefresh?.Dispose();
+        _textureRevision++;
+        _previewCancellation?.Cancel();
+        _previewCancellation?.Dispose();
+        _previewRevision++;
         _operationCancellation?.Cancel();
         _operationCancellation?.Dispose();
         _searchCancellation?.Cancel();
@@ -1846,16 +1864,24 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
         UnsubscribeWorkspaceTexts(TextResources);
     }
 
-    private void ApplyWorkspace(WorkspaceSnapshot workspace)
+    private void ApplyWorkspace(WorkspaceSnapshot workspace, bool preserveSoundEdits = false)
     {
         ApplyTableEditMode(SelectedTable, false);
         UnsubscribeWorkspaceRecords(Databases);
         UnsubscribeWorkspaceTexts(TextResources);
         _workspace = workspace;
         IsEditMode = true;
-        _undo.Clear();
-        _redo.Clear();
-        PendingSoundEdit = null;
+        if (preserveSoundEdits)
+        {
+            RetainSoundFrames(_undo);
+            RetainSoundFrames(_redo);
+        }
+        else
+        {
+            _undo.Clear();
+            _redo.Clear();
+            PendingSoundEdit = null;
+        }
         _changesByPath.Clear();
         Changes.Clear();
         LastSavedPath = null;
@@ -1926,6 +1952,16 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
                 _ => true,
             })
             .ToArray();
+    }
+
+    private static void RetainSoundFrames(Stack<WorkspaceEditFrame> stack)
+    {
+        WorkspaceEditFrame[] retained = stack.OfType<SoundStageEditFrame>().Reverse().ToArray();
+        stack.Clear();
+        foreach (WorkspaceEditFrame frame in retained)
+        {
+            stack.Push(frame);
+        }
     }
 
     private static IReadOnlyList<SpreadsheetColumnViewModel> BuildSourceColumns(
@@ -3796,6 +3832,7 @@ internal sealed class MainWindowViewModel : ObservableObject, IDisposable
 
     private void RefreshAllCounts()
     {
+        QueueTextureRefresh();
         NavigationItems.First(item => item.Section == WorkspaceSection.Texts).Badge = HasTextsDocument
             ? TextResourceCount.ToString("N0")
             : null;

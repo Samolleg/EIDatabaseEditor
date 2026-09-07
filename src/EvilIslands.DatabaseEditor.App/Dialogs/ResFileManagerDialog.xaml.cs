@@ -57,6 +57,7 @@ public partial class ResFileManagerDialog : Window
         FilesGrid.ItemsSource = _filesView;
         ChangesGrid.ItemsSource = _changes;
         ApplyStoredLayout();
+        Closed += (_, _) => CancelManagerPreview();
     }
 
     private bool HasPendingChanges => _edits.Count > 0;
@@ -341,6 +342,7 @@ public partial class ResFileManagerDialog : Window
     private void UpdateSelectionDetails(IReadOnlyList<ResManagerFileRow> selected)
     {
         ResManagerFileRow? row = selected.Count == 1 ? selected[0] : null;
+        QueueManagerPreview(row);
         DetailsEmptyState.Visibility = row is null ? Visibility.Visible : Visibility.Collapsed;
         DetailsContent.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
         if (row is null)

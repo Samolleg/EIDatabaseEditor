@@ -454,9 +454,9 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         }
         catch
         {
-            if (textsResult?.BackupPath is { Length: > 0 } textsBackup)
+            if (textsResult?.BackupPath is { Length: > 0 })
             {
-                RestoreBackup(textsResult.TargetPath, textsBackup, texts!.Sha256);
+                TextsDocument.RollbackSavedPair(textsResult, texts!.Sha256);
             }
 
             throw;
@@ -878,13 +878,9 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
     private static string? FindCompanionTextsPath(string databasePath)
     {
         string directory = Path.GetDirectoryName(databasePath)!;
-        string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(databasePath);
-        string suffix = fileNameWithoutExtension.StartsWith("database", StringComparison.OrdinalIgnoreCase)
-            ? fileNameWithoutExtension["database".Length..]
-            : string.Empty;
         string[] candidates =
         [
-            Path.Combine(directory, "texts" + suffix + ".res"),
+            GetTextsCompanionPath(databasePath),
             Path.Combine(directory, "texts.res"),
         ];
         return candidates.FirstOrDefault(File.Exists);
@@ -900,35 +896,25 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             .ToArray();
     }
 
-    private static string DeriveTextsCopyPath(string databaseTarget)
+    private static string GetTextsCompanionPath(string databaseTarget)
     {
         string directory = Path.GetDirectoryName(databaseTarget)!;
         string fileName = Path.GetFileName(databaseTarget);
         string textsName = fileName.StartsWith("database", StringComparison.OrdinalIgnoreCase)
             ? "texts" + fileName["database".Length..]
             : "texts." + fileName;
-        string result = Path.Combine(directory, textsName);
+        return Path.Combine(directory, textsName);
+    }
+
+    private static string DeriveTextsCopyPath(string databaseTarget)
+    {
+        string result = GetTextsCompanionPath(databaseTarget);
         if (File.Exists(result))
         {
             throw new IOException($"Связанная копия texts.res уже существует: {result}");
         }
 
         return result;
-    }
-
-    private static void RestoreBackup(string sourcePath, string backupPath, string expectedSha256)
-    {
-        string tempPath = Path.Combine(
-            Path.GetDirectoryName(sourcePath)!,
-            $".{Path.GetFileName(sourcePath)}.rollback-{Guid.NewGuid():N}");
-        File.Copy(backupPath, tempPath, overwrite: false);
-        File.Replace(tempPath, sourcePath, null, ignoreMetadataErrors: true);
-        using var stream = File.OpenRead(sourcePath);
-        string restoredHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
-        if (!string.Equals(restoredHash, expectedSha256, StringComparison.Ordinal))
-        {
-            throw new IOException("Не удалось подтвердить восстановление texts.res после сбоя парного сохранения.");
-        }
     }
 
     private static SaveCopyResult MapSaveResult(SaveResult result) => new(

@@ -3253,6 +3253,7 @@ public partial class MainWindow : Window
         }
 
         if (_detailsWindow is null &&
+            !(_textureExpanded && TextureTab.IsSelected) &&
             DetailsPane.ActualHeight >= 180 &&
             _spreadsheetViewModel?.SelectedRecordHasDetails is true)
         {
@@ -3334,7 +3335,17 @@ public partial class MainWindow : Window
         bool inRecords = _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records;
         bool hasLocalization = inRecords && _spreadsheetViewModel?.SelectedRecord?.HasLocalizationReferences is true;
         bool hasSound = inRecords && _spreadsheetViewModel?.SelectedRecordHasSoundReferences is true;
+        bool hasTextures = inRecords && _spreadsheetViewModel?.SelectedRecord is not null;
+        if (hasTextures && !hasLocalization && !hasSound) DetailsPane.SelectedIndex = 1;
         ConfigureDetailsPaneContents(hasLocalization, hasSound);
+
+        bool textureActive = hasTextures && TextureTab.IsSelected;
+        bool textureExpanded = textureActive && _textureExpanded && _detailsWindow is null;
+        GenericRecordsWorkspace.RowDefinitions[0].MinHeight = textureExpanded ? 0 : 160;
+        GenericRecordsWorkspace.RowDefinitions[0].Height = textureExpanded ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        RecordsGrid.Visibility = textureExpanded ? Visibility.Collapsed : Visibility.Visible;
+        TextureExpandButton.Content = _textureExpanded ? "↙ Вернуть таблицу" : "↗ Развернуть";
+        TextureExpandButton.IsEnabled = _detailsWindow is null;
 
         if (_detailsWindow is not null)
         {
@@ -3348,7 +3359,15 @@ public partial class MainWindow : Window
         DetailsSplitterRow.Height = GridLength.Auto;
         UpdateDetailsDetachButtons();
 
-        if (_layout.DetailsPaneDetached && (hasLocalization || hasSound) && !_detailsDetachScheduled && IsLoaded)
+        if (textureExpanded)
+        {
+            DetailsSplitterRow.Height = new GridLength(0);
+            DetailsPaneRow.MinHeight = 0;
+            DetailsPaneRow.Height = new GridLength(1, GridUnitType.Star);
+            return;
+        }
+
+        if (_layout.DetailsPaneDetached && (hasLocalization || hasSound || hasTextures) && !_detailsDetachScheduled && IsLoaded)
         {
             _detailsDetachScheduled = true;
             Dispatcher.BeginInvoke(
@@ -3363,7 +3382,7 @@ public partial class MainWindow : Window
                 }));
         }
 
-        if (!hasLocalization && !hasSound)
+        if (!hasLocalization && !hasSound && !hasTextures)
         {
             DetailsPaneRow.MinHeight = 0;
             DetailsPaneRow.Height = GridLength.Auto;
@@ -3373,13 +3392,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        const double minimumDetailsHeight = 220;
+        double minimumDetailsHeight = textureActive ? 380 : 220;
         double maximumDetailsHeight = RecordsTableBorder.ActualHeight > 0
             ? Math.Max(minimumDetailsHeight, RecordsTableBorder.ActualHeight - 160)
             : 640;
-        DetailsPaneRow.MinHeight = hasLocalization && hasSound ? 240 : minimumDetailsHeight;
+        DetailsPaneRow.MinHeight = textureActive ? minimumDetailsHeight : hasLocalization && hasSound ? 240 : minimumDetailsHeight;
         DetailsPaneRow.Height = new GridLength(
-            Math.Clamp(_layout.DetailsPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
+            Math.Clamp(textureActive ? Math.Max(520, _layout.DetailsPaneHeight) : _layout.DetailsPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
             GridUnitType.Pixel);
 
     }
@@ -3516,6 +3535,8 @@ public partial class MainWindow : Window
         LocalizationDetachButton.ToolTip = toolTip;
         SoundDetachButton.Content = label;
         SoundDetachButton.ToolTip = toolTip;
+        TextureDetachButton.Content = _detailsWindow is null ? "В отдельное окно" : "Вернуть в главное окно";
+        TextureDetachButton.ToolTip = "Тексты, звук и текстуры в общей панели";
     }
 
     private void DetailsPaneSplitter_DragCompleted(object sender, DragCompletedEventArgs e)

@@ -8,8 +8,11 @@ namespace EvilIslands.DatabaseEditor.App.Services;
 
 internal sealed class RecoverySnapshotStore
 {
-    private const int MaximumSnapshotsPerSource = 2;
+    private const int MaximumSnapshotsPerSessionAndSource = 2;
     private readonly string _rootPath;
+    private readonly string _sessionId = Guid.NewGuid().ToString("N");
+    private readonly object _sync = new();
+    private readonly Dictionary<string, string> _drafts = new(StringComparer.OrdinalIgnoreCase);
 
     public RecoverySnapshotStore(string? rootPath = null)
     {
@@ -21,14 +24,18 @@ internal sealed class RecoverySnapshotStore
 
     public RecoverySnapshotDraft Prepare(string sourcePath)
     {
-        string sourceRoot = GetSourceRoot(sourcePath);
-        string snapshotDirectory = Path.Combine(
-            sourceRoot,
-            $"{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(snapshotDirectory);
-        return new RecoverySnapshotDraft(
-            snapshotDirectory,
-            Path.Combine(snapshotDirectory, "database.res"));
+        lock (_sync)
+        {
+            string sourceRoot = GetSourceRoot(sourcePath);
+            string snapshotDirectory = Path.Combine(
+                sourceRoot,
+                $"{_sessionId}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(snapshotDirectory);
+            _drafts.Add(snapshotDirectory, Path.GetFullPath(sourcePath));
+            return new RecoverySnapshotDraft(
+                snapshotDirectory,
+                Path.Combine(snapshotDirectory, "database.res"));
+        }
     }
 
     public RecoverySnapshot Complete(
@@ -37,34 +44,45 @@ internal sealed class RecoverySnapshotStore
         SavePairCopyResult result,
         PendingSoundEditViewModel? pendingSound)
     {
-        string fullSourcePath = Path.GetFullPath(sourcePath);
-        string? soundAssetPath = null;
-        if (pendingSound is not null)
+        lock (_sync)
         {
-            soundAssetPath = Path.Combine(draft.DirectoryPath, $"pending-audio.{pendingSound.Format.ToLowerInvariant()}");
-            WriteAtomic(soundAssetPath, pendingSound.Asset.Data.ToArray());
-        }
+            string fullSourcePath = Path.GetFullPath(sourcePath);
+            if (!_drafts.TryGetValue(draft.DirectoryPath, out string? ownerSource) ||
+                !string.Equals(ownerSource, fullSourcePath, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(Path.GetFullPath(result.Database.TargetPath), draft.DatabasePath, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Аварийный снимок не принадлежит этой сессии или был отменён.");
+            }
+            string? soundAssetPath = null;
+            if (pendingSound is not null)
+            {
+                soundAssetPath = Path.Combine(draft.DirectoryPath, $"pending-audio.{pendingSound.Format.ToLowerInvariant()}");
+                WriteAtomic(soundAssetPath, pendingSound.Asset.Data.ToArray());
+            }
 
-        var manifest = new RecoverySnapshotManifest
-        {
-            SourcePath = fullSourcePath,
-            SourceLastWriteUtc = File.GetLastWriteTimeUtc(fullSourcePath),
-            CreatedUtc = DateTime.UtcNow,
-            DatabasePath = Path.GetFullPath(result.Database.TargetPath),
-            TextsPath = result.Texts?.TargetPath,
-            PendingSoundAssetPath = soundAssetPath,
-            PendingSoundSceneKey = pendingSound?.SceneKey,
-            PendingSoundPhraseNumber = pendingSound?.PhraseNumber,
-            PendingSoundSpeaker = pendingSound?.Speaker,
-            PendingSoundArchivePath = pendingSound?.ArchivePath,
-            PendingSoundResourceName = pendingSound?.ResourceName,
-        };
-        string manifestPath = Path.Combine(draft.DirectoryPath, "recovery.json");
-        WriteAtomic(
-            manifestPath,
-            JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true }));
-        Prune(fullSourcePath);
-        return MapManifest(manifestPath, manifest);
+            var manifest = new RecoverySnapshotManifest
+            {
+                SourcePath = fullSourcePath,
+                SessionId = _sessionId,
+                SourceLastWriteUtc = File.GetLastWriteTimeUtc(fullSourcePath),
+                CreatedUtc = DateTime.UtcNow,
+                DatabasePath = Path.GetFullPath(result.Database.TargetPath),
+                TextsPath = result.Texts?.TargetPath,
+                PendingSoundAssetPath = soundAssetPath,
+                PendingSoundSceneKey = pendingSound?.SceneKey,
+                PendingSoundPhraseNumber = pendingSound?.PhraseNumber,
+                PendingSoundSpeaker = pendingSound?.Speaker,
+                PendingSoundArchivePath = pendingSound?.ArchivePath,
+                PendingSoundResourceName = pendingSound?.ResourceName,
+            };
+            string manifestPath = Path.Combine(draft.DirectoryPath, "recovery.json");
+            WriteAtomic(
+                manifestPath,
+                JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true }));
+            Prune(fullSourcePath);
+            _drafts.Remove(draft.DirectoryPath);
+            return MapManifest(manifestPath, manifest);
+        }
     }
 
     public RecoverySnapshot? FindLatest(string sourcePath)
@@ -105,16 +123,16 @@ internal sealed class RecoverySnapshotStore
             foreach (DirectoryInfo sourceDirectory in new DirectoryInfo(_rootPath).EnumerateDirectories()
                          .Where(directory => !directory.Attributes.HasFlag(FileAttributes.ReparsePoint)))
             {
-                RecoverySnapshot? latest = sourceDirectory.EnumerateDirectories()
+                var complete = sourceDirectory.EnumerateDirectories()
                     .Where(directory => !directory.Attributes.HasFlag(FileAttributes.ReparsePoint))
                     .Select(directory => Path.Combine(directory.FullName, "recovery.json"))
                     .Where(File.Exists)
                     .OrderByDescending(File.GetLastWriteTimeUtc)
                     .Select(manifestPath => TryReadSnapshot(manifestPath, expectedSourcePath: null))
-                    .FirstOrDefault(snapshot => snapshot is not null);
-                if (latest is not null)
+                    .OfType<RecoverySnapshot>();
+                foreach (var session in complete.GroupBy(snapshot => snapshot.SessionId))
                 {
-                    snapshots.Add(latest);
+                    snapshots.Add(session.OrderByDescending(snapshot => snapshot.CreatedUtc).First());
                 }
             }
         }
@@ -130,21 +148,30 @@ internal sealed class RecoverySnapshotStore
             .ToArray();
     }
 
-    public void Abandon(RecoverySnapshotDraft draft) => TryDeleteSnapshotDirectory(draft.DirectoryPath);
+    public void Abandon(RecoverySnapshotDraft draft)
+    {
+        lock (_sync)
+        {
+            if (_drafts.Remove(draft.DirectoryPath))
+            {
+                TryDeleteSnapshotDirectory(draft.DirectoryPath);
+            }
+        }
+    }
 
     public void Discard(string sourcePath)
     {
-        string sourceRoot = GetSourceRoot(sourcePath);
-        if (Directory.Exists(sourceRoot) && IsInsideRoot(sourceRoot))
+        lock (_sync)
         {
-            foreach (DirectoryInfo directory in new DirectoryInfo(sourceRoot).EnumerateDirectories())
+            string sourceRoot = GetSourceRoot(sourcePath);
+            if (Directory.Exists(sourceRoot) && IsInsideRoot(sourceRoot))
             {
-                TryDeleteSnapshotDirectory(directory.FullName);
-            }
-
-            if (!Directory.EnumerateFileSystemEntries(sourceRoot).Any())
-            {
-                Directory.Delete(sourceRoot);
+                foreach (DirectoryInfo directory in new DirectoryInfo(sourceRoot).EnumerateDirectories()
+                             .Where(IsOwnedDirectory))
+                {
+                    _drafts.Remove(directory.FullName);
+                    TryDeleteSnapshotDirectory(directory.FullName);
+                }
             }
         }
     }
@@ -153,23 +180,22 @@ internal sealed class RecoverySnapshotStore
     {
         string sourceRoot = GetSourceRoot(sourcePath);
         DirectoryInfo[] directories = new DirectoryInfo(sourceRoot).EnumerateDirectories()
-            .Where(directory => !directory.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            .Where(IsOwnedDirectory)
             .ToArray();
-        foreach (DirectoryInfo incomplete in directories.Where(directory =>
-                     !File.Exists(Path.Combine(directory.FullName, "recovery.json"))))
-        {
-            TryDeleteSnapshotDirectory(incomplete.FullName);
-        }
 
         DirectoryInfo[] complete = directories
             .Where(directory => File.Exists(Path.Combine(directory.FullName, "recovery.json")))
             .OrderByDescending(directory => directory.LastWriteTimeUtc)
             .ToArray();
-        foreach (DirectoryInfo directory in complete.Skip(MaximumSnapshotsPerSource))
+        foreach (DirectoryInfo directory in complete.Skip(MaximumSnapshotsPerSessionAndSource))
         {
             TryDeleteSnapshotDirectory(directory.FullName);
         }
     }
+
+    private bool IsOwnedDirectory(DirectoryInfo directory) =>
+        directory.Name.StartsWith(_sessionId + "-", StringComparison.Ordinal) &&
+        !directory.Attributes.HasFlag(FileAttributes.ReparsePoint);
 
     private string GetSourceRoot(string sourcePath)
     {
@@ -296,11 +322,13 @@ internal sealed class RecoverySnapshotStore
         manifest.PendingSoundSpeaker,
         manifest.PendingSoundArchivePath,
         manifest.PendingSoundResourceName,
-        manifestPath);
+        manifestPath,
+        manifest.SessionId);
 
     private sealed class RecoverySnapshotManifest
     {
         public string SourcePath { get; set; } = string.Empty;
+        public string? SessionId { get; set; }
         public DateTime SourceLastWriteUtc { get; set; }
         public DateTime CreatedUtc { get; set; }
         public string DatabasePath { get; set; } = string.Empty;
@@ -327,4 +355,5 @@ internal sealed record RecoverySnapshot(
     string? PendingSoundSpeaker,
     string? PendingSoundArchivePath,
     string? PendingSoundResourceName,
-    string ManifestPath);
+    string ManifestPath,
+    string? SessionId = null);

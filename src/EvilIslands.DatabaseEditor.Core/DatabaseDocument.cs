@@ -271,14 +271,7 @@ public sealed class DatabaseDocument
                 "Прямая запись в каталог игры требует отдельного подтверждения пользователя.");
         }
 
-        using var sourceGuard = new FileStream(
-            sourcePath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read | FileShare.Delete,
-            128 * 1024,
-            FileOptions.SequentialScan);
-        EnsureSourceUnchanged(sourceGuard);
+        using var sourceGuard = new GuardedFileCommit(sourcePath, Sha256);
 
         Dictionary<int, byte[]> replacements;
         lock (_editSync)
@@ -320,7 +313,6 @@ public sealed class DatabaseDocument
             }
 
             EnsureFileMatches(tempPath, rebuilt);
-            EnsureSourceUnchanged(sourceGuard);
             if (DatabaseSafetyPolicy.ContainsReparsePoint(sourcePath) ||
                 (!allowGameInstallationPath && DatabaseSafetyPolicy.IsLikelyGameInstallationPath(sourcePath)))
             {
@@ -329,7 +321,8 @@ public sealed class DatabaseDocument
 
             RetainNewestManagedBackupBeforeSave(sourcePath);
             backupPath = CreateAvailableBackupPath(sourcePath);
-            File.Replace(tempPath, sourcePath, backupPath, ignoreMetadataErrors: true);
+            sourceGuard.Commit(tempPath, backupPath, rebuiltSha256);
+            sourceGuard.Dispose();
             EnsureBackupMatches(backupPath);
             EnsureFileMatches(sourcePath, rebuilt);
         }

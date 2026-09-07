@@ -1,6 +1,7 @@
 <Window x:Class="EvilIslands.DatabaseEditor.App.Dialogs.ResFileManagerDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:app="clr-namespace:EvilIslands.DatabaseEditor.App"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         Title="Файловый менеджер RES" Width="1460" Height="860" MinWidth="1040" MinHeight="640"
         ResizeMode="CanResize" WindowStyle="None" ShowInTaskbar="False"
@@ -147,6 +148,14 @@
                         <ScrollViewer x:Name="DetailsContent" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                             <StackPanel><TextBlock Text="СВОЙСТВА ФАЙЛА" Foreground="{StaticResource MutedTextBrush}" FontSize="10" FontWeight="SemiBold"/>
                                 <TextBlock x:Name="DetailsNameText" Margin="0,8,0,0" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                <StackPanel x:Name="PreviewPanel" Visibility="Collapsed" Margin="0,12,0,4">
+                                    <TextBlock Text="ПРЕДПРОСМОТР ТЕКСТУРЫ" FontSize="10" Foreground="{StaticResource MutedTextBrush}"/>
+                                    <app:TextureImageView x:Name="ManagerPreviewImage" Margin="0,8,0,6"/>
+                                    <TextBlock x:Name="PreviewInformation" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                    <ComboBox x:Name="PreviewZoom" SelectedIndex="0" SelectionChanged="PreviewZoom_SelectionChanged">
+                                        <ComboBoxItem Content="Вписать"/><ComboBoxItem Content="100%"/><ComboBoxItem Content="200%"/><ComboBoxItem Content="400%"/>
+                                    </ComboBox>
+                                </StackPanel>
                                 <TextBlock Text="Путь в RES" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,16,0,4"/>
                                 <TextBox x:Name="DetailsPathText" Style="{StaticResource DarkTextBox}" IsReadOnly="True" TextWrapping="Wrap" Padding="9,7"/>
                                 <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>

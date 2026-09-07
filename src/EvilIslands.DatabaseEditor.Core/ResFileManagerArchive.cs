@@ -62,6 +62,10 @@ public sealed class ResFileManagerArchive
 
     public IReadOnlyList<ResEntry> Entries { get; }
 
+    // Read-only discovery: reuse structural validation without hashing/loading payloads.
+    internal static IReadOnlyList<ResEntry> ReadCatalog(string path, CancellationToken cancellationToken) =>
+        OpenArchiveIndex(Path.GetFullPath(path), cancellationToken, readOnlyCatalog: true).Entries;
+
     public static Task<ResFileManagerArchive> OpenAsync(
         string path,
         CancellationToken cancellationToken = default)
@@ -119,6 +123,29 @@ public sealed class ResFileManagerArchive
     }
 
     public bool Contains(string resourceName) => _entriesByName.ContainsKey(resourceName);
+
+    public Task<MmpImage> ReadPreviewAsync(string resourceName, ResImportedFile? imported = null,
+        CancellationToken cancellationToken = default) => Task.Run(() =>
+    {
+        ResEntry? entry = null;
+        if (imported is null && !_entriesByName.TryGetValue(resourceName, out entry))
+            throw new KeyNotFoundException($"Ресурс '{resourceName}' не найден.");
+        long length = imported?.FileLength ?? entry!.Size;
+        if (length > MmpPreviewDecoder.MaximumInputBytes)
+            throw new InvalidDataException("Ресурс превышает лимит предпросмотра 128 МиБ.");
+        cancellationToken.ThrowIfCancellationRequested();
+        using var stream = imported is null ? OpenVerifiedSource(cancellationToken) :
+            new FileStream(imported.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (imported is not null && stream.Length != length)
+            throw new IOException("Добавляемый файл изменился. Выберите его повторно.");
+        stream.Position = imported is null ? entry!.Offset : 0;
+        byte[] bytes = new byte[checked((int)length)];
+        stream.ReadExactly(bytes);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (imported is not null && !Convert.ToHexString(SHA256.HashData(bytes)).Equals(imported.Sha256, StringComparison.Ordinal))
+            throw new IOException("Добавляемый файл изменился. Выберите его повторно.");
+        return MmpPreviewDecoder.Decode(bytes, cancellationToken);
+    }, cancellationToken);
 
     public Task ExtractAsync(
         string resourceName,
@@ -832,7 +859,7 @@ public sealed class ResFileManagerArchive
         }
     }
 
-    private static ArchiveIndex OpenArchiveIndex(string path, CancellationToken cancellationToken)
+    private static ArchiveIndex OpenArchiveIndex(string path, CancellationToken cancellationToken, bool readOnlyCatalog = false)
     {
         using var stream = new FileStream(
             path,
@@ -841,13 +868,14 @@ public sealed class ResFileManagerArchive
             FileShare.Read,
             CopyBufferSize,
             FileOptions.RandomAccess);
-        return ReadArchiveIndex(path, stream, cancellationToken);
+        return ReadArchiveIndex(path, stream, cancellationToken, readOnlyCatalog);
     }
 
     private static ArchiveIndex ReadArchiveIndex(
         string path,
         FileStream stream,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool readOnlyCatalog = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (stream.Length < ResArchiveDocument.HeaderSize)
@@ -867,7 +895,7 @@ public sealed class ResFileManagerArchive
         uint countValue = BinaryPrimitives.ReadUInt32LittleEndian(header[4..]);
         uint directoryValue = BinaryPrimitives.ReadUInt32LittleEndian(header[8..]);
         uint namePoolValue = BinaryPrimitives.ReadUInt32LittleEndian(header[12..]);
-        if (countValue == 0 || countValue > 1_000_000 ||
+        if ((!readOnlyCatalog && countValue == 0) || countValue > 1_000_000 ||
             directoryValue > int.MaxValue || namePoolValue > int.MaxValue)
         {
             throw new DatabaseFormatException("RES header contains unsupported sizes.", path, 4);
@@ -941,16 +969,18 @@ public sealed class ResFileManagerArchive
                 nameOffsetValue));
         }
 
-        if (entries.Count == 0)
+        if (!readOnlyCatalog && entries.Count == 0)
         {
             throw new DatabaseFormatException("RES не содержит файлов.", path);
         }
 
-        var ordered = entries.OrderBy(entry => entry.Offset).ToArray();
+        var ordered = entries.Where(entry => entry.Size > 0).OrderBy(entry => entry.Offset).ToArray();
         for (var index = 1; index < ordered.Length; index++)
         {
             ResEntry previous = ordered[index - 1];
             ResEntry current = ordered[index];
+            if (previous.Offset == current.Offset && previous.Size == current.Size)
+                continue; // Exact aliases are safe: WriteArchive copies each named resource independently.
             if (previous.Size > 0 && current.Size > 0 &&
                 (long)previous.Offset + previous.Size > current.Offset)
             {

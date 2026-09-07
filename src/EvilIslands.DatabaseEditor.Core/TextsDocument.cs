@@ -340,18 +340,17 @@ public sealed class TextsDocument
             return new SaveResult(sourcePath, FileLength, Sha256, true, [], null);
         }
 
-        using var sourceGuard = OpenSourceGuard(sourcePath, allowDelete: true);
-        EnsureSourceUnchanged(sourceGuard);
+        using var sourceGuard = new GuardedFileCommit(sourcePath, Sha256);
         byte[] rebuilt = BuildAndVerify(sourcePath);
         string tempPath = CreateTempPath(sourcePath);
         string backupPath;
         try
         {
             WriteVerified(tempPath, rebuilt);
-            EnsureSourceUnchanged(sourceGuard);
             RetainNewestManagedBackupBeforeSave(sourcePath);
             backupPath = CreateAvailableBackupPath(sourcePath);
-            File.Replace(tempPath, sourcePath, backupPath, ignoreMetadataErrors: true);
+            sourceGuard.Commit(tempPath, backupPath, Convert.ToHexString(SHA256.HashData(rebuilt)));
+            sourceGuard.Dispose();
             EnsureBackupMatches(backupPath);
             EnsureFileMatches(sourcePath, rebuilt);
         }
@@ -368,6 +367,34 @@ public sealed class TextsDocument
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.Run(() => SaveAs(targetPath), CancellationToken.None);
+    }
+
+    public static void RollbackSavedPair(SaveResult saved, string originalSha256)
+    {
+        if (saved.BackupPath is not { Length: > 0 } backupPath)
+        {
+            throw new InvalidOperationException("Нет резервной копии для отката texts.res.");
+        }
+
+        EnsureSafeDestination(saved.TargetPath, allowGameInstallationPath: true);
+        using var guard = new GuardedFileCommit(saved.TargetPath, saved.Sha256);
+        string tempPath = CreateTempPath(saved.TargetPath);
+        try
+        {
+            byte[] original = File.ReadAllBytes(backupPath);
+            if (!string.Equals(Convert.ToHexString(SHA256.HashData(original)), originalSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new IOException("Резервная копия texts.res изменилась; откат отменён.");
+            }
+
+            WriteVerified(tempPath, original);
+            RetainNewestManagedBackupBeforeSave(saved.TargetPath);
+            guard.Commit(tempPath, CreateAvailableBackupPath(saved.TargetPath), originalSha256);
+        }
+        finally
+        {
+            TryDeleteTemp(tempPath);
+        }
     }
 
     public Task<SaveResult> SaveInPlaceAsync(
@@ -463,11 +490,11 @@ public sealed class TextsDocument
         }
     }
 
-    private FileStream OpenSourceGuard(string sourcePath, bool allowDelete = false) => new(
+    private FileStream OpenSourceGuard(string sourcePath) => new(
         sourcePath,
         FileMode.Open,
         FileAccess.Read,
-        allowDelete ? FileShare.Read | FileShare.Delete : FileShare.Read,
+        FileShare.Read,
         128 * 1024,
         FileOptions.SequentialScan);
 

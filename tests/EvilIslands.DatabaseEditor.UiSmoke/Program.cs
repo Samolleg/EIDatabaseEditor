@@ -28,6 +28,25 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length >= 3 && args[0] == "--texture-open")
+            return TextureOpenRegression.Run(args[1..]);
+        if (args.Length >= 3 && args[0] == "--nearby-textures")
+            return NearbyTextureRegression.Run(args[1..]);
+        if (args.Length >= 3 && args[0] == "--mmp-preview")
+            return MmpPreviewRegression.Run(args[1..]);
+        if (args.Length >= 3 && args[0] == "--texture-layout")
+        {
+            return TextureLayoutRegression.Run(args[1..]);
+        }
+        if (args.Length >= 3 && args[0] == "--textures")
+        {
+            return TextureRegression.Run(args[1..]);
+        }
+        if (args.Length >= 3 && args[0] == "--save-safety")
+        {
+            return SaveSafetyRegression.Run(args[1..]);
+        }
+
         CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ru-RU");
         CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo("ru-RU");
         string uiSettingsRoot = Path.Combine(
@@ -959,7 +978,7 @@ internal static class Program
             window.Show();
             window.UpdateLayout();
             if (window.FindName("LocalizationDetachButton") is not Button detachButton ||
-                window.FindName("DetailsPane") is not Grid detailsPane ||
+                window.FindName("DetailsPane") is not TabControl detailsPane ||
                 window.FindName("GenericRecordsWorkspace") is not Grid workspace ||
                 !workspace.Children.Contains(detailsPane))
             {
