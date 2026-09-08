@@ -1833,7 +1833,11 @@
                                                           FontSize="13"
                                                           RowHeight="36"
                                                           ColumnHeaderHeight="38"
-                                                          ScrollViewer.CanContentScroll="False"
+                                                          EnableRowVirtualization="True"
+                                                          VirtualizingPanel.IsVirtualizing="True"
+                                                          VirtualizingPanel.VirtualizationMode="Recycling"
+                                                          VirtualizingPanel.ScrollUnit="Pixel"
+                                                          ScrollViewer.CanContentScroll="True"
                                                           ScrollViewer.IsDeferredScrollingEnabled="False"
                                                           GridLinesVisibility="Horizontal"
                                                           HorizontalGridLinesBrush="{StaticResource SoundBorderBrush}"
@@ -1949,7 +1953,9 @@
                                                                   </Grid>
                                                                   <TextBlock Text="{Binding Name}" TextWrapping="Wrap" Margin="0,5,0,3" FontSize="11" />
                                                                   <TextBlock Text="{Binding Information}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
-                                                                  <TextBlock Text="{Binding SourceName}" TextWrapping="Wrap" ToolTip="{Binding Source}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,4,0,0" />
+                                                                  <TextBlock Text="{Binding SourceCaption}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,8,0,4" />
+                                                                  <TextBox Text="{Binding Source, Mode=OneWay}" Style="{StaticResource TextureCopyText}" />
+                                                                  <TextBox Text="{Binding Versions, Mode=OneWay}" Style="{StaticResource TextureCopyText}" />
                                                                 </StackPanel>
                                                               </DataTemplate>
                                                             </ItemsControl.ItemTemplate>
@@ -1962,9 +1968,9 @@
                                                         <Button Content="Перейти к записи БД" Click="TextureNavigate_Click" HorizontalAlignment="Left" Margin="0,8,0,14" />
                                                         <TextBlock Text="Почему этот ресурс" FontWeight="SemiBold" Margin="0,0,0,5" />
                                                         <TextBox Text="{Binding Explanation, Mode=OneWay}" Style="{StaticResource TextureCopyText}" />
-                                                        <TextBlock Text="Источник" FontWeight="SemiBold" Margin="0,14,0,5" />
+                                                        <TextBlock Text="{Binding ResourceName, StringFormat=Источник записи: {0}}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,14,0,5" />
                                                         <TextBox Text="{Binding SourceText, Mode=OneWay}" Style="{StaticResource TextureCopyText}" />
-                                                        <TextBlock Text="Все найденные версии · по приоритету" FontWeight="SemiBold" Margin="0,14,0,5" TextWrapping="Wrap" />
+                                                        <TextBlock Text="{Binding ResourceName, StringFormat=Все источники записи: {0}}" FontWeight="SemiBold" Margin="0,14,0,5" TextWrapping="Wrap" />
                                                         <TextBox Text="{Binding VersionsText, Mode=OneWay}" Style="{StaticResource TextureCopyText}" />
                                                       </StackPanel>
                                                     </ScrollViewer>
@@ -2146,6 +2152,11 @@
                                                           GridLinesVisibility="Horizontal"
                                                           HorizontalGridLinesBrush="{StaticResource GridLineBrush}"
                                                           ScrollViewer.CanContentScroll="False">
+                                                    <DataGrid.CellStyle>
+                                                        <Style TargetType="DataGridCell" BasedOn="{StaticResource {x:Type DataGridCell}}">
+                                                            <Setter Property="TextBlock.TextAlignment" Value="Left" />
+                                                        </Style>
+                                                    </DataGrid.CellStyle>
                                                     <DataGrid.RowStyle>
                                                         <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
                                                             <Setter Property="Background" Value="Transparent" />

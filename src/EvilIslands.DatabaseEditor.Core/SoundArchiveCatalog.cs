@@ -8,7 +8,7 @@ public sealed record SoundArchiveInfo(
     string SourcePath,
     string FileName,
     long FileLength,
-    DateTime LastWriteTimeUtc,
+    DateTime? LastWriteTimeUtc,
     int ArchiveEntryCount,
     int SoundResourceCount);
 
@@ -144,6 +144,12 @@ public sealed class SoundArchiveCatalog
         return bytes;
     }
 
+    private static DateTime? ReadLastWriteTimeUtc(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); }
+        catch (ArgumentOutOfRangeException) { return null; } // Invalid filesystem FILETIME is not corrupt RES data.
+    }
+
     private static SoundArchiveCatalog Create(IReadOnlyList<SoundArchiveIndex> sourceArchives)
     {
         var archives = new SoundArchiveInfo[sourceArchives.Count];
@@ -159,7 +165,7 @@ public sealed class SoundArchiveCatalog
                 source.SourcePath,
                 Path.GetFileName(source.SourcePath),
                 source.FileLength,
-                File.GetLastWriteTimeUtc(source.SourcePath),
+                ReadLastWriteTimeUtc(source.SourcePath),
                 source.Entries.Count,
                 soundEntries.Length);
             archives[archiveIndex] = archive;

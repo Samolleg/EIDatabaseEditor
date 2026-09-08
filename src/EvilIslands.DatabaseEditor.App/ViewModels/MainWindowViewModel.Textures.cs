@@ -111,7 +111,7 @@ internal sealed partial class MainWindowViewModel
     }
     public string TextureSummary { get => _textureSummary; private set => SetProperty(ref _textureSummary, value); }
     public string TextureSourcesDescription => _textureSources is null ? "Источники не подключены." :
-        string.Join(Environment.NewLine, _textureSources.Archives.Concat(_textureSources.LooseFolders)
+        string.Join(Environment.NewLine, (_textureSources.ConfigurationPath is { } config ? new[] { "Профиль мода: " + config } : Array.Empty<string>()).Concat(_textureSources.Archives).Concat(_textureSources.LooseFolders)
             .Concat(_textureSources.Notes).Concat(_textureCatalog?.Problems ?? []));
     public bool TextureShowAll
     {
@@ -142,6 +142,7 @@ internal sealed partial class MainWindowViewModel
             var catalog = await TextureResourceCatalog.OpenAsync(sources, token);
             _textureSources = sources;
             _textureCatalog = catalog;
+            TextureGameFolder = sources.GameFolder;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

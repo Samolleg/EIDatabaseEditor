@@ -98,7 +98,7 @@ public static class DatabaseTextureReferences
                     int type = record.Number(2) ?? -1;
                     string[] types = record.Table == "items.weapons" ? Weapons : Armor;
                     if (type >= 0 && type < types.Length) prefix = types[type];
-                    else if (modProfile && record.Table == "items.weapons" && ExtendedWeapons.TryGetValue(type, out string? code))
+                    else if (record.Table == "items.weapons" && ExtendedWeapons.TryGetValue(type, out string? code))
                     { prefix = code; extended = true; }
                     if (prefix is null)
                     { Context("Тип предмета", "Не подтверждено правило имени для этого типа."); break; }

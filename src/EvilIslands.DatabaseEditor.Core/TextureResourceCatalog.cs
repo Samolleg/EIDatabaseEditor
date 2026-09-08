@@ -31,6 +31,30 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
     {
         string fullPath = Path.GetFullPath(databasePath);
         string folder = Path.GetDirectoryName(fullPath)!;
+        // Only use a nearby mod profile when it explicitly names this database.
+        foreach (string config in new[] { Path.Combine(folder, "config.ini"), Path.Combine(Path.GetDirectoryName(folder) ?? folder, "config.ini") }.Distinct())
+        {
+            if (!File.Exists(config)) continue;
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            string section = "";
+            bool ownsDatabase = false;
+            foreach (string raw in File.ReadAllLines(config, Encoding.GetEncoding(1251)))
+            {
+                token.ThrowIfCancellationRequested();
+                string line = raw.Trim();
+                if (line.StartsWith(';') || line.StartsWith('#')) continue;
+                if (line.StartsWith('[')) { section = line.Trim('[', ']').Trim(); continue; }
+                int eq = line.IndexOf('=');
+                if (eq < 1 || !section.Equals("RES", StringComparison.OrdinalIgnoreCase) ||
+                    !line[..eq].Trim().Equals("database.res", StringComparison.OrdinalIgnoreCase)) continue;
+                string value = line[(eq + 1)..].Trim().Trim('"');
+                if (value.Length > 0 && Path.GetFullPath(value, Path.GetDirectoryName(config)!).Equals(fullPath, StringComparison.OrdinalIgnoreCase)) ownsDatabase = true;
+            }
+            if (!ownsDatabase) continue;
+            for (DirectoryInfo? game = new(Path.GetDirectoryName(config)!); game is not null; game = game.Parent)
+                if (File.Exists(Path.Combine(game.FullName, "game.exe")) && Directory.Exists(Path.Combine(game.FullName, "Res")))
+                    return FromGame(game.FullName, config) with { NearbyDatabasePath = fullPath };
+        }
         var archives = new List<string>();
         var notes = new List<string> { "Ресурсы рядом с БД. Приоритеты игры не подтверждены; набор считается неполным." };
         foreach (string path in Directory.EnumerateFiles(folder, "*.res", SearchOption.TopDirectoryOnly).Order(StringComparer.OrdinalIgnoreCase))

@@ -8,6 +8,8 @@ namespace EvilIslands.DatabaseEditor.App.ViewModels;
 internal sealed record TexturePreviewItem(string Label, string Name, string Information, string Source, BitmapSource? Image)
 {
     public string SourceName => Path.GetFileName(Source);
+    public string SourceCaption => Source.Length == 0 ? "Источник этого варианта не найден" : "Источник: " + SourceName;
+    public string Versions { get; init; } = "";
 }
 
 internal sealed partial class MainWindowViewModel
@@ -51,6 +53,8 @@ internal sealed partial class MainWindowViewModel
             for (int i = 0; i < 2; i++)
             {
                 TexturePreviewItem item;
+                var matches = catalog.Check(names[i]).Matches;
+                string source = matches.FirstOrDefault()?.Source ?? "";
                 await _previewGate.WaitAsync(token);
                 try
                 {
@@ -60,7 +64,6 @@ internal sealed partial class MainWindowViewModel
                         decoded.PremultipliedAlpha ? PixelFormats.Pbgra32 : PixelFormats.Bgra32, null,
                         decoded.Bgra, decoded.Width * 4);
                     bitmap.Freeze();
-                    string source = catalog.Check(names[i]).Matches.FirstOrDefault()?.Source ?? "";
                     string info = $"{decoded.Width} × {decoded.Height} · {decoded.Format} · верхний уровень";
                     if (!catalog.Complete) info += " · из неполного набора";
                     if (decoded.Format == "PNT3") info += " · отдельный слой";
@@ -68,11 +71,11 @@ internal sealed partial class MainWindowViewModel
                 }
                 catch (Exception ex) when (ex is IOException or NotSupportedException or ArgumentException)
                 {
-                    item = new(i == 0 ? "Обычная" : "Вариант .x2", names[i], ex.Message, "", null);
+                    item = new(i == 0 ? "Обычная" : "Вариант .x2", names[i], ex.Message, source, null);
                 }
                 finally { _previewGate.Release(); }
                 if (revision != _previewRevision || token.IsCancellationRequested || _disposed) return;
-                TexturePreviewItems[i] = item;
+                TexturePreviewItems[i] = item with { Versions = matches.Count > 1 ? "Все источники этого варианта:\n" + string.Join("\n", matches.Select(m => m.Source)) : "" };
             }
         }
         catch (OperationCanceledException) { }

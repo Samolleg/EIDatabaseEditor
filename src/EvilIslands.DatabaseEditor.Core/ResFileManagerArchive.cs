@@ -993,7 +993,7 @@ public sealed class ResFileManagerArchive
 
         var info = new FileInfo(path);
         info.Refresh();
-        return new ArchiveIndex(path, stream.Length, info.LastWriteTimeUtc, directoryOffset, entries);
+        return new ArchiveIndex(path, stream.Length, readOnlyCatalog ? default : info.LastWriteTimeUtc, directoryOffset, entries);
     }
 
     private static ResFileManagerSaveResult CreateResult(

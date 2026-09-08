@@ -219,7 +219,7 @@ public static class SoundArchiveCopyEditor
                 FileOptions.SequentialScan);
             FileInfo sourceInfo = new(sourcePath);
             sourceInfo.Refresh();
-            if (sourceInfo.Length != target.Archive.FileLength ||
+            if (target.Archive.LastWriteTimeUtc is null || sourceInfo.Length != target.Archive.FileLength ||
                 sourceInfo.LastWriteTimeUtc != target.Archive.LastWriteTimeUtc)
             {
                 throw new IOException(
@@ -810,7 +810,7 @@ public static class SoundArchiveCopyEditor
     {
         var sourceInfo = new FileInfo(sourcePath);
         sourceInfo.Refresh();
-        if (sourceInfo.Length != archive.FileLength || sourceInfo.LastWriteTimeUtc != archive.LastWriteTimeUtc)
+        if (archive.LastWriteTimeUtc is null || sourceInfo.Length != archive.FileLength || sourceInfo.LastWriteTimeUtc != archive.LastWriteTimeUtc)
         {
             throw new IOException(
                 "Исходный звуковой RES изменился после подключения. Переподключите звуки и повторите импорт.");

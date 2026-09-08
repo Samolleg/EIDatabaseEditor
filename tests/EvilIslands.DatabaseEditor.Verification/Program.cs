@@ -887,7 +887,7 @@ internal static class Program
         SoundArchiveCatalog changedCatalog = await SoundArchiveCatalog.OpenAsync([changedSourcePath])
             .ConfigureAwait(false);
         SoundArchiveInfo changedArchive = changedCatalog.Archives.Single();
-        File.SetLastWriteTimeUtc(changedSourcePath, changedArchive.LastWriteTimeUtc.AddSeconds(2));
+        File.SetLastWriteTimeUtc(changedSourcePath, changedArchive.LastWriteTimeUtc!.Value.AddSeconds(2));
         string changedSha256 = ComputeFileSha256(changedSourcePath);
         var changedTarget = new BriefingSoundImportTarget(
             changedArchive,

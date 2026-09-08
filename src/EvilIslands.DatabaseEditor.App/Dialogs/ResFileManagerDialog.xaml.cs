@@ -288,6 +288,7 @@ public partial class ResFileManagerDialog : Window
         bool canEdit = loaded && !_isBusy;
         bool hasExtractableSelection = selected.Any(row => row.State != "Будет удалён");
 
+        DeleteFolderButton.IsEnabled = canEdit && GetFolderDeletionRows(_selectedFolder).Count > 0;
         AddFilesButton.IsEnabled = canEdit;
         AddFolderButton.IsEnabled = canEdit;
         ReplaceButton.IsEnabled = canEdit && selected.Count == 1;
@@ -584,6 +585,21 @@ public partial class ResFileManagerDialog : Window
         await AddCandidatesAsync([new ImportCandidate(dialog.FileName, selected[0].ResourceName)]);
     }
 
+    private List<ResManagerFileRow> GetFolderDeletionRows(string folder) =>
+        string.IsNullOrEmpty(folder) ? [] : _rows.Where(row =>
+            row.ResourceName.StartsWith(folder.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase) &&
+            row.State != "Будет удалён").ToList();
+
+    private void DeleteFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = GetFolderDeletionRows(_selectedFolder);
+        if (_archive is null || _isBusy || selected.Count == 0) return;
+        if (!Confirm("Удалить папку из RES?",
+            $"Папка: {_selectedFolder}. Файлов вместе с вложенными папками: {selected.Count:N0}.",
+            "Удаление применяется после сохранения. До сохранения всё действие можно отменить через Ctrl+Z.",
+            "Подготовить удаление", "−")) return;
+        StageDeletion(selected);
+    }
     private void DeleteButton_Click(object sender, RoutedEventArgs e)
     {
         if (_archive is null)
@@ -604,6 +620,12 @@ public partial class ResFileManagerDialog : Window
             return;
         }
 
+        StageDeletion(selected);
+    }
+
+    private void StageDeletion(List<ResManagerFileRow> selected)
+    {
+        if (_archive is null || _isBusy || selected.Count == 0) return;
         CaptureUndo();
         foreach (ResManagerFileRow row in selected)
         {
