@@ -5,17 +5,18 @@ public sealed record MmpBatchItem(string Name, bool Success, string Detail);
 public sealed record MmpBatchProgress(int Completed, int Total, string Name);
 public static class MmpBatchConverter
 {
-    public static string MapResourceName(string name)
+    public static string MapResourceName(string name, bool alreadyAtlas = false)
     {
         if (!name.EndsWith(".mmp", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Ресурс не является MMP.");
+        if (alreadyAtlas && name.EndsWith("map.mmp", StringComparison.OrdinalIgnoreCase)) return name;
         if (name.EndsWith("map.mmp", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Ресурс уже имеет суффикс map; повторная конвертация пропущена.");
         return name[..^4] + "map.mmp";
     }
     public static async Task<IReadOnlyList<MmpBatchItem>> RunAsync(ResFileManagerArchive archive,
         IReadOnlyList<string> names, string destination, bool asRes, MmpDxtChoice choice, string compressor,
-        IProgress<MmpBatchProgress>? progress, CancellationToken token)
+        IProgress<MmpBatchProgress>? progress, CancellationToken token, byte alphaThreshold = 128)
     {
         destination = Path.GetFullPath(destination);
         if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException("Выберите новую папку результата.");
@@ -38,8 +39,8 @@ public static class MmpBatchConverter
                 string scratch = Path.Combine(stage, "scratch-"+Guid.NewGuid().ToString("N"));
                 try
                 {
-                    string outputName = MapResourceName(name);
-                    if (archive.Contains(outputName)) throw new InvalidDataException($"Ресурс {outputName} уже существует; замена не выполняется.");
+                    string outputName = MapResourceName(name, choice == MmpDxtChoice.CompactAtlas512);
+                    if (archive.Contains(outputName) && !(choice == MmpDxtChoice.CompactAtlas512 && outputName.Equals(name, StringComparison.OrdinalIgnoreCase))) throw new InvalidDataException($"Ресурс {outputName} уже существует; замена не выполняется.");
                     string candidate = Path.GetFullPath(outputName.Replace('\\',Path.DirectorySeparatorChar),files);
                     if (!candidate.StartsWith(files+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Небезопасный путь ресурса.");
                     target = candidate;
@@ -49,13 +50,15 @@ public static class MmpBatchConverter
                     byte[] data = new byte[checked((int)entry.Size)];
                     await source.ReadExactlyAsync(data, token);
                     MmpImage image = await Task.Run(() => MmpPreviewDecoder.Decode(data, token), token);
-                    MmpConversionResult converted = await Task.Run(()=>MmpDxtConverter.ConvertAsync(image,choice,compressor,scratch,token),token);
+                    MmpConversionResult converted = await Task.Run(()=>MmpDxtConverter.ConvertAsync(image,choice,compressor,scratch,token,alphaThreshold),token);
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                     await File.WriteAllBytesAsync(target,converted.Bytes,token);
                     imports.Add(new(ResFileEditKind.AddOrReplace,outputName,await ResFileManagerArchive.InspectImportAsync(target,token)));
-                    report.Add(new(name,true,$"{outputName}; {(choice == MmpDxtChoice.MapAtlasX2 ? image.Width * 2 : image.Width)}×{(choice == MmpDxtChoice.MapAtlasX2 ? image.Height * 2 : image.Height)}; {image.Format} → {converted.Format}; mip: {converted.Mips}" +
+                    int outputSide = choice is MmpDxtChoice.CompactX2 or MmpDxtChoice.CompactAtlas512 ? 512 : 0;
+                    report.Add(new(name,true,$"{outputName}; {(outputSide > 0 ? outputSide : choice == MmpDxtChoice.MapAtlasX2 ? image.Width * 2 : image.Width)}×{(outputSide > 0 ? outputSide : choice == MmpDxtChoice.MapAtlasX2 ? image.Height * 2 : image.Height)}; {image.Format} → {converted.Format}; mip: {converted.Mips}" +
                         (choice == MmpDxtChoice.MapAtlasX2 ? "; атлас 2×2, четыре копии без масштабирования; alpha threshold 128/255" : "") +
-                        (converted.HadSmoothAlpha && choice is MmpDxtChoice.MapAtlasX2 or MmpDxtChoice.Dxt1Threshold ? "; полупрозрачные пиксели преобразованы в однобитную alpha" : "") +
+                        (outputSide > 0 ? $"; compact512; alpha threshold {alphaThreshold}/255" : "") +
+                        (converted.HadSmoothAlpha && choice is MmpDxtChoice.MapAtlasX2 or MmpDxtChoice.Dxt1Threshold or MmpDxtChoice.CompactX2 or MmpDxtChoice.CompactAtlas512 ? "; полупрозрачные пиксели преобразованы в однобитную alpha" : "") +
                         (converted.Layer ? "; PNT3 — отдельный слой, композиция и UV не проверены" : "")));
                 }
                 catch (Exception e) when (e is IOException or InvalidDataException or ArgumentException or NotSupportedException or KeyNotFoundException)

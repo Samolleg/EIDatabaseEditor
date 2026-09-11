@@ -4,11 +4,42 @@ using System.Security.Cryptography;
 
 namespace EvilIslands.DatabaseEditor.Core;
 
-public enum MmpDxtChoice { Auto, Dxt1, Dxt3, Dxt5, Dxt1Threshold, MapAtlasX2 }
+public enum MmpDxtChoice { Auto, Dxt1, Dxt3, Dxt5, Dxt1Threshold, MapAtlasX2, CompactX2, CompactAtlas512 }
 public sealed record MmpConversionResult(byte[] Bytes, string Format, int Mips, bool HadSmoothAlpha, bool Layer);
 
 public static class MmpDxtConverter
 {
+    public static MmpImage PrepareCompact(MmpImage image, bool alreadyAtlas, CancellationToken token = default)
+    {
+        int expected = alreadyAtlas ? 1024 : 512;
+        if (image.Width != expected || image.Height != expected || image.Bgra.Length != expected * expected * 4)
+            throw new InvalidDataException($"Этот режим ожидает {expected}×{expected}. Выберите правильный тип входа.");
+        int side = expected / 2;
+        byte[] pixels = new byte[side * side * 4];
+        for (int y = 0; y < side; y++)
+        {
+            token.ThrowIfCancellationRequested();
+            for (int x = 0; x < side; x++)
+            {
+                int dest = (y * side + x) * 4, alpha = 0;
+                for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++)
+                    alpha += image.Bgra[((2 * y + dy) * expected + 2 * x + dx) * 4 + 3];
+                pixels[dest + 3] = (byte)((alpha + 2) / 4);
+                for (int c = 0; c < 3; c++)
+                {
+                    int weighted = 0;
+                    for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++)
+                    {
+                        int p = ((2 * y + dy) * expected + 2 * x + dx) * 4;
+                        weighted += image.Bgra[p + c] * (image.PremultipliedAlpha ? 255 : image.Bgra[p + 3]);
+                    }
+                    pixels[dest + c] = alpha == 0 ? (byte)0 : (byte)Math.Min(255, (weighted + alpha / 2) / alpha);
+                }
+            }
+        }
+        var reduced = new MmpImage(side, side, image.Format, pixels, false);
+        return alreadyAtlas ? reduced : RepeatAtlasX2(reduced, token);
+    }
     public static MmpImage RepeatAtlasX2(MmpImage image, CancellationToken token = default)
     {
         if (image.Width < 1 || image.Height < 1 || image.Width > 4096 || image.Height > 4096 ||
@@ -31,8 +62,10 @@ public static class MmpDxtConverter
     private static int Get(byte[] b, int offset) => BinaryPrimitives.ReadInt32LittleEndian(b.AsSpan(offset));
 
     public static async Task<MmpConversionResult> ConvertAsync(MmpImage image, MmpDxtChoice choice,
-        string compressor, string scratch, CancellationToken token)
+        string compressor, string scratch, CancellationToken token, byte alphaThreshold = 128)
     {
+        if (choice is MmpDxtChoice.CompactX2 or MmpDxtChoice.CompactAtlas512)
+            image = PrepareCompact(image, choice == MmpDxtChoice.CompactAtlas512, token);
         if (choice == MmpDxtChoice.MapAtlasX2) image = RepeatAtlasX2(image, token);
         using (var exe = File.OpenRead(compressor))
             if (Convert.ToHexString(SHA256.HashData(exe)) != TexconvSha256)
@@ -57,7 +90,7 @@ public static class MmpDxtConverter
         string format = choice switch { MmpDxtChoice.Dxt3 => "DXT3", MmpDxtChoice.Dxt5 => "DXT5",
             MmpDxtChoice.Auto when smooth => "DXT5", _ => "DXT1" };
         if (choice is MmpDxtChoice.Dxt1Threshold or MmpDxtChoice.MapAtlasX2)
-            for (int i = 3; i < straight.Length; i += 4) straight[i] = straight[i] >= 128 ? (byte)255 : (byte)0;
+            for (int i = 3; i < straight.Length; i += 4) straight[i] = straight[i] >= alphaThreshold ? (byte)255 : (byte)0;
         var levels = new List<byte[]> { straight };
         int w = image.Width, h = image.Height;
         while (w > 1 || h > 1)
@@ -86,6 +119,8 @@ public static class MmpDxtConverter
         w = image.Width; h = image.Height;
         foreach (byte[] level in levels)
         {
+            if (choice is MmpDxtChoice.CompactX2 or MmpDxtChoice.CompactAtlas512)
+                for (int i = 3; i < level.Length; i += 4) level[i] = level[i] >= alphaThreshold ? (byte)255 : (byte)0;
             BleedTransparentEdges(level, w, h, token);
             w = Math.Max(1, w / 2); h = Math.Max(1, h / 2);
         }
