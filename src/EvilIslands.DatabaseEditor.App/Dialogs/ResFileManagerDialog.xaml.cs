@@ -58,6 +58,7 @@ public partial class ResFileManagerDialog : Window
         ChangesGrid.ItemsSource = _changes;
         ApplyStoredLayout();
         Closed += (_, _) => CancelManagerPreview();
+        Closed += (_, _) => CleanupConvertedMmp();
     }
 
     private bool HasPendingChanges => _edits.Count > 0;

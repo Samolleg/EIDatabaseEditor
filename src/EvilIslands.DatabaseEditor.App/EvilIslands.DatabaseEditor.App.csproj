@@ -21,4 +21,5 @@
     <Resource Include="Assets\AppIcon.ico" />
     <Resource Include="Assets\AppIcon.png" />
   </ItemGroup>
+  <ItemGroup><Content Include="..\..\third-party\DirectXTex\*" Link="third-party\DirectXTex\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
 </Project>

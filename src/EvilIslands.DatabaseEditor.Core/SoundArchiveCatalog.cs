@@ -549,6 +549,9 @@ public static class DatabaseSoundLinkResolver
         var result = new List<DatabaseSoundLink>();
         foreach (DatabaseField field in record.Fields)
         {
+            var keys = field.GetStructuredListStringValues(4)
+                .GroupBy(value => value.ItemIndex)
+                .ToDictionary(group => group.Key, group => group.First().Value);
             foreach (StructuredListStringValue reference in field.GetStructuredListStringValues(AcksFileFieldId))
             {
                 if (string.IsNullOrWhiteSpace(reference.Value))
@@ -557,6 +560,8 @@ public static class DatabaseSoundLinkResolver
                 }
 
                 string source = $"{field.DisplayName} · реплика {reference.ItemIndex + 1:N0}";
+                if (keys.TryGetValue(reference.ItemIndex, out string? key) && !string.IsNullOrWhiteSpace(key))
+                    source = $"{field.DisplayName} · ключ: {key} · реплика {reference.ItemIndex + 1:N0}";
                 AddMatches(
                     result,
                     DatabaseSoundLinkKind.DirectResource,

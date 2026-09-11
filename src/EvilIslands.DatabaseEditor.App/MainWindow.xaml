@@ -36,6 +36,8 @@
     </Window.InputBindings>
 
     <Window.Resources>
+        <CollectionViewSource x:Key="RelatedTextSearchView" Source="{Binding SelectedRecord.RelatedTexts}" Filter="RelatedTextSearch_Filter" />
+        <CollectionViewSource x:Key="RelatedSoundSearchView" Source="{Binding SelectedRecord.RelatedSounds}" Filter="RelatedSoundSearch_Filter" />
         <Style x:Key="SurfaceCard" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
@@ -1740,9 +1742,9 @@
                                                         </ScrollViewer>
                                                     </Grid>
                                                 </Border>
-                                                <DataGrid x:Name="LocalizationGrid"
-                                                          Grid.Row="2"
-                                                          ItemsSource="{Binding SelectedRecord.RelatedTexts}"
+                                                <DockPanel Grid.Row="2"><DockPanel Margin="0,0,0,8" DockPanel.Dock="Top"><TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBox x:Name="RelatedTextSearch" ToolTip="Поиск по тексту, названию и ключу…" TextChanged="RelatedSearch_TextChanged"/></DockPanel><DataGrid x:Name="LocalizationGrid"
+                                                          
+                                                          ItemsSource="{Binding Source={StaticResource RelatedTextSearchView}}"
                                                           AutoGenerateColumns="False"
                                                           CanUserAddRows="False"
                                                           CanUserDeleteRows="False"
@@ -1762,7 +1764,7 @@
                                                         <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="220" ElementStyle="{StaticResource LocalizationGridCellText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="280" ElementStyle="{StaticResource LocalizationGridDescriptionText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                                     </DataGrid.Columns>
-                                                </DataGrid>
+                                                </DataGrid></DockPanel>
                                             </Grid>
                                         </Border>
                                         <GridSplitter x:Name="LocalizationSoundSplitter"
@@ -1819,9 +1821,9 @@
                                                             Click="DetailsPaneDetachButton_Click"
                                                             ToolTip="Открыть связанные тексты и звук в отдельном окне" />
                                                 </Grid>
-                                                <DataGrid x:Name="SoundLinksGrid"
-                                                          Grid.Row="1"
-                                                          ItemsSource="{Binding SelectedRecord.RelatedSounds}"
+                                                <DockPanel Grid.Row="1"><DockPanel Margin="0,0,0,8" DockPanel.Dock="Top"><TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,8,0"/><Button Content="■ Стоп" DockPanel.Dock="Right" Click="RelatedSoundStop_Click" Margin="8,0,0,0"/><TextBox x:Name="RelatedSoundSearch" ToolTip="Поиск по тексту реплики, файлу и персонажу…" TextChanged="RelatedSearch_TextChanged"/></DockPanel><DataGrid x:Name="SoundLinksGrid"
+                                                          
+                                                          ItemsSource="{Binding Source={StaticResource RelatedSoundSearchView}}"
                                                           AutoGenerateColumns="False"
                                                           IsReadOnly="True"
                                                           CanUserAddRows="False"
@@ -1843,7 +1845,7 @@
                                                           HorizontalGridLinesBrush="{StaticResource SoundBorderBrush}"
                                                           VerticalGridLinesBrush="Transparent"
                                                           PreviewMouseWheel="SoundLinksGrid_PreviewMouseWheel">
-                                                    <DataGrid.Columns>
+                                                    <DataGrid.Columns><DataGridTemplateColumn Header="▶" Width="70" MinWidth="60"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="▶" ToolTip="Воспроизвести звук" IsEnabled="{Binding IsResolved}" Click="RelatedSoundPlay_Click" Padding="8,3"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
                                                         <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" Width="100" MinWidth="90" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Связь / персонаж" Binding="{Binding Source}" Width="220" MinWidth="180" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Текст реплики из texts.res" Binding="{Binding TranscriptText}" Width="*" MinWidth="360" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
@@ -1852,7 +1854,7 @@
                                                         <DataGridTextColumn Header="Формат" Binding="{Binding Format}" Width="78" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Размер" Binding="{Binding LengthText}" Width="92" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
                                                     </DataGrid.Columns>
-                                                </DataGrid>
+                                                </DataGrid></DockPanel>
                                             </Grid>
                                         </Border>
                                            </Grid>

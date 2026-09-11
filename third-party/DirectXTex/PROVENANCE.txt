@@ -1,0 +1,9 @@
+Microsoft DirectXTex texconv, release may2026 (Windows x64)
+Upstream: https://github.com/microsoft/DirectXTex
+Binary: https://github.com/microsoft/DirectXTex/releases/download/may2026/texconv.exe
+License: https://raw.githubusercontent.com/microsoft/DirectXTex/may2026/LICENSE
+SHA256: DCFDEC10244E02CF5037FBA089C55FB7E1326B1C8181742D77D15FA5CB5EEF06
+Redistribution: MIT; LICENSE must accompany texconv.exe.
+Downloaded and verified 2026-09-11. The editor verifies this exact binary hash before use.
+Invoked locally without a shell or visible console, CPU compression (-nogpu).
+No download or separate user installation is performed at runtime.

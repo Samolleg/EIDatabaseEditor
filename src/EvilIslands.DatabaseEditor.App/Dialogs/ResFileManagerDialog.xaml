@@ -97,6 +97,7 @@
                     <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
                         <StackPanel Margin="13,11,13,7"><TextBlock Text="ПАПКИ" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource MutedTextBrush}"/>
                             <Button x:Name="DeleteFolderButton" Content="Удалить папку…" Style="{StaticResource RoundedButton}" Margin="0,8,0,4" Padding="10,6" Click="DeleteFolderButton_Click"/>
+                            <Button Content="Конвертировать MMP…" Click="ConvertMmp_Click" Margin="0,4,0,4" Padding="10,6"/>
                             <TextBlock x:Name="FolderSummaryText" Margin="0,4,0,0" Foreground="{StaticResource SubtleTextBrush}" FontSize="11"/>
                         </StackPanel>
                         <TreeView x:Name="FoldersTree" Grid.Row="1" Margin="6,0,6,8" Padding="2" Background="Transparent" BorderThickness="0"

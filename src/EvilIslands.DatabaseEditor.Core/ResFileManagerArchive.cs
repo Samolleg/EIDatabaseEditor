@@ -448,7 +448,7 @@ public sealed class ResFileManagerArchive
         }
     }
 
-    private FileStream OpenVerifiedSource(CancellationToken cancellationToken)
+    internal FileStream OpenVerifiedSource(CancellationToken cancellationToken)
     {
         EnsureRegularFile(SourcePath, "Исходный RES");
         var source = new FileStream(

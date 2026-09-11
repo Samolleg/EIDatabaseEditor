@@ -62,6 +62,7 @@ public partial class MainWindow : Window
     private bool _detailsDetachScheduled;
     private readonly MediaPlayer _soundPreviewPlayer = new();
     private string? _soundPreviewPath;
+    private int _soundPreviewRevision;
 
     public MainWindow() : this(new EditorPreferencesStore(), new RecoverySnapshotStore())
     {
@@ -202,10 +203,12 @@ public partial class MainWindow : Window
 
     private async void ViewModel_PlayBriefingAudioRequested(object? sender, SoundPreviewRequestedEventArgs e)
     {
+        StopSoundPreview();
+        int revision = _soundPreviewRevision;
         try
         {
-            StopSoundPreview();
             byte[] bytes = await SoundArchiveCatalog.ReadResourceAsync(e.Resource);
+            if (revision != _soundPreviewRevision) return;
             string directory = Path.Combine(
                 Path.GetTempPath(),
                 "EvilIslands.DatabaseEditor",
@@ -214,12 +217,18 @@ public partial class MainWindow : Window
             string extension = "." + e.Resource.Format.ToLowerInvariant();
             string target = Path.Combine(directory, $"phrase-{e.PhraseNumber}-{Guid.NewGuid():N}{extension}");
             await File.WriteAllBytesAsync(target, bytes);
+            if (revision != _soundPreviewRevision)
+            {
+                File.Delete(target);
+                return;
+            }
             _soundPreviewPath = target;
             _soundPreviewPlayer.Open(new Uri(target, UriKind.Absolute));
             _soundPreviewPlayer.Play();
         }
         catch (Exception exception)
         {
+            if (revision != _soundPreviewRevision) return;
             StopSoundPreview();
             (_spreadsheetViewModel ?? _viewModel).ReportSpreadsheetError(
                 $"Не удалось воспроизвести звуковой файл: {exception.Message}");
@@ -412,6 +421,7 @@ public partial class MainWindow : Window
 
     private void StopSoundPreview()
     {
+        ++_soundPreviewRevision;
         _soundPreviewPlayer.Stop();
         _soundPreviewPlayer.Close();
         if (_soundPreviewPath is not { } path)
@@ -588,6 +598,11 @@ public partial class MainWindow : Window
 
     private void SpreadsheetViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainWindowViewModel.SelectedRecord))
+        {
+            RelatedSoundSearch.Clear();
+            RelatedTextSearch.Clear();
+        }
         if (e.PropertyName is nameof(MainWindowViewModel.SelectedTable) or
             nameof(MainWindowViewModel.VisibleSpreadsheetColumns))
         {
