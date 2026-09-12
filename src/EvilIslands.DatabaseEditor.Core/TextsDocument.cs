@@ -331,7 +331,7 @@ public sealed class TextsDocument
         return CreateSaveResult(destinationPath, rebuilt, backupPath: null);
     }
 
-    public SaveResult SaveInPlace(bool allowGameInstallationPath = false)
+    public SaveResult SaveInPlace(bool allowGameInstallationPath = false, bool createBackup = true, bool keepRollbackForPair = false)
     {
         string sourcePath = Path.GetFullPath(SourcePath);
         EnsureSafeDestination(sourcePath, allowGameInstallationPath);
@@ -347,8 +347,8 @@ public sealed class TextsDocument
         try
         {
             WriteVerified(tempPath, rebuilt);
-            RetainNewestManagedBackupBeforeSave(sourcePath);
-            backupPath = CreateAvailableBackupPath(sourcePath);
+            if (createBackup) RetainNewestManagedBackupBeforeSave(sourcePath);
+            backupPath = createBackup ? CreateAvailableBackupPath(sourcePath) : sourcePath + ".rollback-" + Guid.NewGuid().ToString("N");
             sourceGuard.Commit(tempPath, backupPath, Convert.ToHexString(SHA256.HashData(rebuilt)));
             sourceGuard.Dispose();
             EnsureBackupMatches(backupPath);
@@ -360,7 +360,8 @@ public sealed class TextsDocument
             throw;
         }
 
-        return CreateSaveResult(sourcePath, rebuilt, backupPath);
+        if (!createBackup && !keepRollbackForPair) File.Delete(backupPath);
+        return CreateSaveResult(sourcePath, rebuilt, createBackup || keepRollbackForPair ? backupPath : null);
     }
 
     public Task<SaveResult> SaveAsAsync(string targetPath, CancellationToken cancellationToken = default)
@@ -399,10 +400,10 @@ public sealed class TextsDocument
 
     public Task<SaveResult> SaveInPlaceAsync(
         bool allowGameInstallationPath = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool createBackup = true, bool keepRollbackForPair = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.Run(() => SaveInPlace(allowGameInstallationPath), CancellationToken.None);
+        return Task.Run(() => SaveInPlace(allowGameInstallationPath, createBackup, keepRollbackForPair), CancellationToken.None);
     }
 
     private byte[] BuildAndVerify(string pathForErrors)

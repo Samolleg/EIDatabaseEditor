@@ -1722,7 +1722,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         return PendingSoundEdit is not null;
     }
 
-    public async Task SaveCurrentAsync(bool allowGameInstallationPath)
+    public async Task SaveCurrentAsync(bool allowGameInstallationPath, bool createBackup = true)
     {
         if (_workspace is null || !HasChanges || IsBusy)
         {
@@ -1744,7 +1744,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
         try
         {
-            var result = await _service.SaveCurrentAsync(allowGameInstallationPath, cancellationToken);
+            var result = await _service.SaveCurrentAsync(allowGameInstallationPath, cancellationToken, createBackup);
             ApplyWorkspace(result.Workspace, preserveSoundEdits: true);
             if (selectedTableKey is not null)
             {
@@ -1775,6 +1775,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             NotificationMessage = result.TextsSave is null
                 ? $"Сохранено и проверено: {Path.GetFileName(result.Save.TargetPath)}. Резервная копия: {string.Join(", ", backups)}"
                 : $"Сохранена и проверена связанная пара database.res + texts.res. Резервные копии: {string.Join(", ", backups)}";
+            if (!createBackup) NotificationMessage = "Сохранено и проверено без резервной копии.";
             StatusText = $"Сохранено: {result.Save.TargetPath}";
         }
         catch (Exception exception)

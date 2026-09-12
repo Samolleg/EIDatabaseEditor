@@ -381,6 +381,7 @@
                     <TextBlock x:Name="ErrorText" Margin="0,0,285,0" Foreground="{StaticResource DangerBrush}"
                                TextWrapping="Wrap" VerticalAlignment="Center" Visibility="Collapsed" />
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="ClearSlotButton" Style="{StaticResource RoundedButton}" Content="Очистить слот" Visibility="Collapsed" Click="ClearSlotButton_Click" Margin="0,0,10,0" ToolTip="Убрать предмет из этого слота. Затем нажмите Применить значение." />
                         <Button Style="{StaticResource RoundedButton}" Content="Отмена" Click="CancelButton_Click" MinWidth="110" />
                         <Button x:Name="ApplyButton" Style="{StaticResource AccentButton}" Content="Применить список" Click="ApplyButton_Click"
                                 MinWidth="155" Margin="10,0,0,0" />

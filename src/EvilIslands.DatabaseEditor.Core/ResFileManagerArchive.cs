@@ -199,12 +199,12 @@ public sealed class ResFileManagerArchive
     public Task<ResFileManagerSaveResult> SaveInPlaceAsync(
         IReadOnlyList<ResFileEdit> edits,
         bool allowGameInstallationPath = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool createBackup = true)
     {
         ArgumentNullException.ThrowIfNull(edits);
         cancellationToken.ThrowIfCancellationRequested();
         return Task.Run(
-            () => SaveInPlace(edits, allowGameInstallationPath, cancellationToken),
+            () => SaveInPlace(edits, allowGameInstallationPath, cancellationToken, createBackup),
             CancellationToken.None);
     }
 
@@ -411,7 +411,7 @@ public sealed class ResFileManagerArchive
     private ResFileManagerSaveResult SaveInPlace(
         IReadOnlyList<ResFileEdit> edits,
         bool allowGameInstallationPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool createBackup)
     {
         EnsureSafeInPlaceTarget(SourcePath, allowGameInstallationPath);
         MutationPlan plan = CreatePlan(edits);
@@ -428,8 +428,8 @@ public sealed class ResFileManagerArchive
                 EnsureSafeInPlaceTarget(SourcePath, allowGameInstallationPath);
                 EnsureSourceIdentity(source, cancellationToken);
 
-                RetainNewestManagedBackupBeforeSave(SourcePath);
-                backupPath = CreateAvailableBackupPath(SourcePath);
+                if (createBackup) RetainNewestManagedBackupBeforeSave(SourcePath);
+                backupPath = createBackup ? CreateAvailableBackupPath(SourcePath) : SourcePath + ".rollback-" + Guid.NewGuid().ToString("N");
                 CreateVerifiedBackup(source, backupPath, cancellationToken);
                 EnsureSourceIdentity(source, cancellationToken);
 
@@ -439,7 +439,8 @@ public sealed class ResFileManagerArchive
             EnsureFileHash(backupPath, Sha256, "Резервная копия исходного RES", cancellationToken);
             EnsureFileHash(SourcePath, resultSha256, "Сохранённый RES", cancellationToken);
             ValidateKnownArchive(SourcePath, Path.GetFileName(SourcePath), cancellationToken);
-            return CreateResult(SourcePath, resultSha256, plan, backupPath);
+            if (!createBackup) File.Delete(backupPath);
+            return CreateResult(SourcePath, resultSha256, plan, createBackup ? backupPath : null);
         }
         catch
         {

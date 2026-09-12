@@ -242,7 +242,7 @@ public sealed class DatabaseDocument
         return Task.Run(() => SaveAs(targetPath), CancellationToken.None);
     }
 
-    public SaveResult SaveInPlace(bool allowGameInstallationPath = false)
+    public SaveResult SaveInPlace(bool allowGameInstallationPath = false, bool createBackup = true)
     {
         ValidationDiagnostic? blockingDiagnostic = Validate()
             .FirstOrDefault(diagnostic => diagnostic.IsBlocking);
@@ -319,12 +319,13 @@ public sealed class DatabaseDocument
                 throw new IOException("Путь открытого файла изменился и больше не является безопасным.");
             }
 
-            RetainNewestManagedBackupBeforeSave(sourcePath);
-            backupPath = CreateAvailableBackupPath(sourcePath);
+            if (createBackup) RetainNewestManagedBackupBeforeSave(sourcePath);
+            backupPath = createBackup ? CreateAvailableBackupPath(sourcePath) : sourcePath + ".rollback-" + Guid.NewGuid().ToString("N");
             sourceGuard.Commit(tempPath, backupPath, rebuiltSha256);
             sourceGuard.Dispose();
             EnsureBackupMatches(backupPath);
             EnsureFileMatches(sourcePath, rebuilt);
+            if (!createBackup) File.Delete(backupPath);
         }
         catch
         {
@@ -342,15 +343,15 @@ public sealed class DatabaseDocument
             rebuiltSha256,
             true,
             verifiedDocument.Diagnostics,
-            backupPath);
+            createBackup ? backupPath : null);
     }
 
     public Task<SaveResult> SaveInPlaceAsync(
         bool allowGameInstallationPath = false,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool createBackup = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.Run(() => SaveInPlace(allowGameInstallationPath), CancellationToken.None);
+        return Task.Run(() => SaveInPlace(allowGameInstallationPath, createBackup), CancellationToken.None);
     }
 
     public DatabaseRecord AppendRecordClone(DatabaseRecord template)

@@ -73,6 +73,7 @@ public partial class MainWindow : Window
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         _recoveryStore = recoveryStore ?? new RecoverySnapshotStore();
         InitializeComponent();
+        RefreshLastDatabaseButton();
         AddHandler(FrameworkElement.LoadedEvent, new RoutedEventHandler(SpreadsheetElement_Loaded));
         RegisterSpreadsheetGrid(RecordsGrid);
         RegisterSpreadsheetGrid(ResourcesGrid);
@@ -247,9 +248,9 @@ public partial class MainWindow : Window
             CheckPathExists = true,
             Multiselect = false,
             RestoreDirectory = true,
-            InitialDirectory = _viewModel.HasDocument && Directory.Exists(_viewModel.SourceDirectory)
+            InitialDirectory = _preferences.GetLastResDirectory() ?? (_viewModel.HasDocument && Directory.Exists(_viewModel.SourceDirectory)
                 ? _viewModel.SourceDirectory
-                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)),
         };
         if (fileDialog.ShowDialog(this) is not true)
         {
@@ -2821,6 +2822,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private void RefreshLastDatabaseButton()
+    {
+        var path = _preferences.GetLastDatabasePath();
+        OpenLastDatabaseButton.IsEnabled = !string.IsNullOrWhiteSpace(path);
+        OpenLastDatabaseButton.ToolTip = path ?? "Сначала откройте БД";
+    }
+    private void OpenLastDatabase_Click(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.IsBusy) return;
+        string? path = _preferences.GetLastDatabasePath();
+        if (!File.Exists(path)) { _viewModel.ReportSpreadsheetError("Последняя БД не найдена. Откройте файл через «Открыть database.res…»."); return; }
+        ViewModel_OpenFileRequested(path, EventArgs.Empty);
+    }
+
     private async void ViewModel_OpenFileRequested(object? sender, EventArgs e)
     {
         string? discardedSourcePath = null;
@@ -2856,20 +2871,23 @@ public partial class MainWindow : Window
                 ?? Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
         };
 
-        if (dialog.ShowDialog(this) is true)
+        string? lastPath = sender as string;
+        if (lastPath is not null || dialog.ShowDialog(this) is true)
         {
-            await _viewModel.OpenPathAsync(dialog.FileName);
+            string path = lastPath ?? dialog.FileName;
+            await _viewModel.OpenPathAsync(path);
             if (_viewModel.HasDocument && string.Equals(
                     Path.GetFullPath(_viewModel.SourcePath),
-                    Path.GetFullPath(dialog.FileName),
+                    Path.GetFullPath(path),
                     StringComparison.OrdinalIgnoreCase))
             {
                 if (!string.IsNullOrWhiteSpace(discardedSourcePath))
                 {
                     _recoveryStore.Discard(discardedSourcePath);
                 }
-                _preferences.RememberDatabasePath(dialog.FileName);
-                await OfferRecoveryAsync(dialog.FileName);
+                _preferences.RememberDatabasePath(path);
+                RefreshLastDatabaseButton();
+                await OfferRecoveryAsync(path);
             }
         }
     }
@@ -2926,27 +2944,30 @@ public partial class MainWindow : Window
         }
 
         var allowGameInstallationPath = false;
-        if (DatabaseSafetyPolicy.IsLikelyGameInstallationPath(_viewModel.SourcePath))
+        bool createBackup = true;
+        if (_viewModel.HasDocument)
         {
             var dialog = new ConfirmDialog(
-                "Сохранить database.res в каталоге игры?",
+                "Сохранить текущую базу?",
                 "Открытый файл будет заменён проверенной версией.",
-                "Перед заменой рядом будет создана резервная .bak-копия. Это явная запись в установленный мод.",
+                "По умолчанию сохраняется резервная .bak-копия. При выборе пункта ниже постоянный бэкап не создаётся.",
                 "Сохранить с резервной копией",
                 "!")
             {
                 Owner = this,
             };
 
+            dialog.AllowSavingWithoutBackup();
             if (dialog.ShowDialog() is not true)
             {
                 return;
             }
 
-            allowGameInstallationPath = true;
+            allowGameInstallationPath = DatabaseSafetyPolicy.IsLikelyGameInstallationPath(_viewModel.SourcePath);
+            createBackup = dialog.CreateBackup;
         }
 
-        await _viewModel.SaveCurrentAsync(allowGameInstallationPath);
+        await _viewModel.SaveCurrentAsync(allowGameInstallationPath, createBackup);
     }
 
     private async void ViewModel_SaveCopyRequested(object? sender, EventArgs e)

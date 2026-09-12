@@ -430,7 +430,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
 
     public async Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool createBackup = true)
     {
         var document = RequireDocument();
         TextsDocument? texts = _textsDocument;
@@ -442,14 +442,14 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             {
                 textsResult = await texts.SaveInPlaceAsync(
                     allowGameInstallationPath,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken, createBackup, keepRollbackForPair: true).ConfigureAwait(false);
             }
 
             if (document.IsModified)
             {
                 databaseResult = await document.SaveInPlaceAsync(
                     allowGameInstallationPath,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken, createBackup).ConfigureAwait(false);
             }
         }
         catch
@@ -462,6 +462,11 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             throw;
         }
 
+        if (!createBackup && textsResult?.BackupPath is { Length: > 0 } temporaryRollback)
+        {
+            File.Delete(temporaryRollback);
+            textsResult = textsResult with { BackupPath = null };
+        }
         databaseResult ??= new SaveResult(
             document.SourcePath,
             document.FileLength,
@@ -843,7 +848,10 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             return [$"{prefix} {shape}"];
         }
 
-        return materialNames.Select(material => $"{prefix} {shape} {material}");
+        IEnumerable<string> keys = materialNames.Select(material => $"{prefix} {shape} {material}");
+        return record.TableKey is "items.weapons" or "items.armors"
+            ? keys.Append($"INSTR {shape}")
+            : keys;
     }
 
     private static IEnumerable<string> BuildExactTextKeys(RecordRowViewModel record)

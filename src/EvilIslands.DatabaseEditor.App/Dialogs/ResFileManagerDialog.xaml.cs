@@ -57,6 +57,7 @@ public partial class ResFileManagerDialog : Window
         FilesGrid.ItemsSource = _filesView;
         ChangesGrid.ItemsSource = _changes;
         ApplyStoredLayout();
+        InitializeWindowBounds();
         Closed += (_, _) => CancelManagerPreview();
         Closed += (_, _) => CleanupConvertedMmp();
     }
@@ -84,6 +85,7 @@ public partial class ResFileManagerDialog : Window
             ResFileManagerArchive archive = await ResFileManagerArchive.OpenAsync(path);
             _archive = archive;
             _archivePath = archive.SourcePath;
+            _preferences.RememberResPath(archive.SourcePath);
             _selectedFolder = string.Empty;
             _edits.Clear();
             _undo.Clear();
@@ -818,30 +820,26 @@ public partial class ResFileManagerDialog : Window
         string message = gamePath
             ? "Открытый RES находится в каталоге игры. После проверки он будет заменён подготовленной версией."
             : "Открытый RES будет заменён подготовленной и повторно проверенной версией.";
-        if (!Confirm(
-                "Сохранить изменения в текущий RES?",
-                message,
-                $"Сначала будет создана и проверена резервная копия .bak. Добавлено: {_edits.Values.Count(edit => edit.Kind == ResFileEditKind.AddOrReplace && !_archive.Contains(edit.ResourceName)):N0}; заменено: {_edits.Values.Count(edit => edit.Kind == ResFileEditKind.AddOrReplace && _archive.Contains(edit.ResourceName)):N0}; удалено: {_edits.Values.Count(edit => edit.Kind == ResFileEditKind.Delete):N0}.",
-                gamePath ? "Записать в игровой RES" : "Сохранить RES",
-                "✓"))
-        {
-            return;
-        }
-
+        var saveDialog = new ConfirmDialog("Сохранить изменения в текущий RES?", message,
+            "По умолчанию создаётся резервная копия .bak. При выборе пункта ниже постоянный бэкап не создаётся.",
+            "Сохранить с резервной копией", "✓") { Owner = this };
+        saveDialog.AllowSavingWithoutBackup();
+        if (saveDialog.ShowDialog() is not true) return;
+        bool createBackup = saveDialog.CreateBackup;
         try
         {
             string sourcePath = _archive.SourcePath;
-            SetBusy(true, "Создаю резервную копию и проверяю новый RES…");
+            SetBusy(true, "Проверяю и сохраняю новый RES…");
             ResFileManagerSaveResult result = await _archive.SaveInPlaceAsync(
                 _edits.Values.ToArray(),
-                allowGameInstallationPath: gamePath);
+                allowGameInstallationPath: gamePath, createBackup: createBackup);
             _archive = await ResFileManagerArchive.OpenAsync(sourcePath);
             _edits.Clear();
             _undo.Clear();
             _redo.Clear();
             RebuildRows();
             ShowMessage(
-                $"RES сохранён и проверен. Резервная копия: {result.BackupPath} · SHA-256 {result.Sha256}",
+                createBackup ? $"RES сохранён и проверен. Резервная копия: {result.BackupPath}" : "RES сохранён и проверен без бэкапа.",
                 false);
         }
         catch (Exception exception)
@@ -897,6 +895,7 @@ public partial class ResFileManagerDialog : Window
         var dialog = new OpenFileDialog
         {
             Title = "Открыть RES как архив",
+            InitialDirectory = _preferences.GetLastResDirectory() ?? Path.GetDirectoryName(_archivePath),
             Filter = "Evil Islands RES-контейнер (*.res)|*.res|Все файлы (*.*)|*.*",
             Multiselect = false,
             CheckFileExists = true,
@@ -1150,7 +1149,8 @@ public partial class ResFileManagerDialog : Window
     {
         if (e.ChangedButton == MouseButton.Left)
         {
-            DragMove();
+            if (e.ClickCount == 2) ToggleWindow_Click(sender, e);
+            else DragMove();
         }
     }
 

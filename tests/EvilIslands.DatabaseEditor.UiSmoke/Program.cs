@@ -5210,7 +5210,7 @@ internal static class Program
 
         public Task<SaveCurrentResult> SaveCurrentAsync(
             bool allowGameInstallationPath,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken, bool createBackup = true) =>
             throw new NotSupportedException();
 
         public Task<SavePairCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken) =>

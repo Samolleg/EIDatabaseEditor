@@ -81,6 +81,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
             FieldDescriptionText.Text =
                 "Поле хранит один составной объект RES. Оружие и вложенное заклинание применяются одной операцией Undo.";
             ListActionsBorder.Visibility = Visibility.Collapsed;
+            ClearSlotButton.Visibility = Visibility.Visible;
             AddReferenceButton.Content = "Подставить →";
             ApplyButton.Content = "Применить значение";
         }
@@ -135,6 +136,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         }
         for (int index = 0; index < values.Length; index++)
         {
+            if (_singleValueMode && values[index].Length == 0) continue;
             if (!StringListEditorCodec.TryValidateElement(values[index], out string? validationError))
             {
                 SetError($"Элемент {index + 1}: {validationError}");
@@ -182,6 +184,22 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
     }
 
     private StructuredStringListItemViewModel CreateItem(string value) => new(value, _fieldName, _magicContext);
+
+    private void ClearSlotButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_singleValueMode) return;
+        foreach (var item in Items) item.PropertyChanged -= Item_PropertyChanged;
+        Items.Clear();
+        var empty = CreateItem(string.Empty);
+        empty.PropertyChanged += Item_PropertyChanged;
+        Items.Add(empty);
+        SelectedItem = empty;
+        RenumberItems();
+        SynchronizeRawText();
+        SetEditorMode(useRawMode: false);
+        SetError(null);
+
+    }
 
     private void AddButton_Click(object sender, RoutedEventArgs e) => InsertValue(string.Empty);
 

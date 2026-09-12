@@ -61,7 +61,7 @@ internal interface IDatabaseWorkspaceService
 
     Task<SaveCurrentResult> SaveCurrentAsync(
         bool allowGameInstallationPath,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken, bool createBackup = true);
 
     Task<SavePairCopyResult> SaveCopyAsync(string targetPath, CancellationToken cancellationToken);
 }

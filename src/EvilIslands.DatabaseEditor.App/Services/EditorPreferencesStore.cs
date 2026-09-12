@@ -63,12 +63,28 @@ internal sealed class EditorPreferencesStore
         }
 
         EditorPreferences settings = LoadSettings();
-        if (string.Equals(settings.LastDatabaseDirectory, directory, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(settings.LastDatabasePath, Path.GetFullPath(databasePath), StringComparison.OrdinalIgnoreCase))
         {
             return;
         }
 
         settings.LastDatabaseDirectory = directory;
+        settings.LastDatabasePath = Path.GetFullPath(databasePath);
+        SaveSettings(settings);
+    }
+
+    public string? GetLastDatabasePath() => LoadSettings().LastDatabasePath;
+    public string? GetLastResDirectory()
+    {
+        string? path = LoadSettings().LastResDirectory;
+        return Directory.Exists(path) ? path : null;
+    }
+    public void RememberResPath(string path)
+    {
+        string? directory = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (!Directory.Exists(directory)) return;
+        var settings = LoadSettings();
+        settings.LastResDirectory = directory;
         SaveSettings(settings);
     }
 
@@ -313,6 +329,8 @@ internal sealed class EditorPreferencesStore
     private sealed class EditorPreferences
     {
         public string? LastDatabaseDirectory { get; set; }
+        public string? LastDatabasePath { get; set; }
+        public string? LastResDirectory { get; set; }
 
         public double? InterfaceScale { get; set; }
 
