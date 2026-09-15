@@ -3289,7 +3289,7 @@ public partial class MainWindow : Window
         }
 
         if (_detailsWindow is null &&
-            !(_textureExpanded && TextureTab.IsSelected) &&
+            !(_textureExpanded && (TextureTab.IsSelected || ModelTab?.IsSelected == true || SpellEffectsTab?.IsSelected == true)) &&
             DetailsPane.ActualHeight >= 180 &&
             _spreadsheetViewModel?.SelectedRecordHasDetails is true)
         {
@@ -3372,16 +3372,18 @@ public partial class MainWindow : Window
         bool hasLocalization = inRecords && _spreadsheetViewModel?.SelectedRecord?.HasLocalizationReferences is true;
         bool hasSound = inRecords && _spreadsheetViewModel?.SelectedRecordHasSoundReferences is true;
         bool hasTextures = inRecords && _spreadsheetViewModel?.SelectedRecord is not null;
-        if (hasTextures && !hasLocalization && !hasSound) DetailsPane.SelectedIndex = 1;
+        if (hasTextures && !hasLocalization && !hasSound && DetailsPane.SelectedIndex == 0) DetailsPane.SelectedIndex = 1;
         ConfigureDetailsPaneContents(hasLocalization, hasSound);
 
-        bool textureActive = hasTextures && TextureTab.IsSelected;
+        bool textureActive = hasTextures && (TextureTab.IsSelected || ModelTab?.IsSelected == true || SpellEffectsTab?.IsSelected == true);
         bool textureExpanded = textureActive && _textureExpanded && _detailsWindow is null;
         GenericRecordsWorkspace.RowDefinitions[0].MinHeight = textureExpanded ? 0 : 160;
         GenericRecordsWorkspace.RowDefinitions[0].Height = textureExpanded ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
         RecordsGrid.Visibility = textureExpanded ? Visibility.Collapsed : Visibility.Visible;
         TextureExpandButton.Content = _textureExpanded ? "↙ Вернуть таблицу" : "↗ Развернуть";
         TextureExpandButton.IsEnabled = _detailsWindow is null;
+        if (ModelExpandButton is not null) { ModelExpandButton.Content = TextureExpandButton.Content; ModelExpandButton.IsEnabled = TextureExpandButton.IsEnabled; }
+        if (SpellEffectsExpandButton is not null) { SpellEffectsExpandButton.Content = TextureExpandButton.Content; SpellEffectsExpandButton.IsEnabled = TextureExpandButton.IsEnabled; }
 
         if (_detailsWindow is not null)
         {

@@ -1861,6 +1861,7 @@
                                         </Border>
                                            </Grid>
                                           </TabItem>
+                                          
                                           <TabItem Header="Текстуры" x:Name="TextureTab">
                                             <Grid x:Name="TextureBrowser" Margin="10">
                                               <Grid.RowDefinitions>
@@ -1984,7 +1985,25 @@
                                               <TextBlock Grid.Row="5" Text="{Binding TextureVisibleSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" />
                                             </Grid>
                                           </TabItem>
-                                        </TabControl>
+                                                                                  <TabItem Header="Модель" x:Name="ModelTab">
+                                            <DockPanel>
+                                              <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button x:Name="ModelExpandButton" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="4"/>
+                                                <Button Content="В отдельное окно / вернуть" Click="DetailsPaneDetachButton_Click" Margin="4"/>
+                                              </StackPanel>
+                                              <local:UnitModelPreviewView/>
+                                            </DockPanel>
+                                          </TabItem>
+                                          <TabItem Header="Визуальные эффекты" x:Name="SpellEffectsTab">
+                                            <DockPanel>
+                                              <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button x:Name="SpellEffectsExpandButton" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="4"/>
+                                                <Button Content="В отдельное окно / вернуть" Click="DetailsPaneDetachButton_Click" Margin="4"/>
+                                              </StackPanel>
+                                              <local:SpellVisualEffectsView/>
+                                            </DockPanel>
+                                          </TabItem>
+</TabControl>
                                     </Grid>
                                     <Grid x:Name="BriefingWorkspace"
                                           Visibility="{Binding IsBriefingsTable, Converter={StaticResource BooleanToVisibilityConverter}}">

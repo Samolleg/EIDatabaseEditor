@@ -77,7 +77,7 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
         new(paths.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
             [], false, false, ["Подключена часть ресурсов. Порядок выбранных RES не подтверждает конфигурацию игры."]);
 
-    public static TextureSources FromGame(string gameFolder, string? configPath = null)
+    public static TextureSources FromGame(string gameFolder, string? configPath = null, IReadOnlyList<string>? resourceGroups = null)
     {
         gameFolder = Path.GetFullPath(gameFolder);
         var overrides = new List<(string Key, string Path)>();
@@ -106,7 +106,7 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
         }
 
         var archives = new List<string>();
-        foreach (string group in new[] { "textures.res", "redress.res", "menus.res" })
+        foreach (string group in resourceGroups ?? new[] { "textures.res", "redress.res", "menus.res" })
         {
             archives.AddRange(overrides.Where(x => x.Key.Equals(group, StringComparison.OrdinalIgnoreCase)).Select(x => x.Path));
             string baseline = Path.Combine(gameFolder, "Res", group);

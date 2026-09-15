@@ -28,6 +28,14 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--spell-effects") return SpellVisualEffectsRegression.Run(args[1], args[2]);
+        if (args.Length == 4 && args[0] == "--animation-audit") return AnimationPreviewRegression.Audit(args[1], args[2], args[3]);
+        if (args.Length == 3 && args[0] == "--animation-models") return AnimationPreviewRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--item-audit") return ItemModelPreviewAudit.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--item-models") return ItemModelPreviewRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--models") return ModelPreviewRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--model-audit") return ModelPreviewAudit.Run(args[1], args[2]);
+        if (args.Length == 4 && args[0] == "--model-gallery") return ModelPreviewAudit.Gallery(args[1], args[2], args[3]);
         if (args.Length >= 3 && args[0] == "--texture-open")
             return TextureOpenRegression.Run(args[1..]);
         if (args.Length >= 3 && args[0] == "--nearby-textures")
@@ -45,6 +53,16 @@ internal static class Program
         if (args.Length >= 3 && args[0] == "--save-safety")
         {
             return SaveSafetyRegression.Run(args[1..]);
+        }
+
+        if (args.Length == 1 && args[0] == "--res-manager")
+        {
+            var app = new EvilIslands.DatabaseEditor.App.App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            app.InitializeComponent();
+            VerifyResFileManagerDialog();
+            Console.WriteLine("RES manager WPF smoke PASS");
+            app.Shutdown();
+            return 0;
         }
 
         CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("ru-RU");

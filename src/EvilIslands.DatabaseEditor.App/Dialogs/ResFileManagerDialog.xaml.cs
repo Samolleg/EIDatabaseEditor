@@ -32,6 +32,7 @@ public partial class ResFileManagerDialog : Window
     private bool _allowClose;
     private bool _detailsVisible;
     private double _detailsWidth;
+    internal string? InitialResourceName { get; init; }
 
     public ResFileManagerDialog(string archivePath, IEnumerable<string>? writeLockedPaths = null)
         : this(archivePath, writeLockedPaths, new EditorPreferencesStore())
@@ -59,6 +60,7 @@ public partial class ResFileManagerDialog : Window
         ApplyStoredLayout();
         InitializeWindowBounds();
         Closed += (_, _) => CancelManagerPreview();
+        Closed += (_, _) => StopResAudio();
         Closed += (_, _) => CleanupConvertedMmp();
     }
 
@@ -75,6 +77,18 @@ public partial class ResFileManagerDialog : Window
         }
 
         await LoadArchiveAsync(_archivePath);
+        SelectInitialResource();
+    }
+
+    internal void SelectInitialResource()
+    {
+        if (InitialResourceName is not { } name) return;
+        var row = _rows.FirstOrDefault(r => r.ResourceName.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (row is null) return;
+        int separator = row.ResourceName.LastIndexOf('\\');
+        NavigateToFolder(separator < 0 ? "" : row.ResourceName[..separator]);
+        FilesGrid.SelectedItem = row;
+        FilesGrid.ScrollIntoView(row);
     }
 
     private async Task LoadArchiveAsync(string path)
@@ -347,6 +361,7 @@ public partial class ResFileManagerDialog : Window
     {
         ResManagerFileRow? row = selected.Count == 1 ? selected[0] : null;
         QueueManagerPreview(row);
+        UpdateAudioSelection(row);
         DetailsEmptyState.Visibility = row is null ? Visibility.Visible : Visibility.Collapsed;
         DetailsContent.Visibility = row is null ? Visibility.Collapsed : Visibility.Visible;
         if (row is null)
