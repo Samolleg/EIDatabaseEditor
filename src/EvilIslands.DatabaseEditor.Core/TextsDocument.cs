@@ -22,6 +22,7 @@ public sealed class TextResourceState
     internal string Description { get; }
 
     internal bool IsPresent { get; }
+    public TextResourceState Rebind(TextResource owner) => new(owner, Title, Description, IsPresent);
 
     public bool IsEquivalentTo(TextResourceState? other) =>
         other is not null &&
@@ -88,17 +89,28 @@ public sealed class TextResource
     public string OriginalDescription => _originalDescription;
 
     public bool IsNew { get; }
+    internal bool HistoryRemovalAllowed { get; set; }
 
     public bool IsPresent => _isPresent;
 
     public bool IsModified => IsNew
         ? IsPresent
-        : !string.Equals(_title, _originalTitle, StringComparison.Ordinal) ||
+        : !IsPresent || !string.Equals(_title, _originalTitle, StringComparison.Ordinal) ||
           !string.Equals(_description, _originalDescription, StringComparison.Ordinal);
 
     public bool TrySetTitle(string value, out string? error) => TrySet(value, _description, out error);
 
     public bool TrySetDescription(string value, out string? error) => TrySet(_title, value, out error);
+
+    public bool TryPrepareValue(string title, string description, out TextResourceState? state, out string? error)
+    {
+        state = null; error = null;
+        if (!IsPresent) { error = "Текст отсутствует."; return false; }
+        if (title.IndexOfAny(['\r', '\n']) >= 0) { error = "Название должно занимать одну строку."; return false; }
+        try { _encoding.GetByteCount(Compose(title, description, _lineBreak, _hadLineBreak)); }
+        catch (EncoderFallbackException) { error = "Текст нельзя сохранить в исходной кодировке."; return false; }
+        state = new(this, title, description, _isPresent); return true;
+    }
 
     public TextResourceState CaptureState() => new(this, _title, _description, _isPresent);
 
@@ -122,7 +134,7 @@ public sealed class TextResource
 
     internal void SetPresent(bool value)
     {
-        if (!IsNew && !value)
+        if (!IsNew && !HistoryRemovalAllowed && !value)
         {
             throw new InvalidOperationException("Удаление исходных ресурсов texts.res не поддерживается.");
         }
@@ -277,11 +289,25 @@ public sealed class TextsDocument
         return resource;
     }
 
+    public TextResource RebindHistoryResource(TextResource previous, bool present)
+    {
+        TextResource resource;
+        if (present)
+            resource = _byName[previous.Name];
+        else
+        {
+            resource = AddResource(previous.Name, previous.Title, previous.Description);
+            resource.SetPresent(false);
+        }
+        resource.HistoryRemovalAllowed = true;
+        return resource;
+    }
+
     public void RemoveAddedResource(TextResource resource)
     {
         ArgumentNullException.ThrowIfNull(resource);
         EnsureOwned(resource);
-        if (!resource.IsNew)
+        if (!resource.IsNew && !resource.HistoryRemovalAllowed)
         {
             throw new InvalidOperationException("Удаление исходных ресурсов texts.res не поддерживается.");
         }
@@ -406,6 +432,8 @@ public sealed class TextsDocument
         return Task.Run(() => SaveInPlace(allowGameInstallationPath, createBackup, keepRollbackForPair), CancellationToken.None);
     }
 
+    public byte[] PrepareImage() => BuildAndVerify(SourcePath);
+
     private byte[] BuildAndVerify(string pathForErrors)
     {
         var replacements = new Dictionary<int, byte[]>();
@@ -423,8 +451,13 @@ public sealed class TextsDocument
             }
         }
 
-        byte[] rebuilt = ResArchiveWriter.Rebuild(_archive, replacements, additions);
+        var removals = _resources.Where(r => !r.IsPresent && r.ArchiveIndex.HasValue)
+            .Select(r => r.ArchiveIndex!.Value).ToHashSet();
+        byte[] rebuilt = ResArchiveWriter.Rebuild(_archive, replacements, additions, removals);
         ResArchiveDocument verified = ResArchiveDocument.Parse(pathForErrors, rebuilt);
+        foreach (TextResource removed in _resources.Where(r => !r.IsPresent))
+            if (verified.TryGetEntry(removed.Name, out _))
+                throw new DatabaseFormatException("Undone text remains after rebuild.", removed.Name);
         foreach (TextResource expected in _resources.Where(resource => resource.IsPresent))
         {
             if (!verified.TryGetEntry(expected.Name, out ResEntry? entry) || entry is null)

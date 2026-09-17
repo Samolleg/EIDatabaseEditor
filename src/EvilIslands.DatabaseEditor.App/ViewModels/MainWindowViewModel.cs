@@ -102,12 +102,14 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             new(WorkspaceSection.Resources, "Ресурсы", "▦") { IsEnabled = false },
             new(WorkspaceSection.Changes, "Изменения", "≠") { IsEnabled = false },
             new(WorkspaceSection.Validation, "Проверка", "✓") { IsEnabled = false },
+            new(WorkspaceSection.Modules, "Квесты и скрипты", "◇"),
         ];
         OverviewNavigationItem = NavigationItems[0];
         TextsNavigationItem = NavigationItems[1];
         ServiceNavigationItems = new ObservableCollection<NavigationItemViewModel>(NavigationItems.Skip(2));
 
         OpenCommand = new RelayCommand(() => OpenFileRequested?.Invoke(this, EventArgs.Empty), () => !IsBusy);
+        ModuleDocuments.Changed += (_, _) => { OnPropertyChanged(nameof(HasUnsavedWork)); RaiseCommandStates(); };
         AttachTextsCommand = new RelayCommand(
             () => AttachTextsRequested?.Invoke(this, EventArgs.Empty),
             () => HasDocument && !HasUnsavedWork && !IsBusy);
@@ -397,6 +399,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     public string PageTitle => CurrentSection switch
     {
         WorkspaceSection.Overview => "Обзор базы",
+        WorkspaceSection.Modules => "Квесты и скрипты",
         WorkspaceSection.Resources => "Ресурсы контейнера",
         WorkspaceSection.Records => SelectedTable?.Title ?? "Таблица базы",
         WorkspaceSection.Texts => "Русские тексты",
@@ -1001,7 +1004,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public bool HasPendingSoundEdit => PendingSoundEdit is not null;
 
-    public bool HasUnsavedWork => HasChanges || HasPendingSoundEdit;
+    public bool HasUnsavedWork => HasChanges || HasPendingSoundEdit || ModuleDocuments.HasDirty;
 
     public PendingSoundEditViewModel? PendingSoundEdit
     {
@@ -1099,6 +1102,8 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public async Task OpenPathAsync(string path)
     {
+        if (ModuleDocuments.HasDirty) { ShowError("В модуле остались изменения. Экспортируйте проект или закройте документ модуля перед сменой БД."); return; }
+        if (HasPendingLuaChanges) { ShowError("Сначала сохраните изменения Lua кнопкой «Сохранить» или отмените их через Undo."); return; }
         CancelValidation();
         CancelOperation();
         _operationCancellation = new CancellationTokenSource();
@@ -1724,6 +1729,23 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public async Task SaveCurrentAsync(bool allowGameInstallationPath, bool createBackup = true)
     {
+        if (_undo.OfType<ModuleTransactionFrame>().Any() || _redo.OfType<ModuleTransactionFrame>().Any())
+        { ShowError("Перезапись с переоткрытием БД пока заблокирована для общей истории модуля. Используйте сохранение копии: оно сохраняет текущую БД и не сбрасывает MOB/Undo."); return; }
+        if (IsBusy) return;
+        if (HasPendingLuaChanges)
+        {
+            try
+            {
+                if (!allowGameInstallationPath && LuaWorkspace!.Documents.Any(d => d.HasChanges && DatabaseSafetyPolicy.IsLikelyGameInstallationPath(d.Path)))
+                    throw new InvalidOperationException("Не подтверждена запись Lua в каталог игры.");
+                foreach (var doc in LuaWorkspace!.Documents.Where(d => d.HasChanges)) doc.VerifyUnchanged();
+                if (!HasChanges)
+                {
+                    SaveGridLua(); StatusText = "Связанные Lua-файлы сохранены с резервными копиями."; return;
+                }
+            }
+            catch (Exception ex) { ShowError("Lua не сохранён: " + ex.Message); return; }
+        }
         if (_workspace is null || !HasChanges || IsBusy)
         {
             return;
@@ -1766,6 +1788,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
                 }
             }
 
+            if (HasPendingLuaChanges) SaveGridLua();
             LastSavedPath = result.Save.TargetPath;
             NotificationIsError = false;
             var backups = new[] { result.BackupPath, result.TextsBackupPath }
@@ -1909,6 +1932,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             group.IsExpanded = false;
         }
 
+        _moduleWorkspace?.Replaced();
         CurrentSection = WorkspaceSection.Overview;
         SelectedTable = null;
         SelectedRecord = null;
@@ -2706,7 +2730,12 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
                 TextResources.Add(entry);
             }
 
-            AddTextInsertionChange(entry);
+            if (entry.IsNew) AddTextInsertionChange(entry);
+            else
+            {
+                RemoveTextChanges(entry);
+                RefreshLocalizationChanges(entry);
+            }
         }
 
         OnPropertyChanged(nameof(SelectedRecordHasTexts));
@@ -3237,6 +3266,15 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         error = null;
         switch (frame)
         {
+            case ModuleTransactionFrame moduleFrame:
+                status = (undo ? "Отменено: " : "Повторено: ") + moduleFrame.Description;
+                return ApplyModuleFrame(moduleFrame, undo, out error);
+            case LuaGridEditFrame lua:
+                string expected = undo ? lua.After : lua.Before;
+                if (lua.Document.Text != expected) { error = "Lua изменён после этой операции."; return false; }
+                lua.Document.Apply([new LuaPatch(0, expected.Length, undo ? lua.Before : lua.After)], undo ? "Отмена ячейки Lua" : "Повтор ячейки Lua");
+                LuaWorkspaceChanged(this, EventArgs.Empty);
+                status = undo ? "Изменение Lua отменено." : "Изменение Lua повторено."; return true;
             case CompositeEditFrame compositeFrame:
                 WorkspaceEditFrame[] orderedFrames = undo
                     ? compositeFrame.Frames.Reverse().ToArray()
@@ -3382,7 +3420,12 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             {
                 TextResources.Add(entry);
             }
-            AddTextInsertionChange(entry);
+            if (entry.IsNew) AddTextInsertionChange(entry);
+            else
+            {
+                RemoveTextChanges(entry);
+                RefreshLocalizationChanges(entry);
+            }
         }
         else
         {
@@ -3390,6 +3433,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             entry.ValueCommitted -= OnLocalizationValueCommitted;
             TextResources.Remove(entry);
             RemoveTextChanges(entry);
+            if (!entry.IsNew) AddTextInsertionChange(entry, removal: true);
         }
 
         SelectedRecord?.RefreshState();
@@ -3483,7 +3527,8 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             record.FieldValueCommitted += OnFieldValueCommitted;
             record.IsEditMode = IsEditMode && ReferenceEquals(SelectedTable, table) && !IsBusy;
             table.AppendRecord(record);
-            AddRecordInsertionChange(record);
+            if (record.IsAdded) AddRecordInsertionChange(record);
+            else RemoveRecordInsertionChange(record);
             if (ReferenceEquals(SelectedTable, table))
             {
                 SelectedRecord = record;
@@ -3501,6 +3546,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             record.IsEditMode = false;
             table.RemoveLastRecord(record);
             RemoveRecordInsertionChange(record);
+            if (!record.IsAdded) AddRecordInsertionChange(record, removal: true);
         }
 
         if (ReferenceEquals(SelectedTable, table))
@@ -3514,7 +3560,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         OnPropertyChanged(nameof(HasChanges));
     }
 
-    private void AddRecordInsertionChange(RecordRowViewModel record)
+    private void AddRecordInsertionChange(RecordRowViewModel record, bool removal = false)
     {
         string key = GetRecordInsertionChangeKey(record);
         if (_changesByPath.ContainsKey(key))
@@ -3522,7 +3568,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             return;
         }
 
-        var entry = ChangeEntryViewModel.ForAddedRecord(record);
+        var entry = ChangeEntryViewModel.ForAddedRecord(record, removal);
         _changesByPath.Add(key, entry);
         Changes.Add(entry);
     }
@@ -3539,7 +3585,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     private static string GetRecordInsertionChangeKey(RecordRowViewModel record) =>
         $"{record.Path}\u001f$new-record";
 
-    private void AddTextInsertionChange(LocalizationEntryViewModel entry)
+    private void AddTextInsertionChange(LocalizationEntryViewModel entry, bool removal = false)
     {
         string key = GetTextChangeKey(entry, "$new-resource");
         if (_changesByPath.ContainsKey(key))
@@ -3547,7 +3593,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             return;
         }
 
-        var change = ChangeEntryViewModel.ForAddedText(entry);
+        var change = ChangeEntryViewModel.ForAddedText(entry, removal);
         _changesByPath.Add(key, change);
         Changes.Add(change);
         OnPropertyChanged(nameof(HasChanges));
@@ -3833,6 +3879,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     private void RefreshAllCounts()
     {
+        _moduleWorkspace?.Edited();
         QueueTextureRefresh();
         NavigationItems.First(item => item.Section == WorkspaceSection.Texts).Badge = HasTextsDocument
             ? TextResourceCount.ToString("N0")

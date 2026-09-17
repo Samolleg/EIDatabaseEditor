@@ -148,7 +148,7 @@ internal static class TextureRegression
         Require(DatabaseTextureReferences.Resolve(armor, records, false).Single().Name == "unhumahl_02.me.1.mmp", "Armor/material rule differs from engine.");
         Require(DatabaseTextureReferences.Resolve(quick, records, false).Single().Name == "qitem0009.mmp", "Quick item rule differs from engine.");
         var variants = DatabaseTextureReferences.Resolve(spell, records, true);
-        Require(variants.Count == 2 && variants.All(r => r.NeedsContext) && variants[1].Name == "spell0007.x2.mmp", "Addon variants must remain explicit/context-dependent.");
+        Require(variants.Count == 3 && variants.All(r => r.NeedsContext) && variants[1].Name == "spell0007.x2.mmp" && variants[2].Name == "spell0007.x4.mmp", "Addon variants must remain explicit/context-dependent.");
         Require(DatabaseTextureReferences.Resolve(Record("spells.prototypes", 1, "sentinel", (18, "2147483647")), records, false).Single().NeedsContext, "Sentinel must not become fabricated missing file.");
         var race = Record("units.races", 0, "race", (30, "mask")) with
         { Lists = new Dictionary<int, IReadOnlyList<string>> { [31] = ["skin"] } };

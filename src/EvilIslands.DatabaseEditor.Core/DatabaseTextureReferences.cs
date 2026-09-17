@@ -45,8 +45,10 @@ public static class DatabaseTextureReferences
             if (string.IsNullOrWhiteSpace(name) || name.Equals("none", StringComparison.OrdinalIgnoreCase)) return;
             string stem = name.EndsWith(".mmp", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
             result.Add(new(record, purpose, stem + ".mmp", detail, context || (modProfile && graphicVariant)));
-            if (modProfile && graphicVariant && !stem.EndsWith(".x2", StringComparison.OrdinalIgnoreCase))
-                result.Add(new(record, purpose + " (.x2)", stem + ".x2.mmp",
+            if (modProfile && graphicVariant && !stem.EndsWith(".x2", StringComparison.OrdinalIgnoreCase) &&
+                !stem.EndsWith(".x4", StringComparison.OrdinalIgnoreCase))
+                foreach (string suffix in new[] { ".x2", ".x4" })
+                result.Add(new(record, purpose + " (" + suffix + ")", stem + suffix + ".mmp",
                     detail + " Вариант addon; применимость зависит от настроек графики.", true));
         }
         bool Index(int id, out int n)

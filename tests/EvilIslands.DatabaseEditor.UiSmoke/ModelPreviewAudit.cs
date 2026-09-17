@@ -7,7 +7,7 @@ namespace EvilIslands.DatabaseEditor.UiSmoke;
 
 internal static class ModelPreviewAudit
 {
-    public static int Gallery(string database, string audit, string output)
+    public static int Gallery(string database, string audit, string output, string[]? selectedNames = null)
     {
         Directory.CreateDirectory(output);
         var db = DatabaseDocument.Open(database);
@@ -19,7 +19,7 @@ internal static class ModelPreviewAudit
             return (Record: r, Shape: records.FirstOrDefault(s => s.Table == "items.weapons" && s.Name == shapeName));
         }).Where(p => p.Shape is not null && p.Shape.Integer(2) >= 9)
             .GroupBy(p => p.Shape!.Integer(2)).Select(g => g.First().Record.Name);
-        var names = File.ReadLines(audit).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+        var names = selectedNames ?? File.ReadLines(audit).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(r => r.GetProperty("Error").ValueKind == JsonValueKind.Null)
             .GroupBy(r => r.GetProperty("Model").GetString()).Select(g => g.First().GetProperty("Name").GetString()!)
             .Concat(new[] { "ZombieMaleF12", "ZombieFemaleF12", "GZOrcMaleF6", "GZOrcFemaleF5", "SkeletonWarriorF10", "Human Hero Hadagan1", "Human Mercenary Hadagan Thief", "ArmoredTurtle90" })

@@ -11,6 +11,7 @@ namespace EvilIslands.DatabaseEditor.App.Models;
 internal enum WorkspaceSection
 {
     Overview,
+    Modules,
     Resources,
     Records,
     Texts,
@@ -1645,6 +1646,7 @@ internal sealed class FieldValueCommittedEventArgs(
 
 internal sealed class RecordFieldViewModel : ObservableObject
 {
+    internal DatabaseField CoreField => _field;
     private readonly DatabaseField _field;
     private readonly bool _tableIsEditable;
     private string _editorText;
@@ -2069,9 +2071,10 @@ internal sealed class ChangeEntryViewModel : ObservableObject
         _newValue = localization.ResourceName;
     }
 
-    public static ChangeEntryViewModel ForAddedRecord(RecordRowViewModel record) => new(record);
+    public static ChangeEntryViewModel ForAddedRecord(RecordRowViewModel record, bool removal = false) => new(record) { IsRemoval = removal };
 
-    public static ChangeEntryViewModel ForAddedText(LocalizationEntryViewModel localization) => new(localization);
+    public static ChangeEntryViewModel ForAddedText(LocalizationEntryViewModel localization, bool removal = false) => new(localization) { IsRemoval = removal };
+    public bool IsRemoval { get; private init; }
 
     public RecordRowViewModel? Record { get; }
 
@@ -2090,9 +2093,9 @@ internal sealed class ChangeEntryViewModel : ObservableObject
     public string RecordName => Record?.DisplayName ?? Localization?.ResourceName ?? "—";
 
     public string FieldName => IsRecordAddition
-        ? "Новая строка"
+        ? IsRemoval ? "Отмена добавленной строки" : "Новая строка"
         : IsTextAddition
-            ? "Новый текст"
+            ? IsRemoval ? "Отмена добавленного текста" : "Новый текст"
             : LocalizationFieldName ?? Field!.DisplayName;
 
     public string Path => Record is not null
@@ -2100,7 +2103,7 @@ internal sealed class ChangeEntryViewModel : ObservableObject
         : $"texts.res/{Localization!.ResourceName}/{LocalizationFieldName ?? "$new-resource"}";
 
     public string OriginalValue => IsRecordAddition || IsTextAddition
-        ? "—"
+        ? IsRemoval ? RecordName : "—"
         : Localization is null
             ? Field!.OriginalText
             : LocalizationFieldName == "Название RU"
@@ -2111,7 +2114,7 @@ internal sealed class ChangeEntryViewModel : ObservableObject
 
     public string NewValue
     {
-        get => _newValue;
+        get => IsRemoval ? "—" : _newValue;
         set => SetProperty(ref _newValue, value);
     }
 }

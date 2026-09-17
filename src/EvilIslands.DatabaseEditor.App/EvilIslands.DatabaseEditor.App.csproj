@@ -10,6 +10,7 @@
     <AssemblyTitle>Редактор БД от Атамана</AssemblyTitle>
     <Description>Редактор database.res и texts.res для «Проклятых Земель»</Description>
   </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../Modules.Host/Modules.Host.csproj"/></ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\EvilIslands.DatabaseEditor.Core\EvilIslands.DatabaseEditor.Core.csproj"
                       Condition="'$(SkipCoreReference)' != 'true'" />

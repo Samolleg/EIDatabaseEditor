@@ -69,12 +69,13 @@ internal static class ResArchiveWriter
     public static byte[] Rebuild(
         ResArchiveDocument archive,
         IReadOnlyDictionary<int, byte[]> replacements,
-        IReadOnlyList<AddedResResource> additions)
+        IReadOnlyList<AddedResResource> additions,
+        IReadOnlySet<int>? removals = null)
     {
         ArgumentNullException.ThrowIfNull(archive);
         ArgumentNullException.ThrowIfNull(replacements);
         ArgumentNullException.ThrowIfNull(additions);
-        if (additions.Count == 0 && replacements.Count == 0)
+        if (additions.Count == 0 && replacements.Count == 0 && (removals is null || removals.Count == 0))
         {
             return archive.OriginalBytes.ToArray();
         }
@@ -102,6 +103,7 @@ internal static class ResArchiveWriter
         var resources = new List<BuildResource>(archive.Entries.Count + additions.Count);
         foreach (ResEntry entry in archive.Entries.OrderBy(entry => entry.Offset))
         {
+            if (removals?.Contains(entry.Index) == true) continue;
             byte[] data = replacements.TryGetValue(entry.Index, out byte[]? replacement)
                 ? replacement
                 : archive.GetResourceBytes(entry).ToArray();

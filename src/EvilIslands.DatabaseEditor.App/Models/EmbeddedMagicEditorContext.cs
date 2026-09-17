@@ -110,13 +110,39 @@ internal sealed class EmbeddedMagicEditorContext
         .OrderBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
         .ToArray();
 
-    private string CreateShapeDisplayText(EmbeddedMagicShapeOption shape)
+    public EmbeddedMagicChoice LocalizeShapeChoice(EmbeddedMagicChoice choice, string? material)
+    {
+        var shape = Catalog.Shapes.FirstOrDefault(s => s.Value.Equals(choice.Value, StringComparison.OrdinalIgnoreCase));
+        return shape is null ? choice : new(choice.Value, CreateShapeDisplayText(shape, material));
+    }
+
+    public EmbeddedMagicChoice ReferenceChoice(string value)
+    {
+        var shape = Shapes.FirstOrDefault(s => s.Value.Equals(value, StringComparison.OrdinalIgnoreCase));
+        if (shape is not null) return shape;
+        foreach (string prefix in new[] { "UNIT", "SPELL", "MATERIAL", "MODIFIER", "PERK", "INSTR" })
+        {
+            string title = FindTitle($"{prefix} {Normalize(value)}");
+            if (title.Length > 0) return new(value, value + " — " + title);
+        }
+        return new(value, value);
+    }
+
+    private string CreateShapeDisplayText(EmbeddedMagicShapeOption shape, string? material = null)
     {
         string prefix = shape.TableKey == "items.weapons" ? "WEAPON" : "ARMOR";
         string title = FindTitle($"{prefix} {Normalize(shape.Value)}");
-        return title.Length == 0
-            ? $"{shape.Kind}: {shape.Value}"
-            : $"{title} — {shape.Value}";
+        if (title.Length > 0) return $"{shape.Value} — {title}";
+        var compatible = Catalog.GetCompatibleMaterials(shape.Value).ToArray();
+        if (compatible.Any(m => m.Value.Equals(material, StringComparison.OrdinalIgnoreCase)))
+        {
+            title = GetItemRussianName(shape.Value, material);
+            if (title.Length > 0) return $"{shape.Value} — {title}";
+        }
+        // Some databases localize only a complete shape/material combination.
+        // Show an explicitly labelled example instead of inventing a generic item name.
+        title = compatible.Select(m => GetItemRussianName(shape.Value, m.Value)).FirstOrDefault(t => t.Length > 0) ?? "";
+        return title.Length > 0 ? $"{shape.Value} — пример: {title}" : $"{shape.Value} — название RU не найдено";
     }
 
     private EmbeddedMagicChoice CreateChoice(string value, string prefix)

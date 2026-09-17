@@ -10,7 +10,7 @@ public sealed class FigureAnimationTrack
     public Vector3[] Positions { get; }
     public Vector3[][] Morphs { get; }
     public int FrameCount => Math.Max(Rotations.Length, Math.Max(Positions.Length, Morphs.Length));
-    private FigureAnimationTrack(Quaternion[] rotations, Vector3[] positions, Vector3[][] morphs)
+    internal FigureAnimationTrack(Quaternion[] rotations, Vector3[] positions, Vector3[][] morphs)
     { Rotations = rotations; Positions = positions; Morphs = morphs; }
 
     public static FigureAnimationTrack Decode(byte[] bytes, CancellationToken token = default)
@@ -72,6 +72,8 @@ public sealed record FigureAnimationClip(string Name, IReadOnlyDictionary<string
 public sealed class FigureAnimationSet
 {
     private readonly ResArchiveDocument _archive;
+    public byte[] ExportBytes() => _archive.OriginalBytes.ToArray();
+    public FigureAnimationSet WithBytes(byte[] bytes) => new("edited", bytes, Parents, Bones, BindPositions);
     public IReadOnlyList<string> Names { get; }
     public IReadOnlyList<string> SkippedResources { get; }
     public IReadOnlyDictionary<string, string> Parents { get; }
@@ -115,7 +117,7 @@ public sealed class FigureAnimationSet
         return new FigureAnimationClip(name, tracks);
     }, token);
 
-    public IReadOnlyDictionary<string, FigurePose> Pose(FigureAnimationClip clip, float frame)
+    public IReadOnlyDictionary<string, FigurePose> Pose(FigureAnimationClip clip, float frame, string? editedPart = null, Quaternion? editedRotation = null, Vector3? editedPosition = null, IReadOnlyDictionary<string, Quaternion>? rotations = null)
     {
         if (!float.IsFinite(frame)) throw new ArgumentOutOfRangeException(nameof(frame));
         var result = new Dictionary<string, FigurePose>(StringComparer.OrdinalIgnoreCase);
@@ -127,6 +129,8 @@ public sealed class FigureAnimationSet
             if (!Parents.TryGetValue(name, out var parent) || !Bones.TryGetValue(name, out var bone)) throw new InvalidDataException("Нет узла анимации: " + name);
             var track = clip.Tracks.GetValueOrDefault(name);
             var rotation = track?.Rotation(frame) ?? Quaternion.Identity;
+            if (rotations is not null && rotations.TryGetValue(name, out var replacement)) rotation = replacement;
+            if (name == editedPart && editedRotation.HasValue) rotation = editedRotation.Value;
             if (parent.Length == 0) pose = new(track is null || track.Positions.Length == 0 ? bone : track.Position(frame), rotation);
             else
             {
@@ -135,6 +139,7 @@ public sealed class FigureAnimationSet
                 // comes from BON rotated by parent, not the track's position array.
                 pose = new(ancestor.Position + Vector3.Transform(bone, ancestor.Rotation), Quaternion.Normalize(rotation * ancestor.Rotation));
             }
+            if (parent.Length == 0 && name == editedPart && editedPosition.HasValue) pose = pose with { Position = editedPosition.Value };
             visiting.Remove(name); result.Add(name, pose); return pose;
         }
         foreach (string name in Parents.Keys) Calculate(name);

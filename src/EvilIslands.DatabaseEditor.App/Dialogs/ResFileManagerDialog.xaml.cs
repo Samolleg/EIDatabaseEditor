@@ -56,6 +56,8 @@ public partial class ResFileManagerDialog : Window
         _filesView = CollectionViewSource.GetDefaultView(_rows);
         _filesView.Filter = FilterRow;
         FilesGrid.ItemsSource = _filesView;
+        _filesView.CollectionChanged += (_, _) => { _tilePage = 0; QueueTilesRefresh(); };
+        Closed += (_, _) => _tileCancellation.Cancel();
         ChangesGrid.ItemsSource = _changes;
         ApplyStoredLayout();
         InitializeWindowBounds();
@@ -399,7 +401,7 @@ public partial class ResFileManagerDialog : Window
     }
 
     private List<ResManagerFileRow> GetSelectedRows() =>
-        FilesGrid.SelectedItems.Cast<ResManagerFileRow>()
+        (TileMode.IsChecked == true ? TilesList.SelectedItems : FilesGrid.SelectedItems).Cast<ResManagerFileRow>()
             .OrderBy(row => row.ResourceName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -1086,7 +1088,7 @@ public partial class ResFileManagerDialog : Window
             SearchBox.SelectAll();
             e.Handled = true;
         }
-        else if (e.Key == Key.Delete && FilesGrid.IsKeyboardFocusWithin)
+        else if (e.Key == Key.Delete && (FilesGrid.IsKeyboardFocusWithin || TilesList.IsKeyboardFocusWithin))
         {
             DeleteButton_Click(sender, e);
             e.Handled = true;

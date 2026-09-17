@@ -115,15 +115,26 @@ internal static class MmpPreviewRegression
         string name = $"spell{index:D4}";
         byte[] icon = Icon(32), large = Icon(64);
         string archivePath = Path.Combine(root, "icons.res");
-        WriteRes(archivePath, (name + ".mmp", icon), (name + ".x2.mmp", large), ("bad.mmp", [0]));
+        WriteRes(archivePath, (name + ".mmp", icon), (name + ".x2.mmp", large), (name + ".x4.mmp", Icon(128)), ("only.x4.mmp", Icon(128)), ("bad.mmp", [0]));
         await vm.ConnectTextureSourcesAsync(new([archivePath], [], true, false, []));
         await vm.RecheckTexturesAsync();
         await vm.RefreshTexturePreviewAsync();
-        Require(vm.TexturePreviewItems.Count == 2 && vm.TexturePreviewItems[0].Image?.PixelWidth == 32 &&
-            vm.TexturePreviewItems[1].Image?.PixelWidth == 64 && vm.TexturePreviewItems.All(p => p.Image?.IsFrozen == true), "ViewModel normal/x2 pair.");
+        Require(vm.TexturePreviewItems.Count == 3 && vm.TexturePreviewItems[0].Image?.PixelWidth == 32 &&
+            vm.TexturePreviewItems[1].Image?.PixelWidth == 64 && vm.TexturePreviewItems[2].Image?.PixelWidth == 128 && vm.TexturePreviewItems.All(p => p.Image?.IsFrozen == true), "ViewModel normal/x2/x4 variants.");
         vm.TextureZoomIndex = 3; Require(vm.TextureZoom == 4, "Zoom mapping.");
         vm.TextureZoomIndex = 0;
         var selected = vm.SelectedTexture!;
+        foreach (string resource in new[] { "only.mmp", "only.x2.mmp", "only.X4.MMP" })
+        {
+            vm.SelectedTexture = selected with { ResourceName = resource };
+            await vm.RefreshTexturePreviewAsync();
+            Require(vm.TexturePreviewItems.Count == 3 && vm.TexturePreviewItems[0].Image is null &&
+                vm.TexturePreviewItems[1].Image is null && vm.TexturePreviewItems[2].Image?.PixelWidth == 128 &&
+                vm.TexturePreviewItems[2].Name == "only.x4.mmp" && vm.TexturePreviewItems[2].Source == archivePath,
+                "x4-only preview and explicit suffix normalization.");
+        }
+        vm.SelectedTexture = selected;
+        Console.WriteLine("PASS x4-only-preview-and-suffix-normalization");
         vm.SelectedTexture = selected with { ResourceName = "absent.mmp" };
         var stale = vm.RefreshTexturePreviewAsync();
         vm.SelectedTexture = selected;
@@ -147,7 +158,7 @@ internal static class MmpPreviewRegression
         host.Measure(new Size(1180, 740)); host.Arrange(new Rect(0, 0, 1180, 740)); host.UpdateLayout();
         await Dispatcher.Yield(DispatcherPriority.ContextIdle); host.UpdateLayout();
         var views = Descendants(host).OfType<TextureImageView>().ToArray();
-        Require(views.Length == 2 && views.All(v => v.Bitmap is not null), "Preview bindings not rendered.");
+        Require(views.Length == 3 && views.All(v => v.Bitmap is not null), "Preview bindings not rendered.");
         SaveRender(host, Path.Combine(root, "preview-panel.png"), 1180, 740);
         vm.TextureZoomIndex = 3;
         await Dispatcher.Yield(DispatcherPriority.ContextIdle); host.UpdateLayout();

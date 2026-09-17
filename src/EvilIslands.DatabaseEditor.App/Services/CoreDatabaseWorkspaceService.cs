@@ -12,6 +12,15 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
     private IReadOnlyList<DatabaseGroupViewModel> _mappedDatabases = [];
     private readonly Dictionary<TextResource, LocalizationEntryViewModel> _textViewModels = [];
     private readonly Dictionary<LocalizationEntryViewModel, List<RecordRowViewModel>> _textOwners = [];
+    internal IReadOnlyList<PreparedFileWrite> PrepareModuleSave()
+    {
+        var result = new List<PreparedFileWrite>();
+        if (_document?.IsModified == true) result.Add(new(Guid.Empty, _document.SourcePath, _document.Sha256, _document.PrepareImage()));
+        if (_textsDocument?.IsModified == true) result.Add(new(new Guid("00000000-0000-0000-0000-000000000001"), _textsDocument.SourcePath, _textsDocument.Sha256, _textsDocument.PrepareImage()));
+        return result;
+    }
+    internal WorkspaceSnapshot ReloadModuleSave() => OpenInternalAsync(RequireDocument().SourcePath, _textsDocument?.SourcePath,
+        _soundCatalog?.Archives.Select(a => a.SourcePath).ToArray(), CancellationToken.None).GetAwaiter().GetResult();
 
     public Task<WorkspaceSnapshot> OpenAsync(string path, CancellationToken cancellationToken) =>
         OpenInternalAsync(path, explicitTextsPath: null, explicitSoundPaths: null, cancellationToken);
@@ -277,6 +286,19 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         record.SetRelatedSounds(sounds);
         record.SetBriefingPhrases(MapBriefingPhrases(record, sounds));
     }
+
+    internal RecordRowViewModel RebindHistoryRecord(DatabaseTableViewModel table, RecordRowViewModel previous, bool present)
+    {
+        var core = RequireDocument().RebindHistoryRecord(previous.CoreRecord, present);
+        var row = present ? table.Records.Single(r => ReferenceEquals(r.CoreRecord, core))
+            : new RecordRowViewModel(core, table.Key, table.Title, table.IsEditable);
+        RefreshRelatedTexts(row);
+        RefreshRelatedSounds(row);
+        return row;
+    }
+
+    internal LocalizationEntryViewModel RebindHistoryText(LocalizationEntryViewModel previous, bool present) =>
+        GetOrCreateTextViewModel(RequireTextsDocument().RebindHistoryResource(previous.CoreResource, present));
 
     public void RemoveAddedRecord(RecordRowViewModel record)
     {

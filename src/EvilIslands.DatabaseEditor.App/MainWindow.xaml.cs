@@ -2,6 +2,7 @@ using System.Collections;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
@@ -33,7 +34,7 @@ public partial class MainWindow : Window
     private const string LocalizationDescriptionColumnIdentity = "texts:description";
     private const string SoundSummaryColumnIdentity = "sound:summary";
     private const string SoundPathColumnIdentity = "sound:path";
-    private static readonly double[] InterfaceScaleSteps = [1.0, 1.1, 1.25, 1.5];
+    private static readonly double[] InterfaceScaleSteps = [0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5];
     private static readonly IValueConverter ProjectionConverter = new SpreadsheetProjectionConverter();
     private readonly MainWindowViewModel _viewModel;
     private readonly EditorPreferencesStore _preferences;
@@ -73,6 +74,11 @@ public partial class MainWindow : Window
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         _recoveryStore = recoveryStore ?? new RecoverySnapshotStore();
         InitializeComponent();
+        ShowTextsKeysCheckBox.IsChecked = _preferences.GetShowTextsKeys();
+        ApplyTextsKeyVisibility();
+        string version = typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
+        string revision = version.Split("preview.").Last().Split('+')[0];
+        ProgramVersionText.Text = $"   ·   Версия {revision}";
         RefreshLastDatabaseButton();
         AddHandler(FrameworkElement.LoadedEvent, new RoutedEventHandler(SpreadsheetElement_Loaded));
         RegisterSpreadsheetGrid(RecordsGrid);
@@ -94,6 +100,7 @@ public partial class MainWindow : Window
         DataContextChanged += MainWindow_DataContextChanged;
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
+        InitializeModules();
         _viewModel.OpenFileRequested += ViewModel_OpenFileRequested;
         _viewModel.AttachTextsRequested += ViewModel_AttachTextsRequested;
         _viewModel.AttachSoundsRequested += ViewModel_AttachSoundsRequested;
@@ -123,6 +130,7 @@ public partial class MainWindow : Window
         {
             string sourcePath = _viewModel.SourcePath;
             PendingSoundEditViewModel? pendingSound = _viewModel.PendingSoundEdit;
+            byte[] modules = CaptureModuleRecovery();
             draft = _recoveryStore.Prepare(sourcePath);
             SavePairCopyResult? result = await _viewModel.SaveRecoveryCopyPathAsync(draft.DatabasePath);
             if (result is null)
@@ -131,7 +139,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            _recoveryStore.Complete(sourcePath, draft, result, pendingSound);
+            _recoveryStore.Complete(sourcePath, draft, result, pendingSound, modules);
         }
         catch (Exception exception)
         {
@@ -599,6 +607,8 @@ public partial class MainWindow : Window
 
     private void SpreadsheetViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(MainWindowViewModel.LuaWorkspace))
+            Dispatcher.BeginInvoke(new Action(() => { _luaRows.Clear(); if (RecordsGrid.Items is not System.ComponentModel.IEditableCollectionView { IsEditingItem: true }) RecordsGrid.Items.Refresh(); }), DispatcherPriority.ContextIdle);
         if (e.PropertyName == nameof(MainWindowViewModel.SelectedRecord))
         {
             RelatedSoundSearch.Clear();
@@ -772,6 +782,7 @@ public partial class MainWindow : Window
         }
 
         _columnLayoutTableKey = tableKey;
+        AddLuaColumns();
         ApplyFrozenColumnLayout(nameColumn);
         UpdateSpreadsheetColumnReadOnlyStates();
         RefreshFormulaBar();
@@ -814,6 +825,7 @@ public partial class MainWindow : Window
         _localizationKeyColumn = new DataGridTextColumn
         {
             Header = "Ключ texts.res",
+            Visibility = ShowTextsKeysCheckBox.IsChecked == true ? Visibility.Visible : Visibility.Collapsed,
             Binding = new Binding(nameof(RecordRowViewModel.LocalizationKeyText)),
             ElementStyle = elementStyle,
             HeaderStyle = localizationHeaderStyle,
@@ -1185,6 +1197,11 @@ public partial class MainWindow : Window
 
     private void RecordsGrid_BeginningEdit(object sender, DataGridBeginningEditEventArgs e)
     {
+        if (_luaColumns.ContainsKey(e.Column))
+        {
+            e.Cancel = _viewModel.IsBusy || !_viewModel.IsEditMode;
+            return;
+        }
         if (e.Row.Item is RecordRowViewModel localizationRecord &&
             (ReferenceEquals(e.Column, _localizationTitleColumn) ||
              ReferenceEquals(e.Column, _localizationDescriptionColumn)))
@@ -1224,6 +1241,16 @@ public partial class MainWindow : Window
 
     private void RecordsGrid_CellEditEnding(object? sender, DataGridCellEditEndingEventArgs e)
     {
+        if (_luaColumns.TryGetValue(e.Column, out var luaColumn))
+        {
+            if (e.EditAction == DataGridEditAction.Commit && e.Row.Item is RecordRowViewModel luaRow)
+            {
+                try { EditLuaCell(luaRow, luaColumn, ((TextBox)e.EditingElement).Text); }
+                catch (Exception ex) { e.Cancel = true; _viewModel.ReportSpreadsheetError(ex.Message); }
+                Dispatcher.BeginInvoke(new Action(() => { _luaRows.Clear(); if (RecordsGrid.Items is System.ComponentModel.IEditableCollectionView view && (view.IsEditingItem || view.IsAddingNew)) return; RecordsGrid.Items.Refresh(); }), DispatcherPriority.ContextIdle);
+            }
+            return;
+        }
         if (e.EditAction == DataGridEditAction.Commit &&
             e.Row.Item is RecordRowViewModel record &&
             _spreadsheetColumns.TryGetValue(e.Column, out SpreadsheetColumnViewModel? descriptor) &&
@@ -1967,6 +1994,10 @@ public partial class MainWindow : Window
                 Owner = this,
             };
 
+            if (context.Item is RecordRowViewModel equipmentOwner &&
+                equipmentOwner.TableKey == "units.prototypes" && structuredField.Id is 32 or 33 or 42)
+                structuredDialog.ConfigureEquipment(_spreadsheetViewModel ?? _viewModel, equipmentOwner, structuredField.Id);
+
             if (ShowResizableEditorDialog(structuredDialog) is true && structuredDialog.WasApplied)
             {
                 SetFormulaError(null);
@@ -2223,6 +2254,7 @@ public partial class MainWindow : Window
             IReadOnlyList<IReadOnlyList<string>> matrix = SpreadsheetClipboardText.Parse(text);
             if (ReferenceEquals(grid, RecordsGrid))
             {
+                if (TryPasteLuaMatrix(matrix)) return;
                 if (!TryBuildPasteCells(matrix, out IReadOnlyList<SpreadsheetPasteCell> cells, out string? recordsError))
                 {
                     _viewModel.ReportSpreadsheetError(recordsError ?? "Не удалось определить диапазон вставки.");
@@ -2670,6 +2702,8 @@ public partial class MainWindow : Window
 
     private string GetClipboardCellText(RecordRowViewModel record, DataGridColumn column)
     {
+        if (_luaColumns.TryGetValue(column, out var lua))
+            return (string)new LuaColumnConverter(this, lua).Convert(record, typeof(string), null!, CultureInfo.InvariantCulture);
         if (_spreadsheetColumns.TryGetValue(column, out SpreadsheetColumnViewModel? descriptor))
         {
             RecordFieldViewModel? field = record.GetCell(descriptor.FieldId);
@@ -2926,6 +2960,7 @@ public partial class MainWindow : Window
                 StringComparison.OrdinalIgnoreCase))
         {
             bool soundRestored = await _viewModel.RestorePendingSoundRecoveryAsync(snapshot);
+            RestoreModuleRecovery(snapshot);
             _viewModel.ReportRecoveryOpened(snapshot);
             if (!soundRestored)
             {
@@ -2943,6 +2978,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (_moduleHost is not null && (_viewModel.ModuleDocuments.HasDirty || _viewModel.HasModuleHistory))
+        {
+            _moduleHost.SaveAll();
+            return;
+        }
+
         var allowGameInstallationPath = false;
         bool createBackup = true;
         if (_viewModel.HasDocument)
@@ -2950,7 +2991,9 @@ public partial class MainWindow : Window
             var dialog = new ConfirmDialog(
                 "Сохранить текущую базу?",
                 "Открытый файл будет заменён проверенной версией.",
-                "По умолчанию сохраняется резервная .bak-копия. При выборе пункта ниже постоянный бэкап не создаётся.",
+                _viewModel.HasPendingLuaChanges
+                    ? "Также будут сохранены изменённые значения связанных Lua-файлов с резервными копиями. Остальное содержимое Lua сохраняется."
+                    : "По умолчанию сохраняется резервная .bak-копия. При выборе пункта ниже постоянный бэкап не создаётся.",
                 "Сохранить с резервной копией",
                 "!")
             {
@@ -3127,6 +3170,19 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
     }
 
+    private void ShowTextsKeys_Changed(object sender, RoutedEventArgs e)
+    {
+        _preferences.RememberShowTextsKeys(ShowTextsKeysCheckBox.IsChecked == true);
+        ApplyTextsKeyVisibility();
+    }
+
+    private void ApplyTextsKeyVisibility()
+    {
+        var visibility = ShowTextsKeysCheckBox.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (_localizationKeyColumn is not null) _localizationKeyColumn.Visibility = visibility;
+        if (RelatedTextsKeyColumn is not null) RelatedTextsKeyColumn.Visibility = visibility;
+    }
+
     private void ScaleDownButton_Click(object sender, RoutedEventArgs e) => ChangeInterfaceScale(-1);
 
     private void ScaleUpButton_Click(object sender, RoutedEventArgs e) => ChangeInterfaceScale(1);
@@ -3141,6 +3197,8 @@ public partial class MainWindow : Window
         _hasExplicitInterfaceScale = true;
         SetInterfaceScale(InterfaceScaleSteps[nextIndex], persist: true);
     }
+
+    internal void BindDetachedScale(DetachedDetailsWindow window) => ((FrameworkElement)window.Content).LayoutTransform = InterfaceScaleTransform;
 
     internal double CurrentInterfaceScale => InterfaceScaleTransform.ScaleX;
 
@@ -3291,7 +3349,7 @@ public partial class MainWindow : Window
         if (_detailsWindow is null &&
             !(_textureExpanded && (TextureTab.IsSelected || ModelTab?.IsSelected == true || SpellEffectsTab?.IsSelected == true)) &&
             DetailsPane.ActualHeight >= 180 &&
-            _spreadsheetViewModel?.SelectedRecordHasDetails is true)
+            _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records)
         {
             _layout.DetailsPaneHeight = DetailsPane.ActualHeight;
         }
@@ -3394,6 +3452,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        DetailsPaneSplitter.Visibility = inRecords && !textureExpanded ? Visibility.Visible : Visibility.Collapsed;
         DetailsSplitterRow.Height = GridLength.Auto;
         UpdateDetailsDetachButtons();
 
@@ -3420,7 +3479,7 @@ public partial class MainWindow : Window
                 }));
         }
 
-        if (!hasLocalization && !hasSound && !hasTextures)
+        if (!inRecords)
         {
             DetailsPaneRow.MinHeight = 0;
             DetailsPaneRow.Height = GridLength.Auto;
@@ -3430,13 +3489,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        double minimumDetailsHeight = textureActive ? 380 : 220;
+        double minimumDetailsHeight = 220;
         double maximumDetailsHeight = RecordsTableBorder.ActualHeight > 0
             ? Math.Max(minimumDetailsHeight, RecordsTableBorder.ActualHeight - 160)
             : 640;
         DetailsPaneRow.MinHeight = textureActive ? minimumDetailsHeight : hasLocalization && hasSound ? 240 : minimumDetailsHeight;
         DetailsPaneRow.Height = new GridLength(
-            Math.Clamp(textureActive ? Math.Max(520, _layout.DetailsPaneHeight) : _layout.DetailsPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
+            Math.Clamp(_layout.DetailsPaneHeight, minimumDetailsHeight, maximumDetailsHeight),
             GridUnitType.Pixel);
 
     }
@@ -3502,6 +3561,7 @@ public partial class MainWindow : Window
             Width = Math.Clamp(_layout.DetailsWindowWidth, 720, Math.Max(720, workArea.Width)),
             Height = Math.Clamp(_layout.DetailsWindowHeight, 420, Math.Max(420, workArea.Height)),
         };
+        BindDetachedScale(window);
         window.PaneContent = DetailsPane;
         window.Closing += DetachedDetailsWindow_Closing;
         _detailsWindow = window;
@@ -3579,7 +3639,7 @@ public partial class MainWindow : Window
 
     private void DetailsPaneSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
     {
-        if (_spreadsheetViewModel?.SelectedRecordHasDetails is not true ||
+        if (_spreadsheetViewModel?.CurrentSection != WorkspaceSection.Records ||
             !double.IsFinite(DetailsPane.ActualHeight) ||
             DetailsPane.ActualHeight < 180)
         {
@@ -3627,6 +3687,7 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (RouteModuleKey(e)) { e.Handled = true; return; }
         if (e.Key == Key.F2 &&
             _spreadsheetViewModel?.CurrentSection == WorkspaceSection.Records &&
             !FormulaEditorBox.IsKeyboardFocusWithin &&
@@ -3742,6 +3803,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!CanCloseModules()) { e.Cancel = true; return; }
         PersistCurrentColumnWidths();
 
         if (_allowClose)
@@ -3769,7 +3831,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!_viewModel.HasUnsavedWork)
+        if (!_viewModel.HasUnsavedWork && !_viewModel.HasPendingLuaChanges && _unavailableModuleRecovery.Count == 0)
         {
             if (_viewModel.HasDocument)
             {
@@ -3787,10 +3849,14 @@ public partial class MainWindow : Window
     {
         var dialog = new ConfirmDialog(
             "Закрыть без сохранения?",
-            _viewModel.HasPendingSoundEdit
+            _viewModel.HasPendingLuaChanges
+                ? $"В памяти остались изменения Lua; изменений database.res/texts.res: {_viewModel.ChangeCount}." + (_viewModel.HasPendingSoundEdit ? " Также подготовлен звуковой RES." : "")
+                : _viewModel.HasPendingSoundEdit
                 ? $"В памяти осталось изменений database.res/texts.res: {_viewModel.ChangeCount}; также подготовлен звуковой RES."
                 : $"В рабочей памяти осталось изменений: {_viewModel.ChangeCount}.",
-            _viewModel.HasPendingSoundEdit
+            _viewModel.HasPendingLuaChanges
+                ? "Lua ещё не записан. Используйте общую кнопку «Сохранить» (Ctrl+S) или отмените изменения через Undo."
+                : _viewModel.HasPendingSoundEdit
                 ? "Подготовленный звук ещё не записан. Используйте «Сохранить в текущий RES» или «Сохранить копию» в карточке аудио."
                 : "Несохранённые изменения будут потеряны. Для записи используйте «Сохранить».",
             "Закрыть без сохранения",
@@ -3830,6 +3896,7 @@ public partial class MainWindow : Window
 
     private void DetachAndDispose()
     {
+        DisposeModules();
         if (_detailsWindow is not null)
         {
             _preserveDetailsDetachedState = true;

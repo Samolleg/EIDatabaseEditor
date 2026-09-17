@@ -42,7 +42,7 @@ internal sealed class RecoverySnapshotStore
         string sourcePath,
         RecoverySnapshotDraft draft,
         SavePairCopyResult result,
-        PendingSoundEditViewModel? pendingSound)
+        PendingSoundEditViewModel? pendingSound, byte[]? modules = null)
     {
         lock (_sync)
         {
@@ -60,8 +60,12 @@ internal sealed class RecoverySnapshotStore
                 WriteAtomic(soundAssetPath, pendingSound.Asset.Data.ToArray());
             }
 
+            string? modulesPath = null;
+            if (modules is not null) { modulesPath = Path.Combine(draft.DirectoryPath, "modules.json"); WriteAtomic(modulesPath, modules); }
             var manifest = new RecoverySnapshotManifest
             {
+                ModulesPath = modulesPath,
+                ModulesSha256 = modules is null ? null : Convert.ToHexString(SHA256.HashData(modules)),
                 SourcePath = fullSourcePath,
                 SessionId = _sessionId,
                 SourceLastWriteUtc = File.GetLastWriteTimeUtc(fullSourcePath),
@@ -283,9 +287,10 @@ internal sealed class RecoverySnapshotStore
             string sourcePath = Path.GetFullPath(manifest.SourcePath);
             if ((expectedSourcePath is not null &&
                  !string.Equals(sourcePath, expectedSourcePath, StringComparison.OrdinalIgnoreCase)) ||
-                !File.Exists(sourcePath) ||
+                (!File.Exists(sourcePath) && manifest.ModulesPath is null) ||
                 !File.Exists(manifest.DatabasePath) ||
-                manifest.SourceLastWriteUtc != File.GetLastWriteTimeUtc(sourcePath) ||
+                (manifest.ModulesPath is null && manifest.SourceLastWriteUtc != File.GetLastWriteTimeUtc(sourcePath)) ||
+                (manifest.ModulesPath is not null && !File.Exists(manifest.ModulesPath)) ||
                 (manifest.TextsPath is not null && !File.Exists(manifest.TextsPath)))
             {
                 return null;
@@ -323,10 +328,12 @@ internal sealed class RecoverySnapshotStore
         manifest.PendingSoundArchivePath,
         manifest.PendingSoundResourceName,
         manifestPath,
-        manifest.SessionId);
+        manifest.SessionId, manifest.ModulesPath, manifest.ModulesSha256);
 
     private sealed class RecoverySnapshotManifest
     {
+        public string? ModulesPath { get; set; }
+        public string? ModulesSha256 { get; set; }
         public string SourcePath { get; set; } = string.Empty;
         public string? SessionId { get; set; }
         public DateTime SourceLastWriteUtc { get; set; }
@@ -356,4 +363,4 @@ internal sealed record RecoverySnapshot(
     string? PendingSoundArchivePath,
     string? PendingSoundResourceName,
     string ManifestPath,
-    string? SessionId = null);
+    string? SessionId = null, string? ModulesPath = null, string? ModulesSha256 = null);

@@ -12,9 +12,9 @@
                             ResizeBorderThickness="7" UseAeroCaptionButtons="False" />
     </shell:WindowChrome.WindowChrome>
     <Window.Resources>
-        <Style x:Key="ResText" TargetType="TextBlock"><Setter Property="TextAlignment" Value="Left"/><Setter Property="HorizontalAlignment" Value="Stretch"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Padding" Value="8,0"/></Style>
-        <Style x:Key="ResNumber" TargetType="TextBlock" BasedOn="{StaticResource ResText}"><Setter Property="TextAlignment" Value="Right"/></Style>
-        <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}"><Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="Padding" Value="8,4"/></Style>
+        <Style x:Key="ResText" TargetType="TextBlock" BasedOn="{StaticResource CenteredGridText}"><Setter Property="Padding" Value="8,0"/></Style>
+        <Style x:Key="ResNumber" TargetType="TextBlock" BasedOn="{StaticResource ResText}"/>
+        <Style TargetType="DataGridColumnHeader" BasedOn="{StaticResource {x:Type DataGridColumnHeader}}"><Setter Property="HorizontalContentAlignment" Value="Center"/><Setter Property="VerticalContentAlignment" Value="Center"/><Setter Property="Padding" Value="8,4"/></Style>
         <HierarchicalDataTemplate x:Key="FolderTemplate" ItemsSource="{Binding Children}">
             <Grid Margin="0,1">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="21"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -87,11 +87,13 @@
                 <Button x:Name="ExtractButton" Grid.Column="5" Style="{StaticResource RoundedButton}" Content="Извлечь…" Padding="12,7" Click="ExtractButton_Click"/>
                 <Button x:Name="UndoButton" Grid.Column="6" Style="{StaticResource RoundedButton}" Content="↶" ToolTip="Отменить (Ctrl+Z)" Margin="7,0,0,0" Width="40" Padding="0" Click="UndoButton_Click"/>
                 <Button x:Name="RedoButton" Grid.Column="7" Style="{StaticResource RoundedButton}" Content="↷" ToolTip="Вернуть (Ctrl+Y)" Margin="7,0,0,0" Width="40" Padding="0" Click="RedoButton_Click"/>
-                <Grid Grid.Column="9">
+                <DockPanel Grid.Column="9">
+                    <CheckBox x:Name="TileMode" Content="Плитки" DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center" Checked="TileMode_Changed" Unchecked="TileMode_Changed"/>
+                <Grid>
                     <TextBox x:Name="SearchBox" Style="{StaticResource DarkTextBox}" Padding="34,8,10,8" TextChanged="SearchBox_TextChanged" ToolTip="Поиск по всему RES"/>
                     <TextBlock x:Name="SearchHint" Text="Поиск по всему RES…" Margin="34,0,0,0" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" IsHitTestVisible="False"/>
                     <TextBlock Text="⌕" Margin="10,0,0,1" FontSize="17" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" IsHitTestVisible="False"/>
-                </Grid>
+                </Grid></DockPanel>
             </Grid>
             <Grid x:Name="ManagerGrid" Grid.Row="4" Margin="16,0">
                 <Grid.ColumnDefinitions>
@@ -137,6 +139,27 @@
                                 <DataGridTextColumn ElementStyle="{StaticResource ResText}" Header="Состояние" Binding="{Binding State}" Width="120"/>
                             </DataGrid.Columns>
                         </DataGrid>
+                        <DockPanel x:Name="TilesPanel" Grid.Row="1" Visibility="Collapsed">
+                            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Margin="4">
+                                <Button Content="←" Click="TilesPrevious_Click" Padding="12,4"/>
+                                <TextBlock x:Name="TilesPageText" VerticalAlignment="Center" Margin="12,0"/>
+                                <Button Content="→" Click="TilesNext_Click" Padding="12,4"/>
+                            </StackPanel>
+                            <ListBox x:Name="TilesList" SelectionMode="Extended" SelectionChanged="FilesGrid_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled" Background="Transparent" BorderThickness="0">
+                                <ListBox.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
+                                <ListBox.ItemTemplate><DataTemplate>
+                                    <StackPanel Width="150" Margin="4" ToolTip="{Binding ResourceName}">
+                                        <Border Background="#353535" Height="126" CornerRadius="4">
+                                            <Grid><TextBlock Text="{Binding FileType}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#BBBBBB"/>
+                                                <Image Height="126" Width="142" Stretch="Uniform" Loaded="TileImage_Loaded"/>
+                                            </Grid>
+                                        </Border>
+                                        <TextBlock Text="{Binding FileName}" TextAlignment="Center" TextWrapping="Wrap" MaxHeight="42" Margin="0,5,0,0"/>
+                                        <TextBlock Text="{Binding State}" TextAlignment="Center" Foreground="{StaticResource MutedTextBrush}" FontSize="11"/>
+                                    </StackPanel>
+                                </DataTemplate></ListBox.ItemTemplate>
+                            </ListBox>
+                        </DockPanel>
                         <Border x:Name="DropHint" Grid.RowSpan="2" Background="#D9121513" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2" CornerRadius="9" Visibility="Collapsed" IsHitTestVisible="False">
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="＋" FontSize="38" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
                                 <TextBlock Text="Перетащите сюда файлы или папки" FontSize="18" FontWeight="SemiBold"/>

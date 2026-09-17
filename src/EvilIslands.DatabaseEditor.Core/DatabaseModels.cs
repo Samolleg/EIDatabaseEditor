@@ -237,6 +237,7 @@ public sealed class DatabaseFieldState
     }
 
     internal ReadOnlySpan<byte> Payload => _payload;
+    public DatabaseFieldState Rebind(DatabaseField owner) => new(owner, _payload);
 }
 
 public sealed class DatabaseField
@@ -621,6 +622,17 @@ public sealed class DatabaseField
         lock (_editSync)
         {
             return DatabaseValueCodec.TryGetPrimitiveListCount(_schema, Payload, out count);
+        }
+    }
+
+    public bool TryPrepareValue(string value, out DatabaseFieldState? state, out string? error)
+    {
+        lock (_editSync)
+        {
+            state = null; error = null;
+            if (!IsEditable) { error = "Поле доступно только для чтения."; return false; }
+            if (!DatabaseValueCodec.TryEncode(_schema, value, OriginalPayload, out var encoded, out error)) return false;
+            state = new(this, encoded); return true;
         }
     }
 

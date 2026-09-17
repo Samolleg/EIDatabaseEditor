@@ -201,7 +201,7 @@ public static class ItemModelPreview
 
     private sealed class FigureResources
     {
-        private readonly Dictionary<string, (string Path, ResEntry Entry, long Length, DateTime Written)> _entries = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, (string Path, ResEntry Entry, long Length, long Written)> _entries = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> _used;
         private readonly CancellationToken _token;
         public FigureResources(string database, TextureSources sources, List<string> used, CancellationToken token)
@@ -210,10 +210,10 @@ public static class ItemModelPreview
             foreach (string path in UnitModelPreview.FigureArchives(database, sources).Where(File.Exists))
             {
                 token.ThrowIfCancellationRequested();
-                var info = new FileInfo(path); long length = info.Length; DateTime written = info.LastWriteTimeUtc;
+                var info = new FileInfo(path); long length = info.Length; long written = ResourceFileStamp.Read(path);
                 var entries = ResFileManagerArchive.ReadCatalog(path, token);
                 info.Refresh();
-                if (length != info.Length || written != info.LastWriteTimeUtc) throw new IOException("Архив изменился во время чтения.");
+                if (length != info.Length || written != ResourceFileStamp.Read(path)) throw new IOException("Архив изменился во время чтения.");
                 foreach (var entry in entries) _entries.TryAdd(entry.Name, (path, entry, length, written));
             }
         }
@@ -224,7 +224,7 @@ public static class ItemModelPreview
             if (!_entries.TryGetValue(name, out var resource)) throw new FileNotFoundException("Не найдена инвентарная модель: " + name);
             if (resource.Entry.Size > 128 * 1024 * 1024) throw new InvalidDataException("Модель превышает 128 МиБ.");
             using var stream = new FileStream(resource.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (stream.Length != resource.Length || File.GetLastWriteTimeUtc(resource.Path) != resource.Written) throw new IOException("Архив модели изменился. Обновите предпросмотр.");
+            if (stream.Length != resource.Length || ResourceFileStamp.Read(resource.Path) != resource.Written) throw new IOException("Архив модели изменился. Обновите предпросмотр.");
             stream.Position = resource.Entry.Offset; var bytes = new byte[resource.Entry.Size]; stream.ReadExactly(bytes);
             _used.Add(name + " — " + resource.Path); return bytes;
         }

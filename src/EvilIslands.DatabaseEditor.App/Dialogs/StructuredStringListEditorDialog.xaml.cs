@@ -520,6 +520,13 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         {
             IReadOnlyList<EmbeddedMagicChoice> shapes = _magicContext.GetShapes(kind);
             SplitItemValue(analysis.PrimaryValue, out string shapeValue, out string materialValue);
+            if (_equipmentSlot is not null && kind == StructuredElementKind.Armor)
+            {
+                var armor = _equipmentRecords.FirstOrDefault(r => r.Table == "items.armors" && r.Name == shapeValue);
+                if (armor is not null) _equipmentSlot.SelectedIndex = armor.Integer(2, -1) + 1;
+                int slot = _equipmentSlot.SelectedIndex - 1;
+                if (slot >= 0) shapes = shapes.Where(c => _equipmentRecords.Any(r => r.Table == "items.armors" && r.Name == c.Value && r.Integer(2, -1) == slot)).ToArray();
+            }
             EmbeddedMagicChoice? shapeChoice = FindChoice(shapes, shapeValue);
             if (shapeChoice is null && shapeValue.Length > 0)
             {
@@ -710,6 +717,21 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
             return;
         }
 
+        var existingShapes = MagicShapeComboBox.Items.Cast<EmbeddedMagicChoice>().ToArray();
+        string? selectedMaterial = (MagicMaterialComboBox.SelectedItem as EmbeddedMagicChoice)?.Value;
+        var localizedShapes = existingShapes.Select(s => _magicContext.LocalizeShapeChoice(s, selectedMaterial)).ToArray();
+        if (!existingShapes.SequenceEqual(localizedShapes))
+        {
+            string? selectedShape = (MagicShapeComboBox.SelectedItem as EmbeddedMagicChoice)?.Value;
+            bool wasSyncing = _syncingMagicConstructor;
+            _syncingMagicConstructor = true;
+            try
+            {
+                MagicShapeComboBox.ItemsSource = localizedShapes;
+                MagicShapeComboBox.SelectedItem = FindChoice(localizedShapes, selectedShape);
+            }
+            finally { _syncingMagicConstructor = wasSyncing; }
+        }
         MagicItemRussianNameText.Text = _magicContext.GetItemRussianName(
             (MagicShapeComboBox.SelectedItem as EmbeddedMagicChoice)?.Value,
             (MagicMaterialComboBox.SelectedItem as EmbeddedMagicChoice)?.Value);
@@ -868,7 +890,8 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 
         string query = ReferenceSearchBox.Text.Trim();
         ReferenceResultsList.ItemsSource = _referenceSuggestions
-            .Where(value => query.Length == 0 || value.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+            .Select(value => _magicContext?.ReferenceChoice(value) ?? new EmbeddedMagicChoice(value, value))
+            .Where(choice => query.Length == 0 || choice.DisplayText.Contains(query, StringComparison.CurrentCultureIgnoreCase))
             .Take(100)
             .ToArray();
     }
@@ -879,7 +902,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 
     private void AddSelectedReference()
     {
-        string? value = ReferenceResultsList.SelectedItem as string;
+        string? value = (ReferenceResultsList.SelectedItem as EmbeddedMagicChoice)?.Value;
         if (string.IsNullOrWhiteSpace(value))
         {
             value = ReferenceSearchBox.Text.Trim();
@@ -940,6 +963,11 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
         StructuredModeButton.IsChecked = !useRawMode;
         RawModeButton.IsChecked = useRawMode;
         _syncingTabs = false;
+        if (_equipmentUnit is not null)
+        {
+            if (useRawMode) { _equipmentCancellation?.Cancel(); _equipmentPreview?.PauseAnimation(); }
+            else QueueEquipmentPreview();
+        }
 
         if (useRawMode)
         {
@@ -1146,9 +1174,15 @@ public sealed class StructuredStringListItemViewModel : INotifyPropertyChanged
 
     public string Kind { get; private set; } = string.Empty;
 
+    public string RussianName { get; private set; } = string.Empty;
+
     private void RefreshAnalysis()
     {
         StringListElementAnalysis analysis = StringListEditorCodec.AnalyzeElement(_value, _fieldName);
+        int dot = analysis.PrimaryValue.IndexOf('.');
+        RussianName = dot > 0 ? _magicContext?.GetItemRussianName(
+            analysis.PrimaryValue[..dot], analysis.PrimaryValue[(dot + 1)..]) ?? "" : "";
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(RussianName)));
         StructuredElementKind? itemKind = analysis.Kind is "Ссылка / значение" or "Предмет с магией"
             ? _magicContext?.GetItemKind(analysis.PrimaryValue)
             : null;

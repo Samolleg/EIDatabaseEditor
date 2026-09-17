@@ -6,7 +6,7 @@
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:EvilIslands.DatabaseEditor.App"
         mc:Ignorable="d"
-        Title="Редактор БД от Атамана — Preview"
+        Title="Редактор БД от Атамана"
         Icon="/EvilIslands.DatabaseEditor;component/Assets/AppIcon.ico"
         Width="1440"
         Height="900"
@@ -406,19 +406,6 @@
                                    SnapsToDevicePixels="True" />
                         </Border>
                         <TextBlock Text="Редактор БД от Атамана" Margin="10,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" />
-                    </StackPanel>
-
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="14,0">
-                        <TextBlock Text="Редактор БД от Атамана" FontWeight="SemiBold" />
-                        <TextBlock Text="  —  Preview" Foreground="{StaticResource MutedTextBrush}" />
-                        <Border Margin="14,0,0,0" Padding="9,4" CornerRadius="7" Background="#17362F"
-                                BorderBrush="#285D50" BorderThickness="1"
-                                Visibility="{Binding HasDocument, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="●" FontSize="8" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" />
-                                <TextBlock Text="  источник защищён" FontSize="11" Foreground="#B9D7CF" />
-                            </StackPanel>
-                        </Border>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
@@ -855,11 +842,13 @@
 
                         <!-- Loaded workspace pages -->
                         <Grid Visibility="{Binding HasDocument, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <ContentControl x:Name="ModulePane" Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Modules}"/>
                             <!-- Overview -->
                             <ScrollViewer VerticalScrollBarVisibility="Auto"
                                           HorizontalScrollBarVisibility="Disabled"
                                           Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Overview}">
                                 <StackPanel Margin="22,20,22,28" MaxWidth="1200">
+                                    <CheckBox x:Name="ShowTextsKeysCheckBox" Content="Показывать столбцы «Ключ texts.res»" Margin="0,0,0,16" Checked="ShowTextsKeys_Changed" Unchecked="ShowTextsKeys_Changed" />
                                     <UniformGrid Columns="4" Margin="0,0,0,16">
                                         <Border Style="{StaticResource SurfaceCard}" Margin="0,0,8,0">
                                             <StackPanel>
@@ -1355,6 +1344,7 @@
                                     </Grid>
 
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <CheckBox x:Name="ShowLuaColumnsButton" Content="Показывать Lua" Checked="ShowLuaColumns_Changed" Unchecked="ShowLuaColumns_Changed" VerticalAlignment="Center" Margin="0,0,10,0" ToolTip="Показать связанные параметры Lua справа от полей БД" />
                                         <Button x:Name="NewRowButton"
                                                 Style="{StaticResource RoundedButton}"
                                                 Command="{Binding AppendRecordCommand}"
@@ -1616,7 +1606,7 @@
                                                       Cursor="SizeNS"
                                                       DragCompleted="DetailsPaneSplitter_DragCompleted"
                                                       ToolTip="Потяните, чтобы увеличить или уменьшить область русских текстов и реплик"
-                                                      Visibility="{Binding SelectedRecordHasDetails, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                      Visibility="Collapsed" />
                                         <TabControl x:Name="DetailsPane" SelectionChanged="TextureTab_SelectionChanged" Grid.Row="2" Background="{StaticResource SurfaceBrush}" Foreground="{StaticResource TextBrush}" BorderBrush="{StaticResource StrongBorderBrush}">
                                           <TabControl.Resources>
                                             <Style TargetType="TabItem">
@@ -1762,7 +1752,7 @@
                                                           Visibility="{Binding SelectedRecord.HasRelatedTexts, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <DataGrid.Columns>
                                                         <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="94" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="220" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                                        <DataGridTextColumn x:Name="RelatedTextsKeyColumn" Visibility="Collapsed" Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="220" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="220" ElementStyle="{StaticResource LocalizationGridCellText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                                         <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="280" ElementStyle="{StaticResource LocalizationGridDescriptionText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
                                                     </DataGrid.Columns>
@@ -2894,7 +2884,7 @@
                             <TextBlock Grid.Column="1" Text="{Binding StatusText}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="7,0,10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding ChangeCount, StringFormat={}{0} изм.}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
-                                <TextBlock Text="   ·   Preview" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" />
+                                <TextBlock x:Name="ProgramVersionText" Foreground="{StaticResource SubtleTextBrush}" FontSize="11" />
                             </StackPanel>
                         </Grid>
                     </Border>

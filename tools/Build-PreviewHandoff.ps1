@@ -4,6 +4,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Local builds always update the permanent editor folder. Versioned exports are explicit only.
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    & (Join-Path $PSScriptRoot 'Publish-Current.ps1')
+    return
+}
+
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDirectory '..'))
 $propsPath = Join-Path $projectRoot 'Directory.Build.props'

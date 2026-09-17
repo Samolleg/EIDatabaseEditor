@@ -40,17 +40,17 @@ public static class UnitModelPreview
             string mask = appearance?.Model ?? race.Text(30);
             if (string.IsNullOrWhiteSpace(mask)) throw new InvalidDataException("В расе не задана маска модели.");
             var archives = FigureArchives(databasePath, sources);
-            var indexes = new List<(string Path, IReadOnlyList<ResEntry> Entries, long Length, DateTime Written)>();
+            var indexes = new List<(string Path, IReadOnlyList<ResEntry> Entries, long Length, long Written)>();
             foreach (string path in archives)
             {
                 token.ThrowIfCancellationRequested();
                 if (File.Exists(path))
                 {
                     var info = new FileInfo(path);
-                    long length = info.Length; DateTime written = info.LastWriteTimeUtc;
+                    long length = info.Length; long written = ResourceFileStamp.Read(path);
                     var entries = ResFileManagerArchive.ReadCatalog(path, token);
                     info.Refresh();
-                    if (info.Length != length || info.LastWriteTimeUtc != written) throw new IOException("Архив модели изменился во время чтения.");
+                    if (info.Length != length || ResourceFileStamp.Read(path) != written) throw new IOException("Архив модели изменился во время чтения.");
                     indexes.Add((path, entries, length, written));
                 }
             }
@@ -62,7 +62,7 @@ public static class UnitModelPreview
                     if (entry is null) continue;
                     if (entry.Size > 128 * 1024 * 1024) throw new InvalidDataException("Модель превышает лимит 128 МиБ.");
                     using var stream = new FileStream(archive.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                    if (stream.Length != archive.Length || File.GetLastWriteTimeUtc(archive.Path) != archive.Written)
+                    if (stream.Length != archive.Length || ResourceFileStamp.Read(archive.Path) != archive.Written)
                         throw new IOException("Архив модели изменился. Обновите предпросмотр.");
                     stream.Position = entry.Offset;
                     var bytes = new byte[entry.Size]; stream.ReadExactly(bytes);
@@ -90,9 +90,20 @@ public static class UnitModelPreview
             string[] bodyParts = ["hp", "bd", "hd", "rh1", "rh2", "rh3", "lh1", "lh2", "lh3", "rl1", "rl2", "rl3", "ll1", "ll2", "ll3"];
             // Equipment capability belongs to the geometry, not a whitelist of race names.
             // Natural parts such as a turtle's hd.armor.nose are not clothing slots.
-            bool dressed = bodyParts.All(parents.ContainsKey) && parents.Keys.Any(p =>
+            bool armorSlots = bodyParts.All(parents.ContainsKey) && parents.Keys.Any(p =>
                 bodyParts.Any(body => p.StartsWith(body + ".armor", StringComparison.OrdinalIgnoreCase) &&
                     p.Length == body.Length + 8 && char.IsAsciiDigit(p[^2]) && char.IsAsciiDigit(p[^1])));
+            // Original humanoids have selectable weapons but no armorNN meshes.
+            // They still need body-only visibility and race-prefixed skin/layers.
+            bool weaponSlots = bodyParts.All(parents.ContainsKey) && parents.Keys.Any(p =>
+                System.Text.RegularExpressions.Regex.IsMatch(p, @"^(rh3\.(sword|axe|dagger|pike|club)\d{2}|lh2\.shield\d{2}|lh3\.bwpartb\d{2})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+            bool dressed = armorSlots || weaponSlots;
+            var catalog = await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
+            // A humanoid hierarchy alone does not imply a composited skin (e.g. goblins).
+            // Keep their explicit MOB skin unless the model's redress skin actually exists.
+            bool hasCompositeSkin = new[] { ".x4.mmp", ".x2.mmp", ".mmp" }
+                .Any(suffix => catalog.Check($"{mask}skin_{unit.Integer(3):D2}" + suffix).Matches.Count > 0);
+            bool prototypeEquipment = appearance is null || (dressed && hasCompositeSkin && appearance.ImportEquipment == false);
             var visible = new HashSet<string>(dressed ? bodyParts : parents.Keys, StringComparer.OrdinalIgnoreCase);
             void AddPart(string root)
             {
@@ -116,7 +127,7 @@ public static class UnitModelPreview
             var armorItems = new List<(ModelRecord Shape, string Material)>();
             if (appearance is null && !dressed && (unit.Lists.GetValueOrDefault(32, []).Length > 0 || unit.Text(33).Length > 0 || unit.Text(42).Length > 0))
                 notes.Add("В геометрии нет слотов составной экипировки. Показана исходная модель; внешний вид экземпляра можно выбрать из MOB.");
-            foreach (string item in appearance is null && dressed ? unit.Lists.GetValueOrDefault(32, []) : [])
+            foreach (string item in prototypeEquipment && dressed ? unit.Lists.GetValueOrDefault(32, []) : [])
             {
                 var analysis = StringListEditorCodec.AnalyzeElement(item, "Броня");
                 if (!analysis.IsValid) { notes.Add("Не распознана экипировка: " + analysis.Error); continue; }
@@ -149,7 +160,7 @@ public static class UnitModelPreview
                 }
             }
             if (unit.Text(33).Length > 0 && unit.Text(42).Length > 0) notes.Add("Показано первое оружие прототипа; выбор активного оружия в игре зависит от состояния.");
-            foreach (string weapon in new[] { unit.Text(33), unit.Text(42) }.Where(w => appearance is null && dressed && w.Length > 0).Take(1))
+            foreach (string weapon in new[] { unit.Text(33), unit.Text(42) }.Where(w => prototypeEquipment && dressed && w.Length > 0).Take(1))
             {
                 var analysis = StringListEditorCodec.AnalyzeElement(weapon, "Оружие");
                 if (!analysis.IsValid) { notes.Add("Не распознано оружие: " + analysis.Error); continue; }
@@ -183,12 +194,17 @@ public static class UnitModelPreview
             }
             if (appearance is not null)
             {
+                if (!prototypeEquipment)
+                {
                 visible = new HashSet<string>(appearance.Parts.Length == 0 ? parents.Keys : appearance.Parts, StringComparer.OrdinalIgnoreCase);
                 primary.Clear(); secondary.Clear();
                 if (appearance.Primary.Length > 0) primary.Add(appearance.Primary);
                 if (appearance.Secondary.Length > 0) secondary.Add(appearance.Secondary);
+                }
                 used.Add($"MOB: {appearance.Path} · объект {appearance.Id} · {appearance.Prototype}");
-                notes.Add("Внешность из MOB: исходные части, текстуры и комплекция. Клип выбирается вручную; текущее действие и изменения экипировки в сохранении не извлекаются.");
+                notes.Add(prototypeEquipment
+                    ? "Модель и комплекция из MOB; кожа и экипировка прототипа из БД — импорт экипировки MOB отключён."
+                    : "Внешность из MOB: исходные части, текстуры и комплекция. Импорт инвентаря и изменения экипировки в игре не воспроизводятся.");
             }
             var meshes = new List<FigureMesh>();
             foreach (string part in visible)
@@ -198,14 +214,13 @@ public static class UnitModelPreview
                 var mesh = FigurePreviewDecoder.Decode(part, mod.GetResourceBytes(entry).ToArray(), morph);
                 if (mesh.Indices.Length == 0) continue;
                 // Human secondary equipment occupies half-size UV space in the shared model.
-                if (appearance is null && dressed && mesh.TextureSlot == 2)
+                if (prototypeEquipment && armorSlots && mesh.TextureSlot == 2)
                     for (int i = 0; i < mesh.UV.Length; i++) mesh.UV[i] *= 2;
                 Vector3 offset = Position(part);
                 for (int i = 0; i < mesh.Positions.Length; i++) mesh.Positions[i] += offset;
                 meshes.Add(mesh);
             }
             if (meshes.Count == 0) throw new InvalidDataException("В модели нет доступной геометрии.");
-            var catalog = await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
             var textures = new Dictionary<int, MmpImage>();
             foreach (var group in new[] { (1, primary), (2, secondary) })
             {
@@ -214,7 +229,7 @@ public static class UnitModelPreview
                 {
                     string stem = raw.EndsWith(".mmp", StringComparison.OrdinalIgnoreCase) ? raw[..^4] : raw;
                     // JMV shares human equipment layers; skin remains specific to the race.
-                    bool sharedEquipment = appearance is null && dressed &&
+                    bool sharedEquipment = prototypeEquipment && dressed &&
                         !mask.Equals("unhuma", StringComparison.OrdinalIgnoreCase) &&
                         armorCodes.Concat(new[] { "sw", "ax", "dg", "sp", "hm", "bw", "cb", "sd", "tp", "sf", "ts", "ta", "th", "tf" })
                             .Any(code => stem.StartsWith(mask + code + "_", StringComparison.OrdinalIgnoreCase));

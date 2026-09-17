@@ -40,17 +40,18 @@ internal sealed partial class MainWindowViewModel
         TexturePreviewItems.Clear();
         if (_disposed || SelectedTexture is not { ResourceName.Length: > 0 } row) return;
         string stem = row.ResourceName.EndsWith(".mmp", StringComparison.OrdinalIgnoreCase) ? row.ResourceName[..^4] : row.ResourceName;
-        if (stem.EndsWith(".x2", StringComparison.OrdinalIgnoreCase)) stem = stem[..^3];
-        string[] names = [stem + ".mmp", stem + ".x2.mmp"];
+        if (stem.EndsWith(".x2", StringComparison.OrdinalIgnoreCase) || stem.EndsWith(".x4", StringComparison.OrdinalIgnoreCase)) stem = stem[..^3];
+        string[] names = [stem + ".mmp", stem + ".x2.mmp", stem + ".x4.mmp"];
+        string[] labels = ["Обычная", "Вариант .x2", "Вариант .x4"];
         var catalog = _textureCatalog;
-        for (int i = 0; i < 2; i++)
-            TexturePreviewItems.Add(new(i == 0 ? "Обычная" : "Вариант .x2", names[i],
+        for (int i = 0; i < names.Length; i++)
+            TexturePreviewItems.Add(new(labels[i], names[i],
                 catalog is null ? "Подключите ресурсы игры." : "Загрузка…", "", null));
         if (catalog is null) return;
         try
         {
             await Task.Delay(120, token);
-            for (int i = 0; i < 2; i++)
+            for (int i = 0; i < names.Length; i++)
             {
                 TexturePreviewItem item;
                 var matches = catalog.Check(names[i]).Matches;
@@ -67,11 +68,11 @@ internal sealed partial class MainWindowViewModel
                     string info = $"{decoded.Width} × {decoded.Height} · {decoded.Format} · верхний уровень";
                     if (!catalog.Complete) info += " · из неполного набора";
                     if (decoded.Format == "PNT3") info += " · отдельный слой";
-                    item = new(i == 0 ? "Обычная" : "Вариант .x2", names[i], info, source, bitmap);
+                    item = new(labels[i], names[i], info, source, bitmap);
                 }
                 catch (Exception ex) when (ex is IOException or NotSupportedException or ArgumentException)
                 {
-                    item = new(i == 0 ? "Обычная" : "Вариант .x2", names[i], ex.Message, source, null);
+                    item = new(labels[i], names[i], ex.Message, source, null);
                 }
                 finally { _previewGate.Release(); }
                 if (revision != _previewRevision || token.IsCancellationRequested || _disposed) return;

@@ -182,6 +182,7 @@
                                             </Style>
                                         </DataGridTextColumn.ElementStyle>
                                     </DataGridTextColumn>
+                                    <DataGridTextColumn Header="Название RU" Binding="{Binding RussianName}" IsReadOnly="True" Width="200" Visibility="Collapsed" />
                                     <DataGridTextColumn Header="Тип блока" Binding="{Binding Kind}" IsReadOnly="True" Width="160">
                                         <DataGridTextColumn.ElementStyle>
                                             <Style TargetType="TextBlock">

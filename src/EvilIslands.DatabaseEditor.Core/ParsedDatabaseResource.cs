@@ -157,11 +157,12 @@ internal sealed class ParsedDatabaseResource
 
     public bool HasSection(byte sectionId) => _sections.ContainsKey(sectionId);
 
-    public DatabaseRecord AppendClone(byte sectionId, DatabaseRecord template, object editSync)
+    public DatabaseRecord AppendClone(byte sectionId, DatabaseRecord template, object editSync, bool detachedHistory = false)
     {
         ArgumentNullException.ThrowIfNull(template);
         if (!_sections.TryGetValue(sectionId, out var section) ||
-            !section.Records.Any(record => ReferenceEquals(record, template)))
+            (detachedHistory ? template.ResourceName != ResourceName || template.SectionId != sectionId
+                : !section.Records.Any(record => ReferenceEquals(record, template))))
         {
             throw new ArgumentException("Строка-образец не принадлежит выбранной таблице.", nameof(template));
         }
@@ -188,7 +189,7 @@ internal sealed class ParsedDatabaseResource
         // RecordIndex is a physical zero-based index used by the game (and by the
         // material ID field), so an append after Undo must reuse the vacated tail
         // index instead of leaving a gap.
-        int recordIndex = section.Records.Count;
+        int recordIndex = detachedHistory ? template.RecordIndex : section.Records.Count;
         var fields = new List<DatabaseField>(fieldChunks.Count);
         foreach (ChunkSlice fieldChunk in fieldChunks)
         {
@@ -220,7 +221,7 @@ internal sealed class ParsedDatabaseResource
             cloneBacking,
             isNew: true);
 
-        if (section.Schema.Key.Equals("items.materials", StringComparison.Ordinal) &&
+        if (!detachedHistory && section.Schema.Key.Equals("items.materials", StringComparison.Ordinal) &&
             fields.FirstOrDefault(field => field.Id == 3) is { IsEditable: true } materialId)
         {
             if (!materialId.TrySetValue(recordIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), out string? error))
@@ -229,29 +230,42 @@ internal sealed class ParsedDatabaseResource
             }
         }
 
-        section.Records.Add(clone);
-        section.AddedRecords.Add(clone);
+        if (!detachedHistory)
+        {
+            section.Records.Add(clone);
+            section.AddedRecords.Add(clone);
+        }
+        section.HistoryRecords.Add(clone);
         return clone;
+    }
+
+    public DatabaseRecord RebindHistoryRecord(DatabaseRecord previous, bool present, object editSync)
+    {
+        if (!present) return AppendClone(previous.SectionId, previous, editSync, detachedHistory: true);
+        var section = _sections[previous.SectionId];
+        var record = section.Records.Single(r => r.RecordIndex == previous.RecordIndex);
+        section.HistoryRecords.Add(record);
+        return record;
     }
 
     public void RemoveAddedRecord(DatabaseRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
         if (!_sections.TryGetValue(record.SectionId, out var section) ||
-            section.AddedRecords.Count == 0 ||
-            !ReferenceEquals(section.AddedRecords[^1], record))
+            section.Records.Count == 0 || !ReferenceEquals(section.Records[^1], record) ||
+            !section.HistoryRecords.Contains(record))
         {
             throw new InvalidOperationException("Безопасно отменить можно только последнюю добавленную строку этой таблицы.");
         }
 
-        section.AddedRecords.RemoveAt(section.AddedRecords.Count - 1);
+        if (!section.AddedRecords.Remove(record)) section.RemovedOriginalRecords.Add(record);
         section.Records.RemoveAt(section.Records.Count - 1);
     }
 
     public void RestoreAddedRecord(DatabaseRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        if (!record.IsNew || !_sections.TryGetValue(record.SectionId, out var section))
+        if (!_sections.TryGetValue(record.SectionId, out var section) || !section.HistoryRecords.Contains(record))
         {
             throw new ArgumentException("Строка не является добавленной записью этой таблицы.", nameof(record));
         }
@@ -267,7 +281,7 @@ internal sealed class ParsedDatabaseResource
         }
 
         section.Records.Add(record);
-        section.AddedRecords.Add(record);
+        if (!section.RemovedOriginalRecords.Remove(record)) section.AddedRecords.Add(record);
     }
 
     public byte[] Rebuild()
@@ -322,7 +336,12 @@ internal sealed class ParsedDatabaseResource
             : section.OriginalRecordsByHeaderOffset.Keys.Max();
         foreach (var child in section.Children)
         {
-            if (section.OriginalRecordsByHeaderOffset.TryGetValue(child.HeaderOffset, out var record) && record.IsModified)
+            section.OriginalRecordsByHeaderOffset.TryGetValue(child.HeaderOffset, out var record);
+            if (record is not null && section.RemovedOriginalRecords.Contains(record))
+            {
+                // Keep the insertion boundary below even when the last original row is undone.
+            }
+            else if (record is not null && record.IsModified)
             {
                 var payload = BuildRecordPayload(record);
                 output.Write(ChunkCodec.Encode(child.Id, payload, child.HeaderSize));
@@ -394,11 +413,13 @@ internal sealed class ParsedDatabaseResource
         public List<DatabaseRecord> Records { get; } = records;
 
         public List<DatabaseRecord> AddedRecords { get; } = [];
+        public HashSet<DatabaseRecord> HistoryRecords { get; } = [];
+        public HashSet<DatabaseRecord> RemovedOriginalRecords { get; } = [];
 
         public IReadOnlyDictionary<int, DatabaseRecord> OriginalRecordsByHeaderOffset { get; } =
             originalRecordsByHeaderOffset;
 
-        public bool IsModified => AddedRecords.Count > 0 ||
+        public bool IsModified => AddedRecords.Count > 0 || RemovedOriginalRecords.Count > 0 ||
                                   OriginalRecordsByHeaderOffset.Values.Any(record => record.IsModified);
     }
 }

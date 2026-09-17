@@ -7,7 +7,7 @@ internal sealed class EditorPreferencesStore
 {
     private const double MinimumStoredColumnWidth = 32;
     private const double MaximumStoredColumnWidth = 2000;
-    private const double MinimumInterfaceScale = 1.0;
+    private const double MinimumInterfaceScale = 0.75;
     private const double MaximumInterfaceScale = 1.5;
     private const double MinimumSoundPaneHeight = 180;
     private const double MaximumSoundPaneHeight = 900;
@@ -139,6 +139,15 @@ internal sealed class EditorPreferencesStore
         {
             SaveSettings(settings);
         }
+    }
+
+    public bool GetShowTextsKeys() => LoadSettings().ShowTextsKeys;
+
+    public void RememberShowTextsKeys(bool show)
+    {
+        var settings = LoadSettings();
+        settings.ShowTextsKeys = show;
+        SaveSettings(settings);
     }
 
     public double? GetInterfaceScale()
@@ -332,6 +341,7 @@ internal sealed class EditorPreferencesStore
         public string? LastDatabasePath { get; set; }
         public string? LastResDirectory { get; set; }
 
+        public bool ShowTextsKeys { get; set; }
         public double? InterfaceScale { get; set; }
 
         public double? SoundPaneHeight { get; set; }

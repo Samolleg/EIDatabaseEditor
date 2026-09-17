@@ -368,6 +368,12 @@ public sealed class DatabaseDocument
         }
     }
 
+    public DatabaseRecord RebindHistoryRecord(DatabaseRecord previous, bool present)
+    {
+        lock (_editSync)
+            return _parsedResources[previous.ResourceName].RebindHistoryRecord(previous, present, _editSync);
+    }
+
     public void RemoveAddedRecord(DatabaseRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -581,6 +587,20 @@ public sealed class DatabaseDocument
         }
 
         return result;
+    }
+
+    public byte[] PrepareImage()
+    {
+        lock (_editSync)
+        {
+            var blocking = Validate().FirstOrDefault(d => d.IsBlocking);
+            if (blocking is not null)
+                throw new InvalidOperationException($"Сохранение заблокировано проверкой {blocking.Code}: {blocking.Message}");
+            var replacements = BuildModifiedResources();
+            var bytes = ResArchiveWriter.Rebuild(_archive, replacements);
+            VerifyRebuiltArchive(SourcePath, bytes, replacements);
+            return bytes;
+        }
     }
 
     private DatabaseDocument VerifyRebuiltArchive(

@@ -76,7 +76,9 @@ public sealed partial class UnitModelPreviewView : UserControl
         buttons.Children.Add(fit); buttons.Children.Add(refresh);
         DockPanel.SetDock(buttons, Dock.Right); toolbar.Children.Add(buttons); toolbar.Children.Add(_status);
         layout.Children.Add(toolbar);
-        var surface = new Border { Background = new SolidColorBrush(Color.FromRgb(22, 26, 24)), ClipToBounds = true, Child = _viewport };
+        var sceneLayers = new Grid(); sceneLayers.Children.Add(_viewport); sceneLayers.Children.Add(_skeletonCanvas);
+        var surface = new Border { Background = new SolidColorBrush(Color.FromRgb(22, 26, 24)), ClipToBounds = true, Child = sceneLayers };
+        InitializeSkeletonInput();
         Grid.SetRow(surface, 1); layout.Children.Add(surface);
         Grid.SetRow(_information, 2); layout.Children.Add(_information);
         _viewport.Camera = _camera; _viewport.Children.Add(_visual);
@@ -97,7 +99,15 @@ public sealed partial class UnitModelPreviewView : UserControl
         Loaded += (_, _) => Attach();
         DataContextChanged += (_, _) => Attach();
         Unloaded += (_, _) => { Detach(); Cancel(); _visual.Content = null; };
-        IsVisibleChanged += (_, _) => { if (IsVisible) QueueLoad(); else Cancel(); };
+        IsVisibleChanged += (_, _) =>
+        {
+            if (ExternalScene)
+            {
+                if (!IsVisible) PauseAnimation();
+                else if (_clip is not null) AnimationLoadTask = PlayAnimationAsync();
+            }
+            else if (IsVisible) QueueLoad(); else Cancel();
+        };
     }
 
     private void Attach()
@@ -139,6 +149,7 @@ public sealed partial class UnitModelPreviewView : UserControl
     private void Cancel() { ResetAnimation(); _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = null; }
     private void QueueLoad()
     {
+        if (ExternalScene) return;
         Cancel();
         _visual.Content = null;
         _information.Text = "";
@@ -203,8 +214,51 @@ public sealed partial class UnitModelPreviewView : UserControl
         catch (Exception ex) { if (!token.IsCancellationRequested) _status.Text = "Не удалось показать модель: " + ex.Message; }
     }
 
+    internal bool ExternalScene { get; init; }
+    internal bool HasVisibleScene => _visual.Content is not null;
+    internal async Task ShowEquipmentSceneAsync(UnitModelScene scene, CancellationToken token)
+    {
+        // Keep the current animated scene visible while the replacement clip and bounds load.
+        string? idle = scene.Animations?.Names.FirstOrDefault(n => n.Equals("cidle09", StringComparison.OrdinalIgnoreCase));
+        FigureAnimationClip? preparedClip = null;
+        Rect3D? preparedBounds = null;
+        if (idle is not null && scene.Animations is { } animations)
+        {
+            preparedClip = await animations.LoadAsync(idle, token);
+            var meshes = scene.Meshes.ToArray();
+            preparedBounds = await Task.Run(() => AnimationBounds(animations, preparedClip, meshes, token), token);
+        }
+        token.ThrowIfCancellationRequested();
+        double retainedFrame = _clip?.Name.Equals(idle, StringComparison.OrdinalIgnoreCase) == true ? _frame.Value : 0;
+        // No await between replacing geometry and applying its pose: WPF cannot render bind pose.
+        ShowScene(scene);
+        if (Content is Grid layout)
+        {
+            layout.Children[0].Visibility = Visibility.Collapsed;
+            layout.RowDefinitions[2].Height = new GridLength(70);
+        }
+        _information.Text = string.Join("\n", scene.Notes);
+        if (preparedClip is null)
+        {
+            _information.Text += "\nАнимация cidle09 у этой модели отсутствует; показана исходная поза.";
+            return;
+        }
+        EditorLoop = true;
+        _clip = preparedClip;
+        _settingClips = true; _clips.SelectedItem = idle; _settingClips = false;
+        _settingFrame = true;
+        _frame.Maximum = preparedClip.FrameCount - 1;
+        _frame.Value = retainedFrame % Math.Max(1, preparedClip.FrameCount);
+        _settingFrame = false;
+        ApplyAnimationFrame();
+        if (preparedBounds is { } bounds) { SetCameraBounds(bounds); Fit(); }
+        UpdateAnimationControls();
+        await PlayAnimationAsync();
+    }
+
     internal void ShowScene(UnitModelScene scene, bool item = false)
     {
+        _editingScene = scene;
         ResetAnimation();
         if (_itemScene != item)
         { _itemScene = item; _yaw = item ? .35 : .7; _pitch = item ? 1.15 : .15; }
@@ -247,8 +301,10 @@ public sealed partial class UnitModelPreviewView : UserControl
         _center = new Point3D(bounds.X + bounds.SizeX / 2, bounds.Y + bounds.SizeY / 2, bounds.Z + bounds.SizeZ / 2);
         _radius = Math.Max(0.01, Math.Sqrt(bounds.SizeX * bounds.SizeX + bounds.SizeY * bounds.SizeY + bounds.SizeZ * bounds.SizeZ) / 2);
     }
+    private Rect3D? _pendingEditorBounds;
     private void Fit()
     {
+        if(_pendingEditorBounds is { } bounds){SetCameraBounds(bounds);_pendingEditorBounds=null;}
         double aspect = Math.Max(0.1, _viewport.ActualWidth / Math.Max(1, _viewport.ActualHeight));
         double half = Math.Atan(Math.Tan(20 * Math.PI / 180) / Math.Max(1, aspect));
         _distance = _radius / Math.Sin(half) * 1.15; UpdateCamera();
@@ -258,5 +314,6 @@ public sealed partial class UnitModelPreviewView : UserControl
         var offset = new Vector3D(Math.Sin(_yaw) * Math.Cos(_pitch), Math.Sin(_pitch), Math.Cos(_yaw) * Math.Cos(_pitch)) * _distance;
         _camera.Position = _center + offset; _camera.LookDirection = -offset;
         _camera.NearPlaneDistance = Math.Max(0.001, _radius / 1000); _camera.FarPlaneDistance = _distance + _radius * 50;
+        DrawSkeleton();
     }
 }

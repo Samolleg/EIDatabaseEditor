@@ -7,6 +7,8 @@ namespace EvilIslands.DatabaseEditor.Core;
 public sealed record MobAppearance(string Path, uint Id, string Name, string Prototype, string Model,
     string Primary, string Secondary, Vector3 Morph, string[] Parts)
 {
+    // Null retains the explicitly stored appearance when an older record has no import metadata.
+    public bool? ImportEquipment { get; init; }
     public string Label => $"{Id} · {Prototype} · {Name}";
 
     public static IReadOnlyList<MobAppearance> Read(string path)
@@ -28,7 +30,7 @@ public sealed record MobAppearance(string Path, uint Id, string Name, string Pro
         var result = new List<MobAppearance>();
         foreach (var chunk in Chunks(section.Data).Where(c => c.Id == 0xBBBB0000))
         {
-            var fields = Chunks(chunk.Data).Where(c => c.Id is 0xB002 or 0xB004 or 0xB006 or 0xB007 or 0xB008 or 0xB00C or 0xB00D or 0xBBBB0002)
+            var fields = Chunks(chunk.Data).Where(c => c.Id is 0xB002 or 0xB004 or 0xB006 or 0xB007 or 0xB008 or 0xB00C or 0xB00D or 0xBBBB0002 or 0xBBBB0004 or 0xBBBB000A)
                 .ToDictionary(c => c.Id, c => c.Data); // Logic blocks may legitimately repeat.
             ReadOnlyMemory<byte> Field(uint id) => fields.GetValueOrDefault(id);
             var id = Field(0xB002); var morph = Field(0xB00C); var parts = Field(0xB00D);
@@ -40,9 +42,21 @@ public sealed record MobAppearance(string Path, uint Id, string Name, string Pro
             float F(int offset) => BinaryPrimitives.ReadSingleLittleEndian(morph.Span[offset..]);
             var m = new Vector3(F(4), F(0), F(8)); // MOB: grace, strength, tall.
             if (!float.IsFinite(m.X + m.Y + m.Z)) throw new InvalidDataException("Некорректная комплекция MOB.");
+            bool? import = null;
+            var flag = Field(0xBBBB000A); var stats = Field(0xBBBB0004);
+            if (!flag.IsEmpty)
+            {
+                if (flag.Length != 1 || stats.Length < 24) throw new InvalidDataException("Повреждены параметры импорта экипировки MOB.");
+                float move = BinaryPrimitives.ReadSingleLittleEndian(stats.Span[16..]);
+                float action = BinaryPrimitives.ReadSingleLittleEndian(stats.Span[20..]);
+                int hp = BinaryPrimitives.ReadInt32LittleEndian(stats.Span[4..]);
+                if (!float.IsFinite(move) || !float.IsFinite(action)) throw new InvalidDataException("Некорректные параметры импорта MOB.");
+                // Original 00477B00: zero move/maxHP/action disables import even with the flag set.
+                import = flag.Span[0] != 0 && !(move == 0 && hp == 0 && action == 0);
+            }
             result.Add(new(System.IO.Path.GetFullPath(path), BinaryPrimitives.ReadUInt32LittleEndian(id.Span),
                 Text(Field(0xB004)), Text(Field(0xBBBB0002)), Text(Field(0xB006)),
-                Text(Field(0xB007)), Text(Field(0xB008)), m, list.Select(c => Text(c.Data)).ToArray()));
+                Text(Field(0xB007)), Text(Field(0xB008)), m, list.Select(c => Text(c.Data)).ToArray()) { ImportEquipment = import });
         }
         return result;
     }

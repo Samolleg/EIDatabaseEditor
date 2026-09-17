@@ -51,7 +51,7 @@ internal static class TextureLayoutRegression
         content.Arrange(new Rect(0, 0, 1600, 1000));
         content.UpdateLayout();
         var paneRow = (RowDefinition)window.FindName("DetailsPaneRow");
-        Require(paneRow.Height.Value >= 380, "Texture tab must open taller than the legacy text pane.");
+        Require(paneRow.Height.Value >= 220, "Texture tab must retain a usable resizable details pane.");
         var expand = (Button)window.FindName("TextureExpandButton");
         expand.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Require(((DataGrid)window.FindName("RecordsGrid")).Visibility == Visibility.Collapsed &&

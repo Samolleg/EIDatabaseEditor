@@ -28,6 +28,18 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--equipment-editor") return EquipmentEditorRegression.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--module-crash") return ModuleCrashRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--module-crash-child") return ModuleCrashRegression.Child(args[1], args[2]);
+        if (args.Length == 1 && args[0] == "--module-save") return ModuleSaveRegression.Run();
+        if (args.Length == 3 && args[0] == "--module-integration") return ModuleIntegrationRegression.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--module-transactions") return ModuleTransactionRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--animation-edit") return AnimationEditRegression.Run(args[1], args[2]);
+        if (args.Length == 4 && args[0] == "--mob-equipment") return MobEquipmentRegression.Run(args[1], args[2], args[3]);
+        if (args.Length == 3 && args[0] == "--res-tiles") return ResTilesRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--lua-data") return LuaDataRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--lua-columns") return LuaColumnsRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--details-splitter") return DetailsSplitterRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--spell-effects") return SpellVisualEffectsRegression.Run(args[1], args[2]);
         if (args.Length == 4 && args[0] == "--animation-audit") return AnimationPreviewRegression.Audit(args[1], args[2], args[3]);
         if (args.Length == 3 && args[0] == "--animation-models") return AnimationPreviewRegression.Run(args[1], args[2]);
@@ -35,7 +47,7 @@ internal static class Program
         if (args.Length == 3 && args[0] == "--item-models") return ItemModelPreviewRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--models") return ModelPreviewRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--model-audit") return ModelPreviewAudit.Run(args[1], args[2]);
-        if (args.Length == 4 && args[0] == "--model-gallery") return ModelPreviewAudit.Gallery(args[1], args[2], args[3]);
+        if (args.Length >= 4 && args[0] == "--model-gallery") return ModelPreviewAudit.Gallery(args[1], args[2], args[3], args.Length > 4 ? args[4..] : null);
         if (args.Length >= 3 && args[0] == "--texture-open")
             return TextureOpenRegression.Run(args[1..]);
         if (args.Length >= 3 && args[0] == "--nearby-textures")
@@ -278,7 +290,7 @@ internal static class Program
 
     private static void VerifyBranding(MainWindow window)
     {
-        if (window.Title != "Редактор БД от Атамана — Preview" ||
+        if (window.Title != "Редактор БД от Атамана" ||
             window.Icon is null ||
             window.FindName("BrandIcon") is not Image { Source: not null } ||
             window.FindName("OpenResFileManagerButton") is not Button ||
@@ -688,7 +700,7 @@ internal static class Program
             UIElement.IsEnabledProperty,
             new Binding(nameof(NavigationItemViewModel.IsEnabled)) { Source = resourcesItem });
 
-        viewModel.OpenPathAsync("C:\\staging\\database.res").GetAwaiter().GetResult();
+        ApplyFakeNavigationWorkspace(viewModel);
         if (!viewModel.IsEditMode)
         {
             throw new InvalidOperationException("Редактирование должно включаться автоматически сразу после открытия базы.");
@@ -702,10 +714,17 @@ internal static class Program
         }
     }
 
+    private static void ApplyFakeNavigationWorkspace(MainWindowViewModel viewModel)
+    {
+        var workspace = new FakeWorkspaceService().OpenAsync("C:\\staging\\database.res", CancellationToken.None).GetAwaiter().GetResult();
+        typeof(MainWindowViewModel).GetMethod("ApplyWorkspace", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .Invoke(viewModel, [workspace, false]);
+    }
+
     private static void VerifyDatabaseTableNavigation()
     {
         using var viewModel = new MainWindowViewModel(new FakeWorkspaceService());
-        viewModel.OpenPathAsync("C:\\staging\\database.res").GetAwaiter().GetResult();
+        ApplyFakeNavigationWorkspace(viewModel);
         var group = viewModel.Databases.Single();
         var table = group.Tables.Single(candidate => candidate.IsEditable);
         if (!group.IsEnabled || !table.IsEnabled || !viewModel.SelectTableCommand.CanExecute(table))
@@ -1010,7 +1029,7 @@ internal static class Program
                 .SingleOrDefault()
                 ?? throw new InvalidOperationException("Кнопка не открыла отдельное окно связанных данных.");
             if (!window.IsDetailsPaneDetached || workspace.Children.Contains(detailsPane) ||
-                detached.PaneContent is not Grid ||
+                !ReferenceEquals(detached.PaneContent, detailsPane) ||
                 window.FindName("DetailsPaneRow") is not RowDefinition detailsRow ||
                 detailsRow.Height.Value != 0)
             {
