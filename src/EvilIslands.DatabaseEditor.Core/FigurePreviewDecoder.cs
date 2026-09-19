@@ -6,6 +6,7 @@ namespace EvilIslands.DatabaseEditor.Core;
 public sealed record FigureMesh(string Name, Vector3[] Positions, Vector2[] UV, int[] Indices, int TextureSlot)
 {
     public int[] SourceVertices { get; init; } = [];
+    public Vector3[] Normals { get; init; } = [];
 }
 
 // Read-only FIG decoder. Packed coordinates contain four vertices per group,
@@ -52,7 +53,17 @@ public static class FigurePreviewDecoder
                 }
                 r.BaseStream.Position = start + samples * 16;
             }
-        r.BaseStream.Position += normals * 64;
+        // FIG normals are packed four lanes per axis (x/y/z/padding).
+        var normalVectors = new Vector3[normals * 4];
+        for (int group = 0; group < normals; group++)
+            for (int axis = 0; axis < 4; axis++)
+                for (int lane = 0; lane < 4; lane++)
+                {
+                    float value = Finite(r.ReadSingle());
+                    if (axis == 0) normalVectors[group * 4 + lane].X = value;
+                    else if (axis == 1) normalVectors[group * 4 + lane].Y = value;
+                    else if (axis == 2) normalVectors[group * 4 + lane].Z = value;
+                }
         var uv = new Vector2[maps];
         for (int i = 0; i < maps; i++) uv[i] = new(Finite(r.ReadSingle()), Finite(r.ReadSingle()));
         var triangles = new int[indices];
@@ -64,14 +75,16 @@ public static class FigurePreviewDecoder
         var result = new Vector3[components];
         var resultUV = new Vector2[components];
         var sourceVertices = new int[components];
+        var resultNormals = new Vector3[components];
         for (int i = 0; i < components; i++)
         {
             int vertex = r.ReadUInt16(), normal = r.ReadUInt16(), map = r.ReadUInt16();
             if (vertex >= points.Length || normal >= normals * 4 || map >= maps) throw new InvalidDataException($"{name}: индекс компонента вне массива.");
             result[i] = points[vertex]; resultUV[i] = uv[map];
             sourceVertices[i] = vertex;
+            resultNormals[i] = normalVectors[normal];
         }
-        return new(name, result, resultUV, triangles, slot) { SourceVertices = sourceVertices };
+        return new(name, result, resultUV, triangles, slot) { SourceVertices = sourceVertices, Normals = resultNormals };
     }
 
     public static Vector3 Bone(byte[] bytes, Vector3 morph)

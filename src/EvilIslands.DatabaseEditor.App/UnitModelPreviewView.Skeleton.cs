@@ -22,6 +22,7 @@ public sealed partial class UnitModelPreviewView
     private bool _gizmoTranslate;
     private IReadOnlyDictionary<string, Q>? _ikRotations;
     private bool _ikGesture;
+    private bool _pointJointGesture, _pointRootGesture;
     private bool _ikPoleGesture;
     private V3 _ikFixedEndpoint;
     internal event Action<int, IReadOnlyDictionary<string, Q>>? LimbEdited;
@@ -60,14 +61,17 @@ public sealed partial class UnitModelPreviewView
             if (!pose.TryGetValue(name, out var node) || ProjectJoint(node.Position) is not Point p) continue;
             if (_animations.Parents.TryGetValue(name, out var parent) && visible.Contains(parent) && pose.TryGetValue(parent, out var ancestor) && ProjectJoint(ancestor.Position) is Point a)
                 _skeletonCanvas.Children.Add(new Line { X1 = a.X, Y1 = a.Y, X2 = p.X, Y2 = p.Y, Stroke = Brushes.Gold, StrokeThickness = 2, IsHitTestVisible = false });
-            var dot = new Ellipse { Width = 12, Height = 12, Fill = name == _selectedJoint ? Brushes.Orange : FigureLimbIk.Supports(_animations, _clip, name) ? Brushes.Cyan : Brushes.White, Stroke = Brushes.Black, StrokeThickness = 1,
-                Cursor = Cursors.Hand, ToolTip = Dialogs.AnimationEditorDialog.PartLabel(name) + (FigureLimbIk.Supports(_animations, _clip, name) ? " — тяните точку: IK руки/ноги" : "") };
-            Canvas.SetLeft(dot, p.X - 6); Canvas.SetTop(dot, p.Y - 6);
+            bool movable = parent == "" || FigureLimbIk.Supports(_animations, _clip, name) ||
+                (FigureLimbIk.SupportsJoint(_animations, _clip, name) && pose.TryGetValue(parent!, out var pivot) && V3.DistanceSquared(node.Position, pivot.Position) >= 1e-10f);
+            var dot = new Ellipse { Width = 18, Height = 18, Tag = name, Fill = name == _selectedJoint ? Brushes.Orange : FigureLimbIk.Supports(_animations, _clip, name) ? Brushes.Cyan : Brushes.White, Stroke = Brushes.Black, StrokeThickness = 2,
+                Cursor = movable ? Cursors.SizeAll : Cursors.Hand, ToolTip = Dialogs.AnimationEditorDialog.PartLabel(name) + " — " + (movable ? JointDragHint(name) : "точка без подвижной родительской кости; используйте кольца вращения") };
+            Panel.SetZIndex(dot, name == _selectedJoint ? 20 : 10); // Points remain reachable where rings/arrows cross them.
+            Canvas.SetLeft(dot, p.X - 9); Canvas.SetTop(dot, p.Y - 9);
             dot.MouseLeftButtonDown += (_, e) =>
             {
                 e.Handled = true; PauseAnimation(); _selectedJoint = name;
                 JointSelected?.Invoke(name, (int)AnimationFrame); DrawSkeleton();
-                if (BeginLimbGesture(name, e.GetPosition(_skeletonCanvas)))
+                if (BeginPointGesture(name, e.GetPosition(_skeletonCanvas)))
                 { _skeletonCanvas.Focusable = true; _skeletonCanvas.Focus(); _skeletonCanvas.CaptureMouse(); }
             };
             _skeletonCanvas.Children.Add(dot);
@@ -127,6 +131,27 @@ public sealed partial class UnitModelPreviewView
         _animationTools.IsEnabled = false;
         return true;
     }
+    private string JointDragHint(string part) => _animations!.Parents.GetValueOrDefault(part) == ""
+        ? "тяните: перемещение модели в плоскости экрана"
+        : FigureLimbIk.Supports(_animations, _clip!, part) ? "тяните: сгибание руки или ноги"
+        : "тяните: поворот родительской кости вместе с её дочерними частями; кольца вращают выбранную часть";
+
+    internal bool BeginPointGesture(string part, Point start)
+    {
+        if (_animations is null || _clip is null || !_skeletonParts.Contains(part)) return false;
+        if (FigureLimbIk.Supports(_animations, _clip, part)) return BeginLimbGesture(part, start);
+        bool root = _animations.Parents.GetValueOrDefault(part) == "";
+        if (!root)
+        {
+            try { FigureLimbIk.SolveJoint(_animations, _clip, (int)AnimationFrame, part, _animations.Pose(_clip, (float)AnimationFrame)[part].Position); }
+            catch (Exception ex) when (ex is ArgumentException or System.IO.InvalidDataException)
+            { PoseRejected?.Invoke(ex.Message); return false; }
+        }
+        if (!BeginJointGesture(part, 0, root, start)) return false;
+        _pointRootGesture = root; _pointJointGesture = !root;
+        _originalPosition = _animations.Pose(_clip, _gizmoFrame)[part].Position;
+        return true;
+    }
     internal bool BeginLimbGesture(string part, Point start)
     {
         if (_animations is null || _clip is null || !_skeletonParts.Contains(part) || !FigureLimbIk.Supports(_animations, _clip, part)) return false;
@@ -161,7 +186,7 @@ public sealed partial class UnitModelPreviewView
             {
                 if (PoseFilter is not null)
                 {
-                    var qs = _ikGesture && _ikRotations is not null ? new Dictionary<string, Q>(_ikRotations) : new Dictionary<string, Q>();
+                    var qs = (_ikGesture || _pointJointGesture) && _ikRotations is not null ? new Dictionary<string, Q>(_ikRotations) : new Dictionary<string, Q>();
                     var ps = new Dictionary<string, V3>();
                     if (_gizmoPart is string part) { if (_gizmoRotation is Q q) qs[part] = q; if (_gizmoPosition is V3 p) ps[part] = p; }
                     try { _ikRotations = PoseFilter(_gizmoFrame, qs, ps); }
@@ -171,9 +196,9 @@ public sealed partial class UnitModelPreviewView
                 ApplyAnimationFrame();
             }
             Vector movement = point - start;
-            if (_ikGesture)
+            if (_ikGesture || _pointJointGesture || _pointRootGesture)
             {
-                if (movement.Length < 3) { _ikRotations = null; ApplyAnimationFrame(); return; }
+                if (movement.Length < 3) { _ikRotations = null; _gizmoPosition = null; ApplyAnimationFrame(); return; }
                 var forward = _camera.LookDirection; forward.Normalize();
                 var right = Vector3D.CrossProduct(forward, _camera.UpDirection); right.Normalize();
                 var up = Vector3D.CrossProduct(right, forward);
@@ -182,9 +207,12 @@ public sealed partial class UnitModelPreviewView
                 double scale = 2 * Math.Tan(_camera.FieldOfView * Math.PI / 360) * depth / Math.Max(1, _viewport.ActualWidth);
                 var offset = (right * movement.X - up * movement.Y) * scale;
                 var target = _originalPosition + new V3((float)offset.X, (float)-offset.Z, (float)offset.Y);
-                try { _ikRotations = FigureLimbIk.Solve(_animations, _clip, _gizmoFrame, _gizmoPart!, _ikPoleGesture ? _ikFixedEndpoint : target, _ikPoleGesture ? target : null); }
-                catch (ArgumentException) { EndJointDrag(); return; }
-                catch (System.IO.InvalidDataException) { EndJointDrag(); return; }
+                if (_pointRootGesture) { _gizmoPosition = target; AcceptPreview(); return; }
+                try { _ikRotations = _pointJointGesture
+                    ? FigureLimbIk.SolveJoint(_animations, _clip, _gizmoFrame, _gizmoPart!, target)
+                    : FigureLimbIk.Solve(_animations, _clip, _gizmoFrame, _gizmoPart!, _ikPoleGesture ? _ikFixedEndpoint : target, _ikPoleGesture ? target : null); }
+                catch (Exception ex) when (ex is ArgumentException or System.IO.InvalidDataException)
+                { PoseRejected?.Invoke(ex.Message); return; }
                 AcceptPreview(); return;
             }
             if (_gizmoTranslate)
@@ -202,7 +230,7 @@ public sealed partial class UnitModelPreviewView
     internal void CommitJointGesture()
     {
             if (_gizmoStart is null || _gizmoPart is not string part) return;
-            if (_ikGesture)
+            if (_ikGesture || _pointJointGesture)
             {
                 int ikFrame = _gizmoFrame; var edits = _ikRotations;
                 EndJointDrag(); if (edits is not null) LimbEdited?.Invoke(ikFrame, edits);
@@ -216,7 +244,7 @@ public sealed partial class UnitModelPreviewView
     internal IReadOnlyDictionary<string, FigurePose> CurrentJointPose => _animations!.Pose(_clip!, (float)AnimationFrame, _gizmoPart, _gizmoRotation, _gizmoPosition, _ikRotations);
     internal void EndJointDrag()
     {
-        _ikGesture = false; _ikPoleGesture = false; _ikRotations = null;
+        _ikGesture = false; _ikPoleGesture = false; _pointJointGesture = false; _pointRootGesture = false; _ikRotations = null;
         _gizmoStart = null; _gizmoPart = null; _gizmoRotation = null; _gizmoPosition = null;
         _animationTools.IsEnabled = true; _skeletonCanvas.ReleaseMouseCapture(); ApplyAnimationFrame();
     }

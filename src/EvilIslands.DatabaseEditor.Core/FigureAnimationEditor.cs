@@ -40,19 +40,20 @@ public sealed partial class FigureAnimationEditor
         // Decode the rebuilt clip before accepting a state; all other payloads stay byte-identical.
         var checkedClip = await _source.WithBytes(changed).LoadAsync(name, token).ConfigureAwait(false);
         if (checkedClip.FrameCount != frames) throw new InvalidDataException("Длина сохранённого клипа не совпадает с выбранной.");
-        if (_undo.Count >= 32) throw new InvalidOperationException("Достигнут лимит 32 операций. Экспортируйте ANM перед дальнейшими изменениями.");
-        _undo.Push(_bytes); _redo.Clear(); _bytes = changed;
+        if (checkedClip.FrameCount == clip.FrameCount)
+            for (int f = 0; f < clip.FrameCount; f++) CheckLockedPose(_source, clip, checkedClip, f, LockedParts);
+        Accept(changed);
     }
 
     public async Task SetRotationsAsync(string name, int frame, IReadOnlyDictionary<string, Quaternion> rotations)
     {
         if (rotations.Count == 0) return;
-        if (_undo.Count >= 32) throw new InvalidOperationException("Достигнут лимит 32 операций.");
         var candidate = new FigureAnimationEditor(Preview());
         foreach (var pair in rotations) await candidate.SetPoseAsync(name, pair.Key, frame, pair.Value).ConfigureAwait(false);
         byte[] changed = candidate.ExportBytes();
         if (_bytes.AsSpan().SequenceEqual(changed)) return;
-        _undo.Push(_bytes); _redo.Clear(); _bytes = changed;
+        CheckLockedPose(_source, await Preview().LoadAsync(name), await candidate.Preview().LoadAsync(name), frame, LockedParts);
+        Accept(changed);
     }
 
     public async Task SetPoseAsync(string name, string part, int frame, Quaternion rotation, Vector3? position = null)
@@ -92,10 +93,10 @@ public sealed partial class FigureAnimationEditor
         writer.Write(raw, (int)input.BaseStream.Position, raw.Length - (int)input.BaseStream.Position);
         var changed = ResArchiveWriter.Rebuild(tracks, new Dictionary<int, byte[]> { [entry.Index] = output.ToArray() });
         if (nested is not null) changed = ResArchiveWriter.Rebuild(archive, new Dictionary<int, byte[]> { [nested.Index] = changed });
-        _ = await _source.WithBytes(changed).LoadAsync(name).ConfigureAwait(false);
+        var checkedClip = await _source.WithBytes(changed).LoadAsync(name).ConfigureAwait(false);
+        CheckLockedPose(_source, clip, checkedClip, frame, LockedParts);
         if (_bytes.AsSpan().SequenceEqual(changed)) return;
-        if (_undo.Count >= 32) throw new InvalidOperationException("Достигнут лимит 32 операций.");
-        _undo.Push(_bytes); _redo.Clear(); _bytes = changed;
+        Accept(changed);
     }
 
     internal static byte[] TransformTrack(byte[] bytes, int first, int last, int frames)

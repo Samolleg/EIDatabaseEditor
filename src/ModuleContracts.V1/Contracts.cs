@@ -35,7 +35,7 @@ public interface IModuleFiles
 }
 public interface IModuleFileBrowser : IModuleFiles
 {
-    // Only paths returned by Open/SelectFolder may subsequently be read.
+    // Only paths authorized by Open/SelectFolder or workspace.maps-cache.v1 discovery may be read.
     ImmutableArray<string> SelectFolder(string extension);
     OpenedFile Read(string path);
 }

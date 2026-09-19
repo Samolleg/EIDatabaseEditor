@@ -54,7 +54,9 @@ internal sealed partial class AnimationEditorDialog
             var tracks=new ScrollViewer{Content=_tracksGraph,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Background=new SolidColorBrush(Color.FromRgb(22,27,24))};
             foreach(var tab in new (string Label,UIElement View)[]{("Дорожки суставов",tracks),("Кривая",_curveGraph),("Проверка",_issuesList)})
             {var button=ActionButton(tab.Label,()=>content.Content=tab.View);button.Height=26;button.MinHeight=0;button.FontSize=11;button.Padding=new Thickness(6,2,6,2);headers.Children.Add(button);}
-            content.Content=tracks;tabs.Children.Add(headers);tabs.Children.Add(content);footer.Children.Insert(0,tabs);
+            content.Content=tracks;tabs.Children.Add(headers);tabs.Children.Add(content);
+            footer.Children.Remove(_timeline); tabs.Children.Add(_timeline);
+            footer.Children.Insert(0,new Expander { Header="Общая шкала, дорожки и проверка", Content=tabs, Margin=new(3) });
         }
         _tracksGraph.Seek+=(part,f)=>SelectJoint(part,f);
         _tracksGraph.MoveFrame+=async(part,from,to)=>await Run(async()=>{await _editor.MoveJointFrameAsync(_name,part,from,to);await Refresh();});

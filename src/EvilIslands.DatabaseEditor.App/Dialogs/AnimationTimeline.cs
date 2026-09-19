@@ -40,15 +40,15 @@ internal sealed class AnimationTimeline : FrameworkElement
     private void Update(double x)
     {
         int frame = At(x);
-        if (_selecting) { First = Math.Min(_anchor, frame); Last = Math.Max(_anchor, frame); RangeChanged?.Invoke(First, Last); }
-        else { Frame = frame; Seek?.Invoke(frame); }
+        if (_selecting) { Frame = frame; Seek?.Invoke(frame); First = Math.Min(_anchor, frame); Last = Math.Max(_anchor, frame); RangeChanged?.Invoke(First, Last); }
+        else { Frame = frame; First = Last = frame; RangeChanged?.Invoke(frame, frame); Seek?.Invoke(frame); }
         InvalidateVisual();
     }
     protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (IsMouseCaptured && e.LeftButton == MouseButtonState.Pressed) Update(e.GetPosition(this).X); }
     protected override void OnMouseLeftButtonUp(MouseButtonEventArgs e) { if (IsMouseCaptured) { Update(e.GetPosition(this).X); ReleaseMouseCapture(); e.Handled = true; } base.OnMouseLeftButtonUp(e); }
     protected override void OnKeyDown(KeyEventArgs e)
     {
-        if (e.Key is Key.Left or Key.Right) { Frame = Math.Clamp((int)Frame + (e.Key == Key.Left ? -1 : 1), 0, Count - 1); Seek?.Invoke((int)Frame); InvalidateVisual(); e.Handled = true; }
+        if (e.Key is Key.Left or Key.Right) { Frame = Math.Clamp((int)Frame + (e.Key == Key.Left ? -1 : 1), 0, Count - 1); First = Last = (int)Frame; RangeChanged?.Invoke(First, Last); Seek?.Invoke((int)Frame); InvalidateVisual(); e.Handled = true; }
         base.OnKeyDown(e);
     }
 }

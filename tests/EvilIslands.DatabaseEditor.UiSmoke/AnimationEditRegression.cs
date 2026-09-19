@@ -46,8 +46,17 @@ internal static class AnimationEditRegression
             string clipName = source.Names.FirstOrDefault(n => n.Contains("walk", StringComparison.OrdinalIgnoreCase)) ?? source.Names.First();
             var clip = await source.LoadAsync(clipName); Check(clip.FrameCount >= 4, "Clip too short");
             await AnimationAuthoringRegression.Verify(scene, clipName);
+            await StoryboardRegression.Verify(scene, clipName);
+            await StoryboardRegression.VerifyUi(scene, clipName, output);
             await AnimationMotionRegression.Verify(scene, clipName);
             var parts = AnimationEditorDialog.EditableParts(scene, clip);
+            await JointPointDragRegression.Verify(scene, clip, parts);
+            if (name == "Human Hero" && source.Names.Contains("uspecial13"))
+            {
+                var reported = await source.LoadAsync("uspecial13");
+                await JointPointDragRegression.Verify(scene, reported, AnimationEditorDialog.EditableParts(scene, reported));
+                Console.WriteLine("VIDEO CLIP uspecial13 POINT DRAG PASS");
+            }
             foreach (string end in new[] { "lh3", "rh3", "ll3", "rl3" }.Where(e => FigureLimbIk.Supports(source, clip, e)))
             {
                 var bindPose = source.Pose(clip, 0);
@@ -244,8 +253,8 @@ internal static class AnimationEditRegression
             Check(displayedFrames.Count>0&&displayedFrames.All(f=>f==3),"Refresh displayed an intermediate frame instead of selected frame3");
             Check(ReferenceEquals(displayedModel,visual.Content),"Refresh rebuilt model geometry");
             Check(camera.Position==cameraPosition,"Refresh reset camera");
-            await Click("Копировать кадры"); await Click("Вставить кадры");
-            Check(dialog.EditingFrameCount == 14, "Actual UI paste command failed");
+            await Click("Копировать кадры"); await Click("Вставить новые перед текущим");
+            Check(dialog.EditingFrameCount == 8, "Actual UI paste command failed");
             await Click("Отменить"); Check(dialog.EditingFrameCount == 7, "Actual UI undo command failed");
             Check(displayedFrames.All(f=>f==3)&&preview.AnimationFrame==3,"Paste/undo reset selected frame");
             Check(ReferenceEquals(displayedModel,visual.Content)&&camera.Position==cameraPosition,"Paste/undo reset scene or camera");

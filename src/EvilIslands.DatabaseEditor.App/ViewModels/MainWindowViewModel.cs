@@ -1118,6 +1118,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         {
             string databasePath = await TextureSources.ResolveDatabasePathAsync(path, cancellationToken);
             var workspace = await _service.OpenAsync(databasePath, cancellationToken);
+            DisconnectLua();
             ApplyWorkspace(workspace);
             BusyText = "Поиск текстур рядом с database.res…";
             await LoadNearbyTexturesAsync(cancellationToken);
@@ -1734,17 +1735,8 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         if (IsBusy) return;
         if (HasPendingLuaChanges)
         {
-            try
-            {
-                if (!allowGameInstallationPath && LuaWorkspace!.Documents.Any(d => d.HasChanges && DatabaseSafetyPolicy.IsLikelyGameInstallationPath(d.Path)))
-                    throw new InvalidOperationException("Не подтверждена запись Lua в каталог игры.");
-                foreach (var doc in LuaWorkspace!.Documents.Where(d => d.HasChanges)) doc.VerifyUnchanged();
-                if (!HasChanges)
-                {
-                    SaveGridLua(); StatusText = "Связанные Lua-файлы сохранены с резервными копиями."; return;
-                }
-            }
-            catch (Exception ex) { ShowError("Lua не сохранён: " + ex.Message); return; }
+            SaveLinkedLua(allowGameInstallationPath, createBackup);
+            return;
         }
         if (_workspace is null || !HasChanges || IsBusy)
         {
@@ -1788,7 +1780,6 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
                 }
             }
 
-            if (HasPendingLuaChanges) SaveGridLua();
             LastSavedPath = result.Save.TargetPath;
             NotificationIsError = false;
             var backups = new[] { result.BackupPath, result.TextsBackupPath }

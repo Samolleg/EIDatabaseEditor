@@ -8,8 +8,27 @@ using Microsoft.Win32;
 
 namespace EvilIslands.DatabaseEditor.App.Services;
 
-internal sealed class ModuleHostAdapter(MainWindow owner, MainWindowViewModel vm, string? journalDirectory = null) : IModuleDocumentHost, IModuleFileBrowser, IModuleTransactions, IModuleSave
+internal sealed class ModuleHostAdapter(MainWindow owner, MainWindowViewModel vm, string? journalDirectory = null) : IModuleMapsCacheHost, IModuleBlobHost, IModuleDocumentHost, IModuleFileBrowser, IModuleTransactions, IModuleSave
 {
+    private IWorkspaceMapsCache? mapsCache;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, WorkspaceStamp> automaticMaps = new(StringComparer.OrdinalIgnoreCase);
+    public IWorkspaceMapsCache MapsCache => owner.Dispatcher.Invoke(() => mapsCache ??= new global::DatabaseEditor.Modules.Host.WorkspaceMapsCache(
+        () => vm.ModuleMapsContext, action => owner.Dispatcher.Invoke(action), (paths, stamp) =>
+        {
+            foreach (string path in paths) { allowedFiles.TryAdd(path, Guid.NewGuid()); automaticMaps[path] = stamp; }
+        }, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Редактор БД от Атамана", "maps-cache-v1")));
+    private void CheckAutomaticMap(string path)
+    {
+        if (!automaticMaps.TryGetValue(path, out var expected)) return;
+        var now = owner.Dispatcher.Invoke(() => vm.ModuleMapsContext.Stamp);
+        if (expected.SessionId != now.SessionId || expected.Generation != now.Generation) throw new UnauthorizedAccessException("Авторизация карты относится к другой открытой БД.");
+        string? node = path;
+        while (node is not null)
+        {
+            if ((File.Exists(node) || Directory.Exists(node)) && (File.GetAttributes(node) & FileAttributes.ReparsePoint) != 0) throw new UnauthorizedAccessException("Путь карты заменён ссылкой.");
+            node = Path.GetDirectoryName(node);
+        }
+    }
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, Guid> allowedFiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, OpenedFile> sources = new();
     private readonly Dictionary<Guid, (string Path, string Hash)> savedTargets = new();
@@ -29,6 +48,7 @@ internal sealed class ModuleHostAdapter(MainWindow owner, MainWindowViewModel vm
         }
         foreach (var entry in state.Targets) savedTargets[entry.Id] = (entry.Path, entry.Hash);
     }
+    public IModuleBlobStore Blobs => vm.ModuleDocuments.Blobs;
     public IModuleDocuments Documents => vm.ModuleDocuments;
     public IModuleTransactions Transactions => this;
     public IModuleSave Save => this;
@@ -77,24 +97,26 @@ internal sealed class ModuleHostAdapter(MainWindow owner, MainWindowViewModel vm
         return result;
     }
     public Result Export(Guid id, string kind, string name, string filter)
+        => ExportCopy(id, kind, name, filter, Export);
+    internal Result ExportCopy(Guid id, string kind, string name, string filter, Func<string, string, ReadOnlyMemory<byte>, Result> export)
     {
         var document = vm.ModuleDocuments.Get(id);
         if (document is null) return new(ResultStatus.Unavailable);
         var prepared = vm.ModuleDocuments.Prepare(id, kind);
         if (!prepared.Result.Succeeded) return prepared.Result;
-        var result = Export(name, filter, prepared.Bytes.AsMemory());
-        if (result.Succeeded && kind == "malachite-project") vm.ModuleDocuments.Checkpoint(id, document.Revision, Convert.ToHexString(SHA256.HashData(prepared.Bytes.AsSpan())));
+        var result = export(name, filter, prepared.Bytes.AsMemory());
         return result;
     }
     public IWorkspaceReader Workspace => vm.ModuleWorkspace;
     public IModuleFiles Files => this;
-    public ImmutableArray<string> Capabilities => ["workspace.read.v1", "navigation.record.v1", "files.export-copy.v1", "documents.session.v1", "transactions.v1", "files.browse-folder.v1", "saves.artifact-kind.v1"];
+    public ImmutableArray<string> Capabilities => ["workspace.read.v1", "workspace.maps-cache.v1", "navigation.record.v1", "files.export-copy.v1", "documents.session.v1", "documents.blobs.v1", "transactions.v1", "files.browse-folder.v1", "saves.artifact-kind.v1"];
     public void Report(string message) => vm.ReportSpreadsheetError(message);
     public OpenedFile? Open(string filter)
     {
         var dialog = new OpenFileDialog { Filter = filter, RestoreDirectory = true };
         if (dialog.ShowDialog(owner) != true) return null;
         allowedFiles.TryAdd(Path.GetFullPath(dialog.FileName), Guid.NewGuid());
+        automaticMaps.TryRemove(Path.GetFullPath(dialog.FileName), out _);
         return Read(dialog.FileName);
     }
     public ImmutableArray<string> SelectFolder(string extension)
@@ -103,18 +125,23 @@ internal sealed class ModuleHostAdapter(MainWindow owner, MainWindowViewModel vm
         var dialog = new OpenFolderDialog { Title = "Папка с MOB-картами" };
         if (dialog.ShowDialog(owner) != true) return [];
         var files = Directory.EnumerateFiles(dialog.FolderName, "*.mob", SearchOption.TopDirectoryOnly).Order(StringComparer.OrdinalIgnoreCase).Select(Path.GetFullPath).ToImmutableArray();
-        foreach (string file in files) allowedFiles.TryAdd(file, Guid.NewGuid());
+        foreach (string file in files) { allowedFiles.TryAdd(file, Guid.NewGuid()); automaticMaps.TryRemove(file, out _); }
         return files;
     }
     public OpenedFile Read(string path)
     {
         path = Path.GetFullPath(path);
-        if (!allowedFiles.TryGetValue(path, out var token)) throw new UnauthorizedAccessException("Этот файл не выбран через хост.");
+        if (!allowedFiles.ContainsKey(path)) throw new UnauthorizedAccessException("Этот файл не выбран через хост.");
+        CheckAutomaticMap(path);
         var file = new FileInfo(path);
         if (file.Length > 128 * 1024 * 1024) throw new IOException("Файл больше 128 МиБ.");
         byte[] bytes = File.ReadAllBytes(file.FullName);
+        CheckAutomaticMap(path);
+        // Authorization is path-based; each read is a distinct immutable save baseline.
+        // Refreshing the index must not update a previously opened document's expected hash.
+        var token = Guid.NewGuid();
         var opened = new OpenedFile(file.FullName, Convert.ToHexString(SHA256.HashData(bytes)), ImmutableArray.Create(bytes)) { SourceToken = token };
-        sources.TryAdd(token, opened);
+        sources.TryAdd(token, opened with { Content = [] });
         return opened;
     }
     public Result Export(string suggestedName, string filter, ReadOnlyMemory<byte> bytes)

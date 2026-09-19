@@ -34,7 +34,7 @@ public partial class MainWindow
     {
         try
         {
-            if (_luaDatabasePath != _viewModel.SourcePath && !_viewModel.HasPendingLuaChanges)
+            if ((_luaDatabasePath != _viewModel.SourcePath || _viewModel.LuaWorkspace is null) && !_viewModel.HasPendingLuaChanges)
             {
                 string? nearby = LuaDataWorkspace.FindNearby(_viewModel.SourcePath);
                 if (nearby is not null) { _viewModel.ConnectLua(nearby); _luaDatabasePath = _viewModel.SourcePath; }
@@ -204,7 +204,7 @@ public partial class MainWindow
                 for (int j = path.Length - 1; j > i; j--) value = "{ " + LuaLiteralReader.Key(path[j]) + " = " + value + " }";
                 foreach (var patch in LuaSourceDocument.AppendTo(original, node, LuaLiteralReader.Key(path[i]) + " = " + value).OrderByDescending(p => p.Start))
                     original = original.Remove(patch.Start, patch.Length).Insert(patch.Start, patch.Text);
-                return original;
+                return LuaRowFormatting.Compact(original);
             }
             if (i == path.Length - 1)
             {

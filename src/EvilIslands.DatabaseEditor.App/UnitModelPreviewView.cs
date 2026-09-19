@@ -68,6 +68,7 @@ public sealed partial class UnitModelPreviewView : UserControl
         _itemChoice.SelectionChanged += (_, _) => { if (!_settingChoice) QueueLoad(); };
         DockPanel.SetDock(_itemTools, Dock.Top); toolbar.Children.Add(_itemTools);
         InitializeAnimationControls(toolbar);
+        InitializeViewSettings(toolbar);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
         var fit = new Button { Content = "Вписать", Margin = new Thickness(4) };
         fit.Click += (_, _) => { if (_visual.Content is { } content) SetCameraBounds(content.Bounds); Fit(); };
@@ -77,11 +78,13 @@ public sealed partial class UnitModelPreviewView : UserControl
         DockPanel.SetDock(buttons, Dock.Right); toolbar.Children.Add(buttons); toolbar.Children.Add(_status);
         layout.Children.Add(toolbar);
         var sceneLayers = new Grid(); sceneLayers.Children.Add(_viewport); sceneLayers.Children.Add(_skeletonCanvas);
-        var surface = new Border { Background = new SolidColorBrush(Color.FromRgb(22, 26, 24)), ClipToBounds = true, Child = sceneLayers };
+        var surface = new Border { Background = _sceneBackground, ClipToBounds = true, Child = sceneLayers };
         InitializeSkeletonInput();
         Grid.SetRow(surface, 1); layout.Children.Add(surface);
         Grid.SetRow(_information, 2); layout.Children.Add(_information);
         _viewport.Camera = _camera; _viewport.Children.Add(_visual);
+        _viewport.Children.Add(_lighting);
+        UpdateLighting();
         surface.MouseLeftButtonDown += (_, e) => { _drag = e.GetPosition(surface); surface.CaptureMouse(); };
         surface.MouseLeftButtonUp += (_, _) => { _drag = null; surface.ReleaseMouseCapture(); };
         surface.LostMouseCapture += (_, _) => _drag = null;
@@ -264,8 +267,6 @@ public sealed partial class UnitModelPreviewView : UserControl
         { _itemScene = item; _yaw = item ? .35 : .7; _pitch = item ? 1.15 : .15; }
         _mobTools.Visibility = item ? Visibility.Collapsed : Visibility.Visible;
         var group = new Model3DGroup();
-        group.Children.Add(new AmbientLight(Color.FromRgb(145, 145, 145)));
-        group.Children.Add(new DirectionalLight(Colors.White, new Vector3D(-1, -2, -3)));
         var materials = new Dictionary<int, Material>();
         foreach (var pair in scene.Textures)
         {
@@ -281,6 +282,7 @@ public sealed partial class UnitModelPreviewView : UserControl
             var mesh = new MeshGeometry3D
             {
                 Positions = new Point3DCollection(part.Positions.Select(p => new Point3D(p.X, p.Z, -p.Y))),
+                Normals = new Vector3DCollection(part.Normals.Select(p => new Vector3D(p.X, p.Z, -p.Y))),
                 TextureCoordinates = new PointCollection(part.UV.Select(p => new Point(p.X, p.Y))),
                 TriangleIndices = new Int32Collection(part.Indices)
             };
@@ -306,7 +308,7 @@ public sealed partial class UnitModelPreviewView : UserControl
     {
         if(_pendingEditorBounds is { } bounds){SetCameraBounds(bounds);_pendingEditorBounds=null;}
         double aspect = Math.Max(0.1, _viewport.ActualWidth / Math.Max(1, _viewport.ActualHeight));
-        double half = Math.Atan(Math.Tan(20 * Math.PI / 180) / Math.Max(1, aspect));
+        double half = Math.Atan(Math.Tan(_camera.FieldOfView * Math.PI / 360) / Math.Max(1, aspect));
         _distance = _radius / Math.Sin(half) * 1.15; UpdateCamera();
     }
     private void UpdateCamera()
@@ -315,5 +317,7 @@ public sealed partial class UnitModelPreviewView : UserControl
         _camera.Position = _center + offset; _camera.LookDirection = -offset;
         _camera.NearPlaneDistance = Math.Max(0.001, _radius / 1000); _camera.FarPlaneDistance = _distance + _radius * 50;
         DrawSkeleton();
+        UpdateCameraReadout();
+        UpdateLighting();
     }
 }

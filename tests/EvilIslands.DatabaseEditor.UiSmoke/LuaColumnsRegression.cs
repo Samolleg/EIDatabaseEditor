@@ -33,7 +33,7 @@ internal static class LuaColumnsRegression
         foreach (string name in new[] { "main.lua", "lua/tables.lua", "lua/npc_consumables.lua", "res/database.res" })
         { string target = Path.Combine(copy, name); Directory.CreateDirectory(Path.GetDirectoryName(target)!); File.Copy(Path.Combine(baseline, name), target, false); }
         var window = new MainWindow(new EditorPreferencesStore(Path.Combine(output, "settings.json")), new RecoverySnapshotStore(Path.Combine(output, "recovery")));
-        var vm = (MainWindowViewModel)window.DataContext; await vm.OpenPathAsync(Path.Combine(copy, "res/database.res"));
+        var vm = (MainWindowViewModel)window.DataContext; vm.LinkedSaveJournalDirectory = Path.Combine(output, "journals"); await vm.OpenPathAsync(Path.Combine(copy, "res/database.res"));
         var grid = (DataGrid)window.FindName("RecordsGrid"); var toggle = (CheckBox)window.FindName("ShowLuaColumnsButton");
         grid.EnableColumnVirtualization = false;
         grid.EnableRowVirtualization = false;
@@ -108,7 +108,8 @@ internal static class LuaColumnsRegression
         string dbHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(vm.SourcePath)));
         await vm.SaveCurrentAsync(false); Check(!vm.HasPendingLuaChanges && File.ReadAllText(doc.Path) == changed, "Common save did not save Lua");
         Check(Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(vm.SourcePath))) == dbHash, "Lua-only save rewrote DB");
-        Check(Directory.GetFiles(Path.GetDirectoryName(doc.Path)!, "tables.lua.*.bak").Length == 1, "Missing backup");
+        var backups = Directory.GetFiles(Path.GetDirectoryName(doc.Path)!, "tables.lua.bak-*");
+        Check(backups.Length == 1 && File.ReadAllText(backups[0]) == before, "Missing or incorrect original backup");
         toggle.IsChecked = false; Check(grid.Columns.Count == originalColumns, "Hide changed ordinary columns"); toggle.IsChecked = true;
         grid.EnableRowVirtualization = true; grid.EnableColumnVirtualization = true;
         Select("units.prototypes");

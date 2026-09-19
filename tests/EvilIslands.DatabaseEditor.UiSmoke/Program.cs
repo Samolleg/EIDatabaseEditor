@@ -28,9 +28,16 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--lua-row-format") return LuaRowFormatRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--module-header") return ModuleHeaderRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--viewer") return ViewerRegression.Run(args[1], args[2]);
+        if (args.Length == 1 && args[0] == "--workspace-maps") return WorkspaceMapsRegression.Run();
+        if (args.Length == 2 && args[0] == "--audit-fixes") return AuditFixRegression.Run(args[1]);
         if (args.Length == 3 && args[0] == "--equipment-editor") return EquipmentEditorRegression.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--module-crash") return ModuleCrashRegression.Run(args[1]);
         if (args.Length == 3 && args[0] == "--module-crash-child") return ModuleCrashRegression.Child(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--module-blob-restore") return ModuleBlobRegression.Restart(args[1]);
+        if (args.Length == 1 && args[0] == "--module-blobs") return ModuleBlobRegression.Run();
         if (args.Length == 1 && args[0] == "--module-save") return ModuleSaveRegression.Run();
         if (args.Length == 3 && args[0] == "--module-integration") return ModuleIntegrationRegression.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--module-transactions") return ModuleTransactionRegression.Run(args[1]);

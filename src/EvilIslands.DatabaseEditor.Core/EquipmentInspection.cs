@@ -25,6 +25,7 @@ public static class EquipmentInspection
     {
         var report = new EquipmentStatReport();
         Describe(unit, records, lua, report);
+        PrototypeCombatCalculation.Append(report, unit, records, lua);
         return report;
     }
 

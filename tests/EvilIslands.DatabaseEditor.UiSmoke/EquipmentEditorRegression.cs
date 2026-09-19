@@ -24,6 +24,7 @@ internal static class EquipmentEditorRegression
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static async Task Check(string source, string output)
     {
+        PrototypeCombatRegression.Check();
         Directory.CreateDirectory(output); var hash = SHA256.HashData(File.ReadAllBytes(source));
         using var vm = new MainWindowViewModel(); await vm.OpenPathAsync(source);
         vm.SelectTableCommand.Execute(vm.Databases.SelectMany(g => g.Tables).Single(t => t.Key == "units.prototypes"));
@@ -33,6 +34,15 @@ internal static class EquipmentEditorRegression
         var records = vm.Databases.SelectMany(g => g.Tables).ToDictionary(t => t.Key, t => (IReadOnlyList<DatabaseRecord>)t.Records.Select(r => r.CoreRecord).ToArray());
         var titles = vm.TextResources.GroupBy(r => r.ResourceName, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Title, StringComparer.OrdinalIgnoreCase);
         var context = new EmbeddedMagicEditorContext(EmbeddedMagicCatalog.Create(records), titles);
+        var luaFolder = LuaDataWorkspace.FindNearby(source);
+        Require(luaFolder is not null, "Calculation regression requires nearby Lua");
+        var lua = LuaDataWorkspace.Open(luaFolder!);
+        Require(PrototypeCombatCalculation.SupportedFormulas(File.ReadAllText(lua.SchemaSource)), "Installed formulas no longer match the calculation profile");
+        Require(!PrototypeCombatCalculation.SupportedFormulas(File.ReadAllText(lua.SchemaSource).Replace("skill * 1 / 800", "skill * 1 / 700", StringComparison.Ordinal)), "Changed formula still accepted");
+        var captured = records.SelectMany(t => t.Value.Select(r => ModelRecord.Capture(t.Key, r))).ToArray();
+        var liveReport = EquipmentInspection.Inspect(captured.Single(r => r.Table == "units.prototypes" && r.Name == "Human Hero"), captured, lua);
+        Require(liveReport.General.Any(r => r.Name == "Сила" && r.Value == "39"), "Live initial-prototype calculation unavailable");
+        File.WriteAllText(Path.Combine(output, "calculation-live.txt"), string.Join(Environment.NewLine, liveReport.General.Select(r => r.Name + ": " + r.Value).Concat(liveReport.Notes)));
         StructuredStringListEditorDialog New() => new("BB1", "Варианты доспехов", values, context.Weapons.Select(c => c.Value).ToArray(),
             updated => { bool ok = field.TrySetStringListValues(updated, out string? error); return (ok, error); }, magicContext: context,
             allowedElementKinds: [StructuredElementKind.RawValue, StructuredElementKind.Armor]);
@@ -55,6 +65,19 @@ internal static class EquipmentEditorRegression
             var choices = ((ComboBox)dialog.FindName("MagicShapeComboBox")).Items.Cast<EmbeddedMagicChoice>().ToArray();
             Require(choices.Length > 0 && choices.All(c => records["items.armors"].Any(r => r.IdentityValue == c.Value && Convert.ToInt32(r.Fields.Single(f => f.Id == 2).Value) == i - 1)), "Slot filter mismatch " + i);
         }
+        // Selecting a duplicate slot must not replace the saved draft for statistics/model.
+        dialog.SelectedItem = dialog.Items[0];
+        var alternate = ((ComboBox)dialog.FindName("MagicMaterialComboBox")).Items.Cast<EmbeddedMagicChoice>().First(c => !dialog.Items[0].Value.EndsWith("." + c.Value)).Value;
+        var duplicate = new StructuredStringListItemViewModel(dialog.Items[0].Value[..(dialog.Items[0].Value.LastIndexOf('.') + 1)] + alternate);
+        dialog.Items.Add(duplicate);
+        dialog.SelectedItem = dialog.Items[0];
+        string StatText() => string.Join("|", ((StackPanel)dialog.FindName("EquipmentStatisticsPanel")).Children.OfType<Grid>()
+            .SelectMany(g => g.Children.OfType<Border>()).Select(b => ((TextBlock)b.Child).Text));
+        string stableStats = StatText();
+        dialog.SelectedItem = duplicate;
+        Require(StatText() == stableStats && dialog.EquipmentDraft!.Lists[32].SequenceEqual(dialog.Items.Select(i => i.Value)),
+            "Selecting a row changed saved equipment statistics/order");
+        dialog.Items.Remove(duplicate);
         dialog.SelectedItem = dialog.Items[1]; dialog.SelectedItem = dialog.Items[0];
         var material = (ComboBox)dialog.FindName("MagicMaterialComboBox");
         Require(dialog.Items.Any(i => i.RussianName.Length > 0), "Russian names absent");

@@ -6,7 +6,7 @@ $target = Join-Path $hostRoot $moduleRelative
 $source = (Resolve-Path -LiteralPath $PackagePath).Path
 $allowed = @('Malachite.Core.dll','Malachite.UI.Wpf.dll','Malachite.Module.dll','Malachite.Module.deps.json','module.json','README.md')
 $sdkNames = @('ModuleContracts.V1.dll','ModuleContracts.Wpf.V1.dll')
-$capabilities = @('workspace.read.v1','navigation.record.v1','files.export-copy.v1','documents.session.v1','transactions.v1','files.browse-folder.v1','saves.artifact-kind.v1')
+$capabilities = @('workspace.read.v1','navigation.record.v1','files.export-copy.v1','documents.session.v1','documents.blobs.v1','transactions.v1','files.browse-folder.v1','saves.artifact-kind.v1')
 function Assert-Closed {
     foreach ($p in @(Get-Process -Name EvilIslands.DatabaseEditor -ErrorAction SilentlyContinue)) {
         if (-not $p.Path -or $p.Path.StartsWith($hostRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {

@@ -7,7 +7,7 @@ internal static class AnimationPoseConstraints
 {
     internal static void Apply(FigureAnimationSet set, FigureAnimationClip clip, int frame,
         Dictionary<string, Quaternion> rotations, Dictionary<string, Vector3> positions,
-        bool limits, IReadOnlyDictionary<string, Vector3> pins)
+        bool limits, IReadOnlyDictionary<string, Vector3> pins, IReadOnlySet<string>? unlocked = null)
     {
         FigureAnimationClip Current() => FigureAnimationEditor.VirtualPose(set, clip, frame, rotations, positions);
         foreach (var pin in pins)
@@ -26,7 +26,7 @@ internal static class AnimationPoseConstraints
         var reference = set.Pose(clip, frame); var edited = set.Pose(Current(), frame);
         foreach (string end in new[] { "lh3", "rh3", "ll3", "rl3" })
         {
-            if (!FigureLimbIk.Supports(set, clip, end)) continue;
+            if (unlocked?.Contains(end) == true || !FigureLimbIk.Supports(set, clip, end)) continue;
             string middle = end[..2] + "2", upper = end[..2] + "1";
             float Bend(IReadOnlyDictionary<string, FigurePose> pose)
             {

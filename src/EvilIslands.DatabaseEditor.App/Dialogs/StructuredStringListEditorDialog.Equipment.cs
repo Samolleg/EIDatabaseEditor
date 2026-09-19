@@ -152,8 +152,6 @@ public partial class StructuredStringListEditorDialog
         else fields[_equipmentField] = Items.FirstOrDefault()?.Value ?? "";
         EquipmentDraft = _equipmentUnit with { Fields = fields, Lists = lists };
         var previewDraft = EquipmentDraft;
-        if (_equipmentField == 32 && SelectedItem is not null && Items.IndexOf(SelectedItem) > 0)
-            previewDraft = previewDraft with { Lists = new Dictionary<int, string[]>(lists) { [32] = new[] { SelectedItem.Value }.Concat(Items.Where(i => !ReferenceEquals(i, SelectedItem)).Select(i => i.Value)).ToArray() } };
         try
         {
             var report = EquipmentInspection.Inspect(previewDraft, _equipmentRecords, _equipmentLua);

@@ -42,7 +42,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         {
             await ApplyPose(frame, rotations, new Dictionary<string, Vector3>());
             await Refresh(); _frame.Text = frame.ToString(); ReadPose();
-            _message.Text = "IK сохранена в кадре. Отменить возвращает весь жест руки или ноги.";
+            _message.Text = "Перемещение сустава сохранено в кадре. Отменить возвращает весь жест.";
         });
         _preview.JointEdited += async (part, frame, rotation, position) => await Run(async () =>
         {
@@ -50,7 +50,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
             await Refresh(); _frame.Text = frame.ToString(); ReadPose();
             _message.Text = "Изменение мышью сохранено в кадре. Отменить — возвращает весь жест.";
         });
-        var note = Paragraph("Тяните голубую точку кисти или стопы: IK сгибает руку или ногу в плоскости экрана. Якорь «Сгиб» меняет направление локтя/колена при неподвижной кисти/стопе. Поверните камеру для другой плоскости. Длины сегментов сохраняются; далёкие цели ограничены досягаемостью. Белая точка выбирает сустав. Кольца X/Y/Z вращаются вправо/влево; стрелки перемещают корень. Esc отменяет жест. Кадры с 0; ADB не изменяется.");
+        var note = Paragraph("Тяните голубую точку кисти или стопы: IK сгибает руку или ногу в плоскости экрана. Якорь «Сгиб» меняет направление локтя/колена при неподвижной кисти/стопе. Поверните камеру для другой плоскости. Длины сегментов сохраняются; далёкие цели ограничены досягаемостью. Белую точку тоже можно тянуть: поворачивается родительская кость вместе с дочерними частями. Точка корня перемещает всю модель. Кольца X/Y/Z вращаются вправо/влево; стрелки перемещают корень. Esc отменяет жест. Кадры с 0; ADB не изменяется.");
         DockPanel.SetDock(note, Dock.Top); Body.Children.Add(note);
         void Field(string label, TextBox box)
         {
@@ -130,6 +130,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         InitializeAuthoring(sidebar, columns);
         InitializeMotion(sidebar);
         InitializeCatalog(sidebar);
+        InitializeStoryboard(sidebar);
         Compact(sidebar); Compact(_playback); _mapping.Height=90;
         Loaded += async (_, _) => await Run(Refresh);
         Closing += (_, e) =>
@@ -158,7 +159,9 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         { _preview.ShowScene(_scene with { Animations = set }); await _preview.SelectAnimationAsync(_name); }
         else await _preview.ReplaceEditedAnimationAsync(set,clip,previousFrame);
         _preview.RestrictToEditedClip();
-        _first.Text = "0"; _last.Text = (clip.FrameCount - 1).ToString(); _length.Text = clip.FrameCount.ToString();
+        int first = int.TryParse(_first.Text, out int a) ? Math.Clamp(a, 0, clip.FrameCount - 1) : 0;
+        int last = int.TryParse(_last.Text, out int b) ? Math.Clamp(b, first, clip.FrameCount - 1) : first;
+        _first.Text = first.ToString(); _last.Text = last.ToString(); _length.Text = (last - first + 1).ToString();
         string? selected = _part.SelectedItem as string;
         _loadedClip = clip; _part.ItemsSource = EditableParts(_scene, clip);
         _part.SelectedItem = selected; if (_part.SelectedIndex < 0) _part.SelectedIndex = 0;
@@ -166,6 +169,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         ReadPose();
         await RefreshAuthoring();
         await RefreshMotion();
+        RefreshStoryboard();
     }
     internal static string[] EditableParts(UnitModelScene scene, FigureAnimationClip clip)
     {
@@ -213,16 +217,17 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         _px.Text = p.X.ToString("R", CultureInfo.InvariantCulture); _py.Text = p.Y.ToString("R", CultureInfo.InvariantCulture); _pz.Text = p.Z.ToString("R", CultureInfo.InvariantCulture);
         _preview.SetAnimationFrame(frame);
         _preview.SetSkeleton(EditableParts(_scene, _loadedClip), part);
+        RefreshPartLocks();
     }
     internal void SelectJoint(string part, int frame)
-    { _frame.Text = frame.ToString(); _part.SelectedItem = part; ReadPose(); }
+    { _frame.Text = frame.ToString(); _part.SelectedItem = part; SelectStoryboardFrame(frame); ReadPose(); }
     private async Task Run(Func<Task> action)
     {
         if (_busy) return;
         _editor.MotionLimits = _limits.IsChecked == true; _editor.MotionPins = _pins;
         _busy = true; _actions.IsEnabled = _poseActions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = false;
-        try { _preview.PauseAnimation(); await action(); }
+        try { if (_storySidebar is not null) _storySidebar.IsEnabled = false; _storyTools.IsEnabled = false; _story.IsEnabled = false; _preview.PauseAnimation(); await action(); }
         catch (Exception ex) { _message.Text = ex.Message; }
-        finally { _busy = false; _actions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = true; _poseActions.IsEnabled = !_preview.ShowingOriginal; }
+        finally { if (_storySidebar is not null) _storySidebar.IsEnabled = true; _storyTools.IsEnabled = _story.IsEnabled = true; _busy = false; _actions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = true; _poseActions.IsEnabled = !_preview.ShowingOriginal; }
     }
 }

@@ -71,6 +71,18 @@ public static class UnitModelPreview
                 }
                 throw new FileNotFoundException("Не найден ресурс модели: " + name);
             }
+            // Base FIGs already use the secondary atlas coordinates. Keep this
+            // tied to the selected resource, even when a mod DB falls back to it.
+            string? modelArchive = indexes.FirstOrDefault(a => a.Entries.Any(e => e.Name.Equals(mask + ".mod", StringComparison.OrdinalIgnoreCase))).Path;
+            string? gameFolder = sources.GameFolder;
+            if (gameFolder is null && modelArchive is not null &&
+                string.Equals(Path.GetFileName(Path.GetDirectoryName(modelArchive)), "Res", StringComparison.OrdinalIgnoreCase))
+            {
+                string? candidate = Path.GetDirectoryName(Path.GetDirectoryName(modelArchive));
+                if (candidate is not null && File.Exists(Path.Combine(candidate, "game.exe"))) gameFolder = candidate;
+            }
+            bool baseFigure = gameFolder is not null && string.Equals(modelArchive,
+                Path.Combine(gameFolder, "Res", "figures.res"), StringComparison.OrdinalIgnoreCase);
             var mod = ResArchiveDocument.Parse(mask + ".mod", Resource(mask + ".mod"), token);
             var bon = ResArchiveDocument.Parse(mask + ".bon", Resource(mask + ".bon"), token);
             var parents = ReadHierarchy(mod.GetResourceBytes(mask).ToArray());
@@ -188,6 +200,7 @@ public static class UnitModelPreview
                         _ => [$"rh3.{kind.Item1}{index:D2}"]
                     };
                     foreach (string part in parts) AddPart(part);
+                    notes.Add($"Оружие {shape.Name}: модель персонажа {mask}.mod; детали {string.Join(", ", parts)}. Инвентарная модель initwe в руке не используется.");
                     secondary.Add($"{mask}{kind.Item2}_{index:D2}.{material.Text(2)}.{shape.Integer(6)}");
                 }
                 catch (InvalidDataException ex) { notes.Add(ex.Message); }
@@ -213,8 +226,8 @@ public static class UnitModelPreview
                 if (!mod.TryGetEntry(part, out var entry) || entry is null) continue;
                 var mesh = FigurePreviewDecoder.Decode(part, mod.GetResourceBytes(entry).ToArray(), morph);
                 if (mesh.Indices.Length == 0) continue;
-                // Human secondary equipment occupies half-size UV space in the shared model.
-                if (prototypeEquipment && armorSlots && mesh.TextureSlot == 2)
+                // Existing mod figures use the half-size layout; base-game FIGs do not.
+                if (prototypeEquipment && armorSlots && !baseFigure && mesh.TextureSlot == 2)
                     for (int i = 0; i < mesh.UV.Length; i++) mesh.UV[i] *= 2;
                 Vector3 offset = Position(part);
                 for (int i = 0; i < mesh.Positions.Length; i++) mesh.Positions[i] += offset;

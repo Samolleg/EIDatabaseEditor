@@ -9,6 +9,10 @@ internal sealed partial class MainWindowViewModel
 {
     private ModuleWorkspaceReader? _moduleWorkspace;
     internal IWorkspaceReader ModuleWorkspace => _moduleWorkspace ??= new(this);
+    internal global::DatabaseEditor.Modules.Host.MapsWorkspaceContext ModuleMapsContext
+    {
+        get { _moduleWorkspace ??= new(this); return new(_moduleWorkspace.Stamp, SourcePath ?? ""); }
+    }
     private sealed class ModuleWorkspaceReader : IWorkspaceReader
     {
         private readonly MainWindowViewModel vm;

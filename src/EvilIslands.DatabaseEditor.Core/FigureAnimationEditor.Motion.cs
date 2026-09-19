@@ -46,7 +46,7 @@ public sealed partial class FigureAnimationEditor
             if (pins.Count == 0 && !MotionLimits) continue;
             var qs = edits.Where(p=>p.Value.TryGetValue(f,out var v)&&v.Q.HasValue).ToDictionary(p=>p.Key,p=>p.Value[f].Q!.Value);
             var ps = edits.Where(p=>p.Value.TryGetValue(f,out var v)&&v.P.HasValue).ToDictionary(p=>p.Key,p=>p.Value[f].P!.Value);
-            AnimationPoseConstraints.Apply(set,clip,f,qs,ps,MotionLimits,pins);
+            AnimationPoseConstraints.Apply(set,clip,f,qs,ps,MotionLimits,pins,UnlockedLimbs);
             foreach(var q in qs) { if(!edits.ContainsKey(q.Key)) edits[q.Key]=new(); edits[q.Key][f]=(q.Value,ps.TryGetValue(q.Key,out var pos)?pos:null); }
         }
         var changed = new Dictionary<string,byte[]>();

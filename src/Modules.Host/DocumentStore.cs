@@ -12,6 +12,7 @@ public sealed class DocumentStore : IModuleDocuments
     private readonly Dictionary<Guid, string> checkpoints = new();
     private readonly HashSet<Guid> closed = new();
     private readonly Dictionary<Guid, DocumentRegistration> registrations = new();
+    public DocumentBlobStore Blobs { get; } = new();
     public DocumentRegistration? Registration(Guid id) => registrations.GetValueOrDefault(id);
     public ImmutableArray<DocumentSnapshot> Active => documents.Values.Where(d => !closed.Contains(d.DocumentId)).ToImmutableArray();
     public event EventHandler<DocumentEvent>? Changed;
@@ -71,30 +72,40 @@ public sealed class DocumentStore : IModuleDocuments
         checkpoints[id] = ContentHash(d); d = d with { IsDirty = false, PersistedHash = hash }; documents[id] = d; Notify(d, "Saved");
     }
     private sealed record Recovery(int Version, DocumentSnapshot[] Documents, Dictionary<Guid, string> Checkpoints, Guid[] Closed,
-        Dictionary<Guid, DocumentRegistration>? Registrations = null);
-    public byte[] CaptureRecovery() => System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new Recovery(1, documents.Values.ToArray(), checkpoints, closed.ToArray(), registrations));
+        Dictionary<Guid, DocumentRegistration>? Registrations = null, Dictionary<string, byte[]>? Blobs = null);
+    public byte[] CaptureRecovery()
+    {
+        var blobs = Blobs.Capture();
+        return System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new Recovery(blobs.Count == 0 ? 1 : 2,
+            documents.Values.ToArray(), checkpoints, closed.ToArray(), registrations, blobs.Count == 0 ? null : blobs));
+    }
     public Result RestoreRecovery(ReadOnlyMemory<byte> bytes)
     {
         try
         {
             var r = System.Text.Json.JsonSerializer.Deserialize<Recovery>(bytes.Span);
-            if (r is null || r.Version != 1 || r.Documents is null || r.Checkpoints is null || r.Closed is null)
+            if (r is null || r.Version is not (1 or 2) || r.Documents is null || r.Checkpoints is null || r.Closed is null)
                 return new(ResultStatus.Unsupported, "Неизвестный формат документов recovery.");
+            if ((r.Version == 2 && r.Blobs is null) || (r.Version == 1 && r.Blobs is { Count: > 0 }))
+                return new(ResultStatus.Failed, "Неполный или несовместимый recovery blobs.");
             var staged = r.Documents.ToDictionary(d => d.DocumentId);
             if (staged.Keys.Any(id => !r.Checkpoints.ContainsKey(id)) || r.Closed.Any(id => !staged.ContainsKey(id)))
                 return new(ResultStatus.Failed, "Неполный recovery документов.");
-            foreach (var d in staged.Values)
+            return Blobs.Restore(r.Blobs, () =>
             {
-                // Missing codecs must never discard or rewrite recovered bytes.
-                if (codecs.ContainsKey((d.OwnerId, d.FormatId, d.StateVersion)))
-                { var v = Validate(d); if (!v.Succeeded) return v; }
-            }
-            documents.Clear(); checkpoints.Clear(); closed.Clear(); registrations.Clear();
-            foreach (var pair in r.Registrations ?? []) if (staged.ContainsKey(pair.Key)) registrations.Add(pair.Key, pair.Value);
-            foreach (var d in staged.Values) { documents.Add(d.DocumentId, d); checkpoints.Add(d.DocumentId, r.Checkpoints[d.DocumentId]); }
-            closed.UnionWith(r.Closed);
-            foreach (var d in staged.Values) Notify(d, "Restored");
-            return Result.Ok;
+                foreach (var d in staged.Values)
+                {
+                    // Missing codecs must never discard or rewrite recovered bytes.
+                    if (codecs.ContainsKey((d.OwnerId, d.FormatId, d.StateVersion)))
+                    { var v = Validate(d); if (!v.Succeeded) return v; }
+                }
+                documents.Clear(); checkpoints.Clear(); closed.Clear(); registrations.Clear();
+                foreach (var pair in r.Registrations ?? []) if (staged.ContainsKey(pair.Key)) registrations.Add(pair.Key, pair.Value);
+                foreach (var d in staged.Values) { documents.Add(d.DocumentId, d); checkpoints.Add(d.DocumentId, r.Checkpoints[d.DocumentId]); }
+                closed.UnionWith(r.Closed);
+                foreach (var d in staged.Values) Notify(d, "Restored");
+                return Result.Ok;
+            });
         }
         catch (Exception ex) { return new(ResultStatus.Failed, ex.Message); }
     }

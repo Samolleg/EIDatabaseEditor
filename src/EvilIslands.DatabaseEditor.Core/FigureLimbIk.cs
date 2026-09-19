@@ -53,6 +53,26 @@ public static class FigureLimbIk
         SetWorld(end, pose[end].Rotation, next);
         return rotations;
     }
+    // Moving a joint origin rotates its parent bone, not the joint itself.
+    // Preserve bind offsets/lengths and move the rest of that parent's subtree coherently.
+    public static bool SupportsJoint(FigureAnimationSet set, FigureAnimationClip clip, string joint) =>
+        set.Parents.TryGetValue(joint, out var parent) && parent.Length > 0 && clip.Tracks.ContainsKey(parent);
+
+    public static IReadOnlyDictionary<string, Quaternion> SolveJoint(FigureAnimationSet set,
+        FigureAnimationClip clip, int frame, string joint, Vector3 target)
+    {
+        if (!SupportsJoint(set, clip, joint) || frame < 0 || frame >= clip.FrameCount || !float.IsFinite(target.LengthSquared()))
+            throw new ArgumentException("Для перемещения сустава нужна редактируемая родительская кость.");
+        var pose = set.Pose(clip, frame);
+        string parent = set.Parents[joint];
+        Vector3 from = pose[joint].Position - pose[parent].Position, to = target - pose[parent].Position;
+        if (from.LengthSquared() < 1e-10f || to.LengthSquared() < 1e-10f)
+            throw new InvalidDataException("Сустав совпадает с опорной точкой: используйте кольца вращения.");
+        var world = Quaternion.Normalize(Between(from, to) * pose[parent].Rotation);
+        string ancestor = set.Parents[parent];
+        return new Dictionary<string, Quaternion>(StringComparer.OrdinalIgnoreCase)
+        { [parent] = Quaternion.Normalize(ancestor.Length == 0 ? world : world * Quaternion.Inverse(pose[ancestor].Rotation)) };
+    }
     private static Quaternion Between(Vector3 from, Vector3 to)
     {
         from = Vector3.Normalize(from); to = Vector3.Normalize(to);

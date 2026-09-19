@@ -273,25 +273,20 @@ public sealed class LuaSourceDocument
     public void VerifyUnchanged()
     { if (!File.ReadAllBytes(Path).AsSpan().SequenceEqual(_baseline)) throw new IOException("Файл изменён вне редактора: " + Path + ". Сохранение остановлено. Сохраните свои правки отдельно и переподключите Lua."); }
 
+    public void AcceptSaved()
+    {
+        byte[] output = Bytes;
+        if (!File.ReadAllBytes(Path).AsSpan().SequenceEqual(output)) throw new IOException("Сохранённый Lua изменён извне: " + Path);
+        _baseline = output; _undo.Clear(); _redo.Clear();
+    }
+
     public string Save()
     {
         if (!HasChanges) return "";
-        VerifyUnchanged(); byte[] output = Bytes;
-        string temp = Path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        string backup = Path + "." + DateTime.Now.ToString("yyyyMMdd-HHmmss-ffff", CultureInfo.InvariantCulture) + ".bak";
-        try
-        {
-            using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { stream.Write(output); stream.Flush(true); }
-            var check = Open(temp, _tableNames);
-            if (!check.Bytes.AsSpan().SequenceEqual(output)) throw new IOException("Проверка временного Lua не пройдена.");
-            VerifyUnchanged();
-            File.Replace(temp, Path, backup);
-            // The atomic replacement keeps the displaced bytes, even if another writer raced the final check.
-            if (!File.ReadAllBytes(backup).AsSpan().SequenceEqual(_baseline))
-                throw new IOException("Обнаружена одновременная запись. Заменённая версия сохранена в " + backup + "; проверьте обе версии перед продолжением.");
-            if (!File.ReadAllBytes(Path).AsSpan().SequenceEqual(output)) throw new IOException("Файл изменился при сохранении; резервная копия: " + backup);
-            _baseline = output; _undo.Clear(); _redo.Clear(); return backup;
-        }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        var result = DocumentSaveCoordinator.Commit([new(Guid.NewGuid(), Path, BaselineHash, Bytes)],
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "EI-Lua-save-journals"), true);
+        if (!result.Complete) throw new IOException(string.Join("; ", result.Files.Select(f => f.Status + ": " + f.Message)) + " Журнал: " + result.JournalPath);
+        AcceptSaved();
+        return result.Files[0].BackupPath;
     }
 }

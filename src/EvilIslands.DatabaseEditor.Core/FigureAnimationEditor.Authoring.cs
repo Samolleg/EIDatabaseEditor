@@ -13,6 +13,8 @@ public sealed record AnimationAuthoringSettings
     public int SmoothRadius { get; init; }
     public string Part { get; init; } = "";
     public bool Limits { get; init; } = true;
+    public List<string> LockedParts { get; init; } = new();
+    public List<string> UnlockedLimbs { get; init; } = new();
     public Dictionary<string, Vector3> Pins { get; init; } = new();
     public List<FootContact> Contacts { get; init; } = new();
     public List<StoredAnimationPose> Poses { get; init; } = new();
@@ -31,7 +33,11 @@ public sealed partial class FigureAnimationEditor
     private void Accept(byte[] bytes)
     {
         if (_bytes.AsSpan().SequenceEqual(bytes)) return;
-        if (_undo.Count >= 32) throw new InvalidOperationException("Достигнут лимит 32 операций отмены.");
+        if (_undo.Count >= 32)
+        {
+            var recent = _undo.Take(31).Reverse().ToArray(); _undo.Clear();
+            foreach (var state in recent) _undo.Push(state);
+        }
         _undo.Push(_bytes); _redo.Clear(); _bytes = bytes;
     }
     private (ResArchiveDocument Outer, ResEntry? Nested, ResArchiveDocument Tracks) Containers(string name)
@@ -63,7 +69,14 @@ public sealed partial class FigureAnimationEditor
         }
         byte[] bytes = ResArchiveWriter.Rebuild(tracks, replacements);
         if (nested is not null) bytes = ResArchiveWriter.Rebuild(outer, new Dictionary<int, byte[]> { [nested.Index] = bytes });
-        _ = await _source.WithBytes(bytes).LoadAsync(name).ConfigureAwait(false); Accept(bytes);
+        var candidate = await _source.WithBytes(bytes).LoadAsync(name).ConfigureAwait(false);
+        if (LockedParts.Count > 0)
+        {
+            var before = await Preview().LoadAsync(name).ConfigureAwait(false);
+            if (before.FrameCount == candidate.FrameCount)
+                for (int f = 0; f < before.FrameCount; f++) CheckLockedPose(_source, before, candidate, f, LockedParts);
+        }
+        Accept(bytes);
     }
     private sealed class RawTrack
     {
@@ -113,6 +126,7 @@ public sealed partial class FigureAnimationEditor
     {
         if (Contacts.Count > 0) throw new ArgumentException("Снимите диапазоны контактов перед изменением длины клипа.");
         var clip = await Preview().LoadAsync(name); Range(clip, first, last);
+        if (first == 0 && last == clip.FrameCount - 1) throw new ArgumentException("Нельзя удалить последний кадр. Сбросьте его позу или сначала добавьте другой кадр.");
         var map = Enumerable.Range(0, clip.FrameCount).Where(f => f < first || f > last).Select(f => (0, f)).ToArray();
         var raw = RawTracks(name); await ReplaceTracks(name, raw.ToDictionary(p => p.Key, p => MapTrack([new RawTrack(p.Value)], map, _source.Bones.GetValueOrDefault(p.Key))));
     }
@@ -142,10 +156,11 @@ public sealed partial class FigureAnimationEditor
         return new(clip.Name, tracks);
     }
     public static IReadOnlyDictionary<string, Quaternion> ConstrainPreview(FigureAnimationSet set, FigureAnimationClip clip, int frame,
-        IReadOnlyDictionary<string, Quaternion> rotations, IReadOnlyDictionary<string, Vector3> positions, bool limits, IReadOnlyDictionary<string, Vector3> pins)
+        IReadOnlyDictionary<string, Quaternion> rotations, IReadOnlyDictionary<string, Vector3> positions, bool limits, IReadOnlyDictionary<string, Vector3> pins, IReadOnlySet<string>? unlocked = null, IReadOnlySet<string>? locked = null)
     {
         var qs = new Dictionary<string, Quaternion>(rotations); var ps = new Dictionary<string, Vector3>(positions);
-        AnimationPoseConstraints.Apply(set, clip, frame, qs, ps, limits, pins); return qs;
+        AnimationPoseConstraints.Apply(set, clip, frame, qs, ps, limits, pins, unlocked);
+        CheckLockedPose(set, clip, VirtualPose(set, clip, frame, qs, ps), frame, locked); return qs;
     }
     public async Task ApplyAuthoringAsync(string name, int frame, IReadOnlyDictionary<string, Quaternion> rotations, IReadOnlyDictionary<string, Vector3> positions, int radius, bool limits, IReadOnlyDictionary<string, Vector3> pins)
     {
@@ -169,7 +184,7 @@ public sealed partial class FigureAnimationEditor
                 ps[pair.Key] = At(f) + (pair.Value - At(frame)) * weight;
             }
             var allPins = ContactPins(f); foreach (var pin in pins) allPins[pin.Key] = pin.Value;
-            AnimationPoseConstraints.Apply(current, clip, f, qs, ps, limits, allPins);
+            AnimationPoseConstraints.Apply(current, clip, f, qs, ps, limits, allPins, UnlockedLimbs);
             foreach (string key in qs.Keys.Concat(ps.Keys).Distinct())
             {
                 if (!edits.TryGetValue(key, out var frames)) edits[key] = frames = new();
@@ -249,6 +264,12 @@ public sealed partial class FigureAnimationEditor
         if (d.Settings.Contacts is null || d.Settings.Poses is null || d.Settings.Contacts.Count > 1000 || d.Settings.Poses.Count > 500) throw new InvalidDataException("Некорректная библиотека/контакты.");
         foreach(var c in d.Settings.Contacts) if(c.First<0||c.Last<c.First||c.Last>=loaded.FrameCount||!float.IsFinite(c.Anchor.LengthSquared())||!FigureLimbIk.Supports(_source,loaded,c.Part)) throw new InvalidDataException("Некорректный контакт.");
         foreach(var p in d.Settings.Poses) if(p.Rotations is null || p.Positions is null || p.Rotations.Any(q=>!float.IsFinite(q.Value.LengthSquared())||q.Value.LengthSquared()<.0001f)||p.Positions.Any(v=>!float.IsFinite(v.Value.LengthSquared()))) throw new InvalidDataException("Некорректная поза.");
+        if (d.Settings.LockedParts is null || d.Settings.UnlockedLimbs is null ||
+            d.Settings.LockedParts.Any(p => p is null || !loaded.Tracks.ContainsKey(p)) ||
+            d.Settings.UnlockedLimbs.Any(p => p is not ("lh3" or "rh3" or "ll3" or "rl3")))
+            throw new InvalidDataException("Некорректные блокировки частей.");
+        LockedParts.Clear(); LockedParts.UnionWith(d.Settings.LockedParts);
+        UnlockedLimbs.Clear(); UnlockedLimbs.UnionWith(d.Settings.UnlockedLimbs);
         Contacts = d.Settings.Contacts.ToArray();
         _bytes = d.Animation; _undo.Clear(); _redo.Clear(); foreach (byte[] state in d.Undo.Reverse()) _undo.Push(state); foreach (byte[] state in d.Redo.Reverse()) _redo.Push(state);
         return d.Settings;

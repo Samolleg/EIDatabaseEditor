@@ -59,6 +59,7 @@ public sealed class LuaDataWorkspace
     public IReadOnlyList<string> Problems { get; }
     public string SchemaSource { get; }
     private readonly Dictionary<string, Dictionary<string, string>> _labels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _requiredUnitStats = new(StringComparer.Ordinal);
     public event EventHandler? Changed;
     public bool HasChanges => Documents.Any(d => d.HasChanges);
     public int ZoneRuleCount { get; }
@@ -92,6 +93,8 @@ public sealed class LuaDataWorkspace
                         string tail = enums.Text[f.Value.End..end]; int comment = tail.IndexOf("--", StringComparison.Ordinal);
                         string label = comment < 0 ? "" : tail[(comment + 2)..].Trim();
                         labels["#" + n] = label.Length > 0 ? label + " — " + f.Key : f.Key;
+                        if (name == "UnitStatType" && f.Key is "Exp" or "StatStrength" or "StatDexterity" or "StatIntelligence" or "CriticalChance" or "CriticalDamage")
+                            _requiredUnitStats["#" + n] = labels["#" + n];
                     }
                 _labels[name] = labels;
             }
@@ -216,5 +219,20 @@ public sealed class LuaDataWorkspace
     public void Undo(LuaSourceDocument doc) { doc.Undo(); Changed?.Invoke(this, EventArgs.Empty); }
     public void Redo(LuaSourceDocument doc) { doc.Redo(); Changed?.Invoke(this, EventArgs.Empty); }
     public void Discard() { foreach (var d in Documents) d.Discard(); Changed?.Invoke(this, EventArgs.Empty); }
-    public string Save(LuaSourceDocument doc) { string backup = doc.Save(); Changed?.Invoke(this, EventArgs.Empty); return backup; }
+    public void ValidateForSave(LuaSourceDocument doc)
+    {
+        if (!doc.HasChanges || !doc.Tables.TryGetValue("UnitStat", out var assignment) || assignment.Value is not { } table) return;
+        var problems = new List<string>();
+        foreach (var row in table.Fields)
+        {
+            var name = row.Value.Field("#1")?.Value.Text ?? "?";
+            var missing = _requiredUnitStats.Where(p => row.Value.Field(p.Key)?.Value.Kind != LuaLiteralKind.Number)
+                .Select(p => "[" + p.Key[1..] + "] " + p.Value).ToArray();
+            if (missing.Length > 0) problems.Add(name + ": " + string.Join(", ", missing));
+        }
+        if (problems.Count > 0)
+            throw new InvalidDataException("Сохранение остановлено: неполные строки UnitStat в " + System.IO.Path.GetFileName(doc.Path) +
+                ". Заполните числовые значения: " + string.Join("; ", problems) + ". Ноль нужно указать явно, если он предусмотрен для прототипа.");
+    }
+    public string Save(LuaSourceDocument doc) { ValidateForSave(doc); string backup = doc.Save(); Changed?.Invoke(this, EventArgs.Empty); return backup; }
 }

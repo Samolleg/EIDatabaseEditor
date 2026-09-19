@@ -39,7 +39,7 @@ internal sealed partial class AnimationEditorDialog
     private void InitializeAuthoring(StackPanel sidebar, Grid columns)
     {
         _smooth.Text = "0";
-        _preview.PoseFilter = (frame, rotations, positions) => { var pins = _editor.ContactPins(frame); foreach(var p in _pins)pins[p.Key]=p.Value; return _loadedClip is null ? rotations : FigureAnimationEditor.ConstrainPreview(_scene.Animations!, _loadedClip, frame, rotations, positions, _limits.IsChecked == true, pins); };
+        _preview.PoseFilter = (frame, rotations, positions) => { var pins = _editor.ContactPins(frame); foreach(var p in _pins)pins[p.Key]=p.Value; return _loadedClip is null ? rotations : FigureAnimationEditor.ConstrainPreview(_scene.Animations!, _loadedClip, frame, rotations, positions, _limits.IsChecked == true, pins, _editor.UnlockedLimbs, _editor.LockedParts); };
         _preview.PoseRejected = message => _message.Text = message;
         _limits.ToolTip = "Для стандартных цепочек рук/ног: предел сгиба и запрет обратного сгиба относительно исходной позы кадра. Для нестандартных скелетов ограничения не назначаются.";
         _smooth.ToolTip = "0 — один кадр; N — плавно ослабить правку на N соседних кадров в обе стороны.";
@@ -48,7 +48,7 @@ internal sealed partial class AnimationEditorDialog
             var button = ActionButton(title, () => { }); button.Click += async (_, _) => await Run(action); _authoring.Children.Add(button);
         }
         Button("Копировать кадры", async () => { var r = SelectedRange(); _copiedFrames = await _editor.CopyFramesAsync(_name, r.First, r.Last); _message.Text = $"Скопировано кадров: {_copiedFrames.Count}. Вставка — перед текущим кадром."; });
-        Button("Вставить кадры", async () => { if (_copiedFrames is null) throw new InvalidOperationException("Сначала скопируйте кадр или диапазон."); await _editor.PasteFramesAsync(_name, CurrentFrame, _copiedFrames); await Refresh(); });
+        Button("Вставить новые перед текущим", async () => { if (_copiedFrames is null) throw new InvalidOperationException("Сначала скопируйте кадр или диапазон."); await _editor.PasteFramesAsync(_name, CurrentFrame, _copiedFrames); await Refresh(); });
         Button("Дублировать", async () => { var r = SelectedRange(); await _editor.DuplicateFramesAsync(_name, r.First, r.Last); await Refresh(); });
         Button("Удалить кадры", async () => { var r = SelectedRange(); await _editor.DeleteFramesAsync(_name, r.First, r.Last); await Refresh(); });
         Button("Зеркальная поза", async () => { if (_before.IsChecked == true) throw new InvalidOperationException("Выключите показ оригинала."); await _editor.MirrorPoseAsync(_name, CurrentFrame, _limits.IsChecked == true, _pins); await Refresh(); });
@@ -61,11 +61,24 @@ internal sealed partial class AnimationEditorDialog
         columns.Children.Remove(_preview);
         var right = new Grid(); right.RowDefinitions.Add(new RowDefinition()); right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         right.Children.Add(_preview); Grid.SetColumn(_preview, 0);
-        var footer = new StackPanel(); footer.Children.Add(_timeline); _preview.MoveEditorPlaybackTo(_playback); footer.Children.Add(_playback);
+        var footer = new StackPanel(); footer.Children.Add(_storyTools); footer.Children.Add(_storyScroll); footer.Children.Add(_timeline); _preview.MoveEditorPlaybackTo(_playback); footer.Children.Add(_playback);
         Grid.SetRow(footer, 1); right.Children.Add(footer); Grid.SetColumn(right, 1); columns.Children.Add(right);
-        _timeline.Seek += frame => { if (_busy) return; _preview.PauseAnimation(); _frame.Text = frame.ToString(); ReadPose(); };
-        _timeline.RangeChanged += (first, last) => { _first.Text = first.ToString(); _last.Text = last.ToString(); _length.Text = (last - first + 1).ToString(); };
-        _preview.FrameDisplayed += frame => { _timeline.Frame = frame; if (!_busy) _frame.Text = ((int)frame).ToString(); _timeline.InvalidateVisual(); };
+        _timeline.Seek += frame => { if (_busy) return; _preview.PauseAnimation(); _frame.Text = frame.ToString(); ReadPose(); SyncStoryboardSelection(); };
+        _timeline.RangeChanged += (first, last) => { _first.Text = first.ToString(); _last.Text = last.ToString(); _length.Text = (last - first + 1).ToString(); SyncStoryboardSelection(); };
+        _preview.FrameDisplayed += frame =>
+        {
+            _timeline.Frame = frame;
+            if (!_busy)
+            {
+                _frame.Text = ((int)frame).ToString();
+                if (!_settingStoryboardSelection && _loadedClip is not null && (_preview.AnimationPlaying || (int)frame != _story.Current))
+                {
+                    _first.Text = _last.Text = ((int)frame).ToString(); _length.Text = "1";
+                    SyncStoryboardSelection();
+                }
+            }
+            _timeline.InvalidateVisual();
+        };
         foreach (var box in new[] { _first, _last }) box.LostKeyboardFocus += (_, _) => { try { var r = SelectedRange(); _timeline.First = r.First; _timeline.Last = r.Last; _timeline.InvalidateVisual(); } catch (ArgumentException) { } };
         void Pin(CheckBox check, string part)
         {
@@ -86,7 +99,7 @@ internal sealed partial class AnimationEditorDialog
     private async Task RefreshAuthoring()
     {
         _originalClip ??= await _scene.Animations!.LoadAsync(_name);
-        _timeline.Count = _loadedClip!.FrameCount; _timeline.First = 0; _timeline.Last = _loadedClip.FrameCount - 1; _timeline.InvalidateVisual();
+        _timeline.Count = _loadedClip!.FrameCount; var range = SelectedRange(); _timeline.First = range.First; _timeline.Last = range.Last; _timeline.InvalidateVisual();
         _leftFoot.IsEnabled = FigureLimbIk.Supports(_editor.Preview(), _loadedClip, "ll3");
         _rightFoot.IsEnabled = FigureLimbIk.Supports(_editor.Preview(), _loadedClip, "rl3");
         UpdateComparison();
@@ -103,11 +116,12 @@ internal sealed partial class AnimationEditorDialog
         Last = int.TryParse(_last.Text, out int last) ? last : 0,
         SmoothRadius = int.TryParse(_smooth.Text, out int radius) ? radius : 0,
         Part = _part.SelectedItem as string ?? "", Limits = _limits.IsChecked == true,
+        LockedParts = _editor.LockedParts.ToList(), UnlockedLimbs = _editor.UnlockedLimbs.ToList(),
         Contacts = _editor.Contacts.ToList(), Poses = _poses.ToList(), Trajectory = _trajectoryCheck.IsChecked == true, Onion = _onionCheck.IsChecked == true,
         Ghost = _ghost.IsChecked == true, Pins = new(_pins), Fps = _preview.EditorFps, Loop = _preview.EditorLoop
     };
     private byte[] ProjectBytes() => _editor.SaveProject(_scene.Model, _name, Settings());
-    private bool HasUnsavedWork() => _savedProject is not null ? !ProjectSaved() : _poses.Count > 0 || _editor.Contacts.Count > 0 || !_editor.ExportBytes().AsSpan().SequenceEqual(_exported);
+    private bool HasUnsavedWork() => _savedProject is not null ? !ProjectSaved() : _editor.LockedParts.Count > 0 || _editor.UnlockedLimbs.Count > 0 || _poses.Count > 0 || _editor.Contacts.Count > 0 || !_editor.ExportBytes().AsSpan().SequenceEqual(_exported);
     private bool ProjectSaved() => _savedProject is not null && ProjectBytes().AsSpan().SequenceEqual(_savedProject);
     private Task SaveProject()
     {
@@ -139,7 +153,8 @@ internal sealed partial class AnimationEditorDialog
         {
             _preview.EditorFps = settings.Fps; _preview.EditorLoop = settings.Loop;
             _poses.Clear(); _poses.AddRange(settings.Poses); RefreshLibrary(); _trajectoryCheck.IsChecked=settings.Trajectory; _onionCheck.IsChecked=settings.Onion;
-            _smooth.Text = settings.SmoothRadius.ToString(); _limits.IsChecked = settings.Limits; _ghost.IsChecked = settings.Ghost; _before.IsChecked = false;
+            _smooth.Text = settings.SmoothRadius.ToString(); _limits.IsChecked = true; _ghost.IsChecked = settings.Ghost; _before.IsChecked = false;
+            if (!settings.Limits) _editor.UnlockedLimbs.UnionWith(new[] { "lh3", "rh3", "ll3", "rl3" }); // Legacy projects used one global switch.
             _pins.Clear(); foreach (var pin in settings.Pins) _pins[pin.Key] = pin.Value;
             _leftFoot.IsChecked = _pins.ContainsKey("ll3"); _rightFoot.IsChecked = _pins.ContainsKey("rl3");
             _frame.Text = settings.Frame.ToString(); _part.SelectedItem = settings.Part;
@@ -147,6 +162,6 @@ internal sealed partial class AnimationEditorDialog
             _timeline.First = settings.First; _timeline.Last = settings.Last; ReadPose();
         }
         finally { _loadingSettings = false; }
-        UpdateComparison(); await RefreshMotion(); _savedProject = ProjectBytes(); _message.Text = "Проект открыт. История отмены и настройки восстановлены.";
+        UpdateComparison(); await RefreshMotion(); RefreshStoryboard(); _savedProject = ProjectBytes(); _message.Text = "Проект открыт. История отмены и настройки восстановлены.";
     }
 }
