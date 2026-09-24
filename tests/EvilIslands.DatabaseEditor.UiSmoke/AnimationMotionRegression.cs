@@ -66,6 +66,7 @@ internal static class AnimationMotionRegression
         }
         try{await creator.CreateAnimationAsync(name,"../bad",9,false);throw new Exception("invalid name accepted");}catch(ArgumentException){}
         Console.WriteLine("CATALOG PASS: copy/bind new clips, exact original payloads, duplicate/name guards, undo");
+        await AnimationSaveRegression.Verify(source, name);
         var view=new UnitModelPreviewView{AllowAnimationEditing=false};view.ShowScene(scene);Check(view.EditorAnimationName is not null,"editor unavailable from bind pose");await view.SelectAnimationAsync(name);view.SetSkeleton(AnimationEditorDialog.EditableParts(scene,clip),part);view.SetMotionGuides(part,true,true);view.SetAnimationFrame(3);Check(view.OnionCount==4&&view.TrajectoryCount==clip.FrameCount,"trajectory/onions missing");view.SetMotionGuides(part,false,false);Check(view.OnionCount==0&&view.TrajectoryCount==0,"guide cleanup");
         Console.WriteLine("MOTION TEN PASS "+scene.Model+": joint transfer, five curves, trajectory/onions, loop, masked library, timed contacts, composition, mapped retarget+rollback, diagnosis, project persistence");
     }

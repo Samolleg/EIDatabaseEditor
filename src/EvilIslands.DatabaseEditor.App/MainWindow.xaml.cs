@@ -821,6 +821,14 @@ public partial class MainWindow : Window
 
     private void AddLocalizationColumns(Style elementStyle, Style editingStyle, string tableKey)
     {
+        if (tableKey == "quests.briefings")
+        {
+            RecordsGrid.Columns.Add(new DataGridTextColumn
+            {
+                Header = "Источник", Binding = new Binding(nameof(RecordRowViewModel.BriefingSource)),
+                IsReadOnly = true, ElementStyle = elementStyle, Width = 220,
+            });
+        }
         var localizationHeaderStyle = (Style)FindResource("LocalizationColumnHeaderStyle");
         _localizationKeyColumn = new DataGridTextColumn
         {

@@ -294,6 +294,7 @@ public sealed partial class UnitModelPreviewView : UserControl
         }
         if (item || scene.Animations is null) group.Freeze();
         _visual.Content = group;
+        UpdateGround(scene);
         SetAnimations(item ? null : scene.Animations);
         SetCameraBounds(group.Bounds);
         Fit();

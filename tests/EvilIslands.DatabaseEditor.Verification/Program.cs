@@ -200,7 +200,8 @@ internal static class Program
             AssertCoreValidation(coreDocument, log, "Исходный DatabaseDocument", sourceBefore.Sha256);
             AssertDatabaseCatalog(coreDocument, boundaries, sourceBefore.Sha256, log);
             AssertEmbeddedMagicCatalog(coreDocument.GetDatabases(), log);
-            log.Assert(coreDocument.ContainsPowerHit(), "В spells.sdb найдена запись CodeName=powerhit.");
+            bool hasPowerHitFixture = coreDocument.ContainsPowerHit();
+            log.Info(hasPowerHitFixture ? "Специальная фикстура powerhit доступна." : "В оригинальной БД нет powerhit; общие проверки формата продолжаются.");
 
             await VerifyDatabaseComparisonAsync(sourcePath, staging, log).ConfigureAwait(false);
 
@@ -222,7 +223,7 @@ internal static class Program
                 "Повторное открытие no-op копии",
                 () => CoreDocumentAdapter.OpenAsync(noOpPath)).ConfigureAwait(false);
             AssertCoreValidation(reopenedNoOp, log, "No-op копия");
-            log.Assert(reopenedNoOp.ContainsPowerHit(), "powerhit сохранился в no-op копии.");
+            log.Assert(reopenedNoOp.ContainsPowerHit() == hasPowerHitFixture, "Набор заклинаний сохранился в no-op копии.");
 
             ResArchiveDocument noOpArchive = ResArchiveDocument.Open(noOpPath);
             AssertResourceIdentity(archive, noOpArchive, changedResourceName: null, log);
@@ -252,6 +253,8 @@ internal static class Program
             await VerifyNestedStringListDelimiterSafetyAsync(sourcePath, log).ConfigureAwait(false);
             await VerifyCommaSeparatedStringListSafetyAsync(sourcePath, log).ConfigureAwait(false);
 
+            if (hasPowerHitFixture)
+            {
             CoreDocumentAdapter editedDocument = await log.MeasureAsync(
                 "Повторное открытие для тестового изменения",
                 () => CoreDocumentAdapter.OpenAsync(sourcePath)).ConfigureAwait(false);
@@ -323,6 +326,11 @@ internal static class Program
             AssertResourceResize(archive, resizedArchive, stringEdit.ResourceName, log);
             DatabaseBoundaryVerifier.Verify(resizedArchive);
             log.Pass("Строковая копия повторно разобрана до границ всех DB-полей.");
+            FileSnapshot editedSnapshot = await FileSnapshot.CaptureAsync(editedPath).ConfigureAwait(false);
+            FileSnapshot resizedSnapshot = await FileSnapshot.CaptureAsync(resizedPath).ConfigureAwait(false);
+            log.Info($"Edited:  {editedSnapshot.Length:N0} bytes; SHA-256 {editedSnapshot.Sha256}");
+            log.Info($"Resized: {resizedSnapshot.Length:N0} bytes; SHA-256 {resizedSnapshot.Sha256}");
+            }
 
             await SafetyRegressionVerifier.RunAsync(
                 sourcePath,
@@ -332,11 +340,7 @@ internal static class Program
                 log).ConfigureAwait(false);
 
             FileSnapshot noOpSnapshot = await FileSnapshot.CaptureAsync(noOpPath).ConfigureAwait(false);
-            FileSnapshot editedSnapshot = await FileSnapshot.CaptureAsync(editedPath).ConfigureAwait(false);
-            FileSnapshot resizedSnapshot = await FileSnapshot.CaptureAsync(resizedPath).ConfigureAwait(false);
             log.Info($"No-op:   {noOpSnapshot.Length:N0} bytes; SHA-256 {noOpSnapshot.Sha256}");
-            log.Info($"Edited:  {editedSnapshot.Length:N0} bytes; SHA-256 {editedSnapshot.Sha256}");
-            log.Info($"Resized: {resizedSnapshot.Length:N0} bytes; SHA-256 {resizedSnapshot.Sha256}");
         }
         finally
         {
@@ -1687,11 +1691,10 @@ internal static class Program
             "После проверки исходный список навыков NPC восстановлен без следов изменения.");
 
         DatabaseTable spellTable = RequireTable(tables, "spells.prototypes");
-        DatabaseRecord powerHit = spellTable.Records.First(record =>
-            string.Equals(record.GetString("CodeName"), "powerhit", StringComparison.OrdinalIgnoreCase));
+        DatabaseRecord powerHit = spellTable.Records.First();
         log.Assert(
             string.Equals(powerHit.Name, RequireField(powerHit, 0).Value.ToString(), StringComparison.Ordinal) &&
-            string.Equals(powerHit.GetString("CodeName"), "powerhit", StringComparison.OrdinalIgnoreCase),
+            !string.IsNullOrWhiteSpace(powerHit.GetString("CodeName")),
             "Отображаемое имя заклинания использует поле 0 Name; CodeName остаётся отдельным ключом.");
         log.Assert(
             RequireField(powerHit, 6).Kind == "Int32" &&

@@ -145,6 +145,20 @@ public sealed class SpellsDatabase
 
 public sealed class DatabaseRecord
 {
+    // Detached display record. It is never inserted into a DatabaseDocument.
+    public static DatabaseRecord CreateBriefingTextReference(string name, int referenceIndex)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentOutOfRangeException.ThrowIfNegative(referenceIndex);
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        byte[] data = Encoding.GetEncoding(1251).GetBytes(name);
+        var chunk = new ChunkSlice(0, 0, 0, 0, data.Length);
+        var field = new DatabaseField(0, new FieldSchema(DatabaseValueKind.String, "Имя", Editable: false),
+            $"texts.res/BRIEFING {name}", 0, chunk, data, new object());
+        return new DatabaseRecord("texts.res", 2, "Брифинги", -1 - referenceIndex,
+            name, 0, 0, [field], chunk, data);
+    }
+
     private readonly string _fallbackName;
     private readonly byte _nameFieldId;
 

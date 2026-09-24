@@ -21,6 +21,7 @@ public sealed record AnimationAuthoringSettings
     public bool Trajectory { get; init; }
     public bool Onion { get; init; }
     public bool Ghost { get; init; }
+    public bool? Ground { get; init; }
     public int Fps { get; init; } = 30;
     public bool Loop { get; init; } = true;
 }

@@ -14,6 +14,12 @@ public sealed partial class FigureAnimationEditor
     public FigureAnimationEditor(FigureAnimationSet source) { _source = source; _bytes = source.ExportBytes(); }
     public byte[] ExportBytes() => (byte[])_bytes.Clone();
     public FigureAnimationSet Preview() => _source.WithBytes(_bytes);
+    public void AdoptSavedBytes(byte[] bytes)
+    {
+        // A nested editor starts from this editor's current preview; preserve local authoring settings and history.
+        _ = _source.WithBytes(bytes);
+        Accept(bytes.ToArray());
+    }
     public void Undo() { if (_undo.TryPop(out var b)) { _redo.Push(_bytes); _bytes = b; } }
     public void Redo() { if (_redo.TryPop(out var b)) { _undo.Push(_bytes); _bytes = b; } }
 

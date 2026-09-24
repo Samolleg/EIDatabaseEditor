@@ -17,6 +17,9 @@ internal static class StoryboardRegression
     {
         var dialog = new AnimationEditorDialog(scene, name); await dialog.Refresh();
         T Field<T>(string key) => (T)typeof(AnimationEditorDialog).GetField(key, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
+        var sidebar = Field<StackPanel>("_storySidebar");
+        Check(sidebar.Children.Count > 0 && sidebar.Children[0] is Button { Content: "✦ Создать движение по тексту…" },
+            "Kimodo entry was hidden inside the collapsed advanced tools panel");
         var storyboard = Field<AnimationStoryboard>("_story"); var editor = Field<FigureAnimationEditor>("_editor");
         var source = await editor.Preview().LoadAsync(name); int n = source.FrameCount;
         Field<EvilIslands.DatabaseEditor.App.UnitModelPreviewView>("_preview").SetAnimationFrame(2);

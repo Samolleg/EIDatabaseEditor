@@ -354,6 +354,34 @@ public sealed class DatabaseDocument
         return Task.Run(() => SaveInPlace(allowGameInstallationPath, createBackup), CancellationToken.None);
     }
 
+    public DatabaseRecord AppendBriefing(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        lock (_editSync)
+        {
+            var table = Databases.SelectMany(g => g.Tables).Single(t => t.Key == "quests.briefings");
+            if (table.Records.Any(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("Брифинг с таким именем уже есть в БД.");
+            // Accept only a complete known shape, so no hidden actions are inherited.
+            var template = table.Records.FirstOrDefault(r => r.Fields.Count == 11 &&
+                Enumerable.Range(0, 11).All(id => r.Fields.Count(f => f.Id == id) == 1) &&
+                r.Fields.All(f => f.Kind == (f.Id switch {
+                    0 or 4 => "String", 1 or 2 => "Float32", 10 => "Int32", _ => "StringList" })));
+            if (template is null) throw new InvalidOperationException("Нет полного распознанного образца брифинга для безопасного создания записи.");
+            var record = AppendRecordClone(template);
+            try
+            {
+                foreach (var field in record.Fields)
+                {
+                    string value = field.Id switch { 0 => name, 1 or 2 or 10 => "0", _ => "" };
+                    if (!field.TrySetValue(value, out var error)) throw new InvalidOperationException(error);
+                }
+                return record;
+            }
+            catch { RemoveAddedRecord(record); throw; }
+        }
+    }
+
     public DatabaseRecord AppendRecordClone(DatabaseRecord template)
     {
         ArgumentNullException.ThrowIfNull(template);

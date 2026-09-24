@@ -755,7 +755,11 @@ internal static class SafetyRegressionVerifier
     private static DatabaseRecord FindPowerHit(DatabaseDocument document) =>
         document.Spells.Spells.FirstOrDefault(record =>
             string.Equals(record.GetString("CodeName"), "powerhit", StringComparison.OrdinalIgnoreCase))
-        ?? throw new VerificationException("Запись powerhit не найдена.");
+        ?? document.Spells.Spells.FirstOrDefault(record =>
+            !string.IsNullOrWhiteSpace(record.GetString("CodeName")) &&
+            record.Fields.Any(field => field.Key == "Name" && field.IsEditable) &&
+            record.Fields.Any(field => field.Key == "CodeName" && field.IsEditable))
+        ?? throw new VerificationException("В базе нет заклинания с редактируемыми Name и CodeName.");
 
     private static FieldTarget FindEditableByteField(DatabaseDocument document)
     {

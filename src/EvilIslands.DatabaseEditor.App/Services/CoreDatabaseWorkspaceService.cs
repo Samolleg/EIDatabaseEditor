@@ -147,6 +147,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
                     .ToArray();
             if (textsDocument is not null)
             {
+                AddTextOnlyBriefings(databases, textResources);
                 AttachRelatedTexts(databases, textResources, cancellationToken);
             }
 
@@ -214,6 +215,18 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             cancellationToken);
     }
 
+    internal RecordRowViewModel CreateBriefingRecord(DatabaseTableViewModel table, RecordRowViewModel reference)
+    {
+        if (table.Key != "quests.briefings" || !reference.IsTextOnlyBriefing)
+            throw new InvalidOperationException("Выберите текстовый брифинг без записи БД.");
+        var core = RequireDocument().AppendBriefing(reference.DisplayName);
+        var row = new RecordRowViewModel(core, table.Key, table.Title, table.IsEditable)
+        { TextOnlyBriefingReference = reference };
+        RefreshRelatedTexts(row);
+        RefreshRelatedSounds(row);
+        return row;
+    }
+
     public RecordRowViewModel AppendRecordClone(DatabaseTableViewModel table, RecordRowViewModel template)
     {
         ArgumentNullException.ThrowIfNull(table);
@@ -223,6 +236,8 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             throw new InvalidOperationException("Выбранная строка не может быть образцом для этой таблицы.");
         }
 
+        if (template.IsTextOnlyBriefing)
+            throw new InvalidOperationException("Этот брифинг находится только в texts.res. Для новой записи БД выберите образец из quests.qdb.");
         DatabaseRecord record = RequireDocument().AppendRecordClone(template.CoreRecord);
         var viewModel = new RecordRowViewModel(record, table.Key, table.Title, table.IsEditable);
         RefreshRelatedTexts(viewModel);
@@ -292,6 +307,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         var core = RequireDocument().RebindHistoryRecord(previous.CoreRecord, present);
         var row = present ? table.Records.Single(r => ReferenceEquals(r.CoreRecord, core))
             : new RecordRowViewModel(core, table.Key, table.Title, table.IsEditable);
+        row.TextOnlyBriefingReference = previous.TextOnlyBriefingReference;
         RefreshRelatedTexts(row);
         RefreshRelatedSounds(row);
         return row;
@@ -874,6 +890,24 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         return record.TableKey is "items.weapons" or "items.armors"
             ? keys.Append($"INSTR {shape}")
             : keys;
+    }
+
+    private static void AddTextOnlyBriefings(
+        IReadOnlyList<DatabaseGroupViewModel> databases,
+        IReadOnlyList<LocalizationEntryViewModel> texts)
+    {
+        var table = databases.SelectMany(group => group.Tables).FirstOrDefault(t => t.Key == "quests.briefings");
+        if (table is null) return;
+        var names = table.Records.Select(r => NormalizeKeyPart(GetFieldText(r, 0))).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        int referenceIndex = 0;
+        foreach (var text in texts.Where(t => t.Prefix.Equals("BRIEFING", StringComparison.OrdinalIgnoreCase))
+                     .OrderBy(t => t.ResourceName, StringComparer.OrdinalIgnoreCase))
+        {
+            string name = text.ResourceName[(text.Prefix.Length + 1)..].Trim();
+            if (name.Length == 0 || !names.Add(name)) continue;
+            var record = DatabaseRecord.CreateBriefingTextReference(name, referenceIndex++);
+            table.Records.Add(new RecordRowViewModel(record, table.Key, table.Title, tableIsEditable: false));
+        }
     }
 
     private static IEnumerable<string> BuildExactTextKeys(RecordRowViewModel record)

@@ -1198,6 +1198,12 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             return null;
         }
 
+        if (record.IsTextOnlyBriefing)
+        {
+            ShowError("У этого брифинга есть только текст в texts.res. Поиск ссылок на запись quests.qdb недоступен: такой записи нет.");
+            return null;
+        }
+
         CancelOperation();
         _operationCancellation = new CancellationTokenSource();
         CancellationToken cancellationToken = _operationCancellation.Token;
@@ -2023,6 +2029,31 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         RecordsView.Filter = FilterRecord;
         RefreshRecordFilter();
         StatusText = $"{table.ResourceName} · {table.Title} · {table.RecordCount:N0} записей · {table.StatusText.ToLowerInvariant()}";
+    }
+
+    internal RecordRowViewModel CreateSelectedBriefingRecord()
+    {
+        if (!IsEditMode || IsBusy || SelectedTable is not { } table ||
+            SelectedRecord is not { IsTextOnlyBriefing: true } reference ||
+            _service is not CoreDatabaseWorkspaceService service)
+            throw new InvalidOperationException("Выберите текстовый брифинг в режиме редактирования.");
+        var row = service.CreateBriefingRecord(table, reference);
+        table.Records.Remove(reference);
+        row.FieldValueCommitted += OnFieldValueCommitted;
+        row.IsEditMode = true;
+        table.AppendRecord(row);
+        AddRecordInsertionChange(row);
+        _undo.Push(new RecordPresenceEditFrame(table, row, false, true));
+        _redo.Clear();
+        SelectedRecord = row;
+        RecordsView.Refresh();
+        FilteredRecordCount = RecordsView.Cast<object>().Count();
+        RefreshAllCounts();
+        OnPropertyChanged(nameof(CurrentTableRecordCount));
+        OnPropertyChanged(nameof(HasChanges));
+        RefreshValidationDeferred();
+        RaiseCommandStates();
+        return row;
     }
 
     private void AppendSelectedRecord()
@@ -3517,6 +3548,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             _service.RestoreAddedRecord(record);
             record.FieldValueCommitted += OnFieldValueCommitted;
             record.IsEditMode = IsEditMode && ReferenceEquals(SelectedTable, table) && !IsBusy;
+            if (record.TextOnlyBriefingReference is { } reference) table.Records.Remove(reference);
             table.AppendRecord(record);
             if (record.IsAdded) AddRecordInsertionChange(record);
             else RemoveRecordInsertionChange(record);
@@ -3536,6 +3568,13 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             record.FieldValueCommitted -= OnFieldValueCommitted;
             record.IsEditMode = false;
             table.RemoveLastRecord(record);
+            if (record.TextOnlyBriefingReference is { } reference)
+            {
+                _service.RefreshRelatedTexts(reference);
+                _service.RefreshRelatedSounds(reference);
+                table.Records.Insert(0, reference);
+                if (ReferenceEquals(SelectedTable, table)) SelectedRecord = reference;
+            }
             RemoveRecordInsertionChange(record);
             if (!record.IsAdded) AddRecordInsertionChange(record, removal: true);
         }

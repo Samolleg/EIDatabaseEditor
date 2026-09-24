@@ -28,6 +28,8 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--briefing-actions") return BriefingActionsRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--briefing-list") return BriefingListRegression.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--lua-row-format") return LuaRowFormatRegression.Run(args[1]);
         if (args.Length == 3 && args[0] == "--module-header") return ModuleHeaderRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--viewer") return ViewerRegression.Run(args[1], args[2]);
@@ -42,6 +44,7 @@ internal static class Program
         if (args.Length == 3 && args[0] == "--module-integration") return ModuleIntegrationRegression.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--module-transactions") return ModuleTransactionRegression.Run(args[1]);
         if (args.Length == 3 && args[0] == "--animation-edit") return AnimationEditRegression.Run(args[1], args[2]);
+        if (args.Length == 4 && args[0] == "--adb-source") return AnimationDatabaseRegression.VerifyActive(args[1], args[2], args[3]);
         if (args.Length == 4 && args[0] == "--mob-equipment") return MobEquipmentRegression.Run(args[1], args[2], args[3]);
         if (args.Length == 3 && args[0] == "--res-tiles") return ResTilesRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--lua-data") return LuaDataRegression.Run(args[1], args[2]);

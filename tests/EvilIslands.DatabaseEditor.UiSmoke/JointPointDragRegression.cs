@@ -18,6 +18,23 @@ internal static class JointPointDragRegression
         view.SetAnimationFrame(1);
         view.Measure(new Size(900,700)); view.Arrange(new Rect(0,0,900,700)); view.UpdateLayout();
         var before = source.Pose(clip,1);
+        if (parts.Contains("ll3") && parts.Contains("rl3"))
+        {
+            var root = parts.First(p => source.Parents[p].Length == 0);
+            var below = before[root].Position - Vector3.UnitZ * 100;
+            view.GroundEnabled = true;
+            var floor = view.GroundLevel;
+            var viewport = (System.Windows.Controls.Viewport3D)typeof(UnitModelPreviewView)
+                .GetField("_viewport", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
+            Check(viewport.Children.Count == 3, "visible ground was not added to preview");
+            var groundedRoot = view.ClampToGround(root, 1, below);
+            var groundedFoot = view.ClampToGround("ll3", 1, below);
+            Check(groundedRoot.Z > below.Z && groundedFoot.Z >= floor && groundedRoot.X == below.X && groundedRoot.Y == below.Y,
+                "ground did not support root/foot or blocked travel along surface");
+            view.GroundEnabled = false;
+            Check(viewport.Children.Count == 2, "disabled ground is still drawn");
+            Check(view.ClampToGround(root, 1, below) == below, "disabled ground still restricts movement");
+        }
         IReadOnlyDictionary<string, Quaternion>? committed = null;
         int commits = 0;
         view.LimbEdited += (frame, rotations) => { Check(frame == 1,"point drag changed frame"); committed = rotations; commits++; };
@@ -61,6 +78,27 @@ internal static class JointPointDragRegression
             Check(shift.Length()>.000001f,"root did not move");
             foreach(string part in parts) Check(Vector3.Distance(pose[part].Position-before[part].Position,shift)<.0001f,"root deformed hierarchy");
             view.EndJointDrag(); Check(view.CurrentJointPose[root]==before[root],"root cancel");
+        }
+        if (parts.Contains("bd"))
+        {
+            var locked = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "bd" };
+            string? rejection = null;
+            view.PoseRejected = message => rejection = message;
+            view.PoseFilter = (frame, rotations, positions) => FigureAnimationEditor.ConstrainPreview(
+                source, clip, frame, rotations, positions, false, new Dictionary<string, Vector3>(), null, locked);
+            view.SetSkeleton(parts, "bd");
+            Check(view.BeginPointGesture("bd", new Point(100, 100)), "locked-root gesture unavailable");
+            view.MoveJointGesture(new Point(123, 117));
+            Check(rejection?.Contains("bd", StringComparison.OrdinalIgnoreCase) == true, "locked gesture rejection missing");
+            Check(view.CurrentJointPose["bd"] == before["bd"], "locked gesture changed root pose");
+            view.CommitJointGesture();
+            Check(commits == checkedParts, "rejected gesture committed");
+            locked.Clear(); rejection = null;
+            Check(view.BeginPointGesture("bd", new Point(100, 100)), "gesture did not reset after lock rejection");
+            view.MoveJointGesture(new Point(123, 117));
+            Check(rejection is null && Vector3.Distance(view.CurrentJointPose["bd"].Position, before["bd"].Position) > .000001f,
+                "unlocked gesture failed after rejection");
+            view.EndJointDrag();
         }
         if (parts.Contains("rh2")) Check(checkedParts>0,"no humanoid joint coverage");
         Console.WriteLine($"POINT DRAG PASS {scene.Model}: {checkedParts} joints, WPF hit-test, lengths, frame1/export, cancel, Undo/Redo, root");

@@ -73,7 +73,10 @@ public sealed class FigureAnimationSet
 {
     private readonly ResArchiveDocument _archive;
     public byte[] ExportBytes() => _archive.OriginalBytes.ToArray();
-    public FigureAnimationSet WithBytes(byte[] bytes) => new("edited", bytes, Parents, Bones, BindPositions);
+    public AnimationSaveTarget? SaveTarget { get; init; }
+    public FigureAnimationSet WithBytes(byte[] bytes) => new("edited", bytes, Parents, Bones, BindPositions) { SaveTarget = SaveTarget };
+    public FigureAnimationSet WithSavedBytes(byte[] bytes) => new("saved", bytes, Parents, Bones, BindPositions)
+    { SaveTarget = SaveTarget is null ? null : SaveTarget with { OriginalBytes = bytes.ToArray() } };
     public IReadOnlyList<string> Names { get; }
     public IReadOnlyList<string> SkippedResources { get; }
     public IReadOnlyDictionary<string, string> Parents { get; }

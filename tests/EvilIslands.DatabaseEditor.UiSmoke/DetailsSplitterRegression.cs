@@ -79,7 +79,9 @@ internal static class DetailsSplitterRegression
             if (window.CurrentInterfaceScale != scale || new EditorPreferencesStore(settings).GetInterfaceScale() != scale)
                 throw new Exception("Scale did not persist");
         }
-        if (((TextBlock)window.FindName("ProgramVersionText")).Text.Trim() != "·   Версия 126") throw new Exception("Incorrect version footer");
+        string informational = typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
+        string revision = informational.Split("preview.").Last().Split('+')[0];
+        if (((TextBlock)window.FindName("ProgramVersionText")).Text.Trim() != "·   Версия " + revision) throw new Exception("Incorrect version footer");
         vm.SelectTableCommand.Execute(table);
         vm.SelectedRecord = table.Records.First();
 

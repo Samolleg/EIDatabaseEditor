@@ -42,9 +42,12 @@ internal static class AnimationEditRegression
         {
             var row = records.FirstOrDefault(r => r.Table == "units.prototypes" && r.Name == name); if (row is null) continue;
             var scene = await UnitModelPreview.LoadAsync(database, row, records);
+            if (name == "Human Hero") await AnimationDatabaseRegression.Verify(scene, output);
             var source = scene.Animations ?? throw new Exception("ANM missing");
             string clipName = source.Names.FirstOrDefault(n => n.Contains("walk", StringComparison.OrdinalIgnoreCase)) ?? source.Names.First();
             var clip = await source.LoadAsync(clipName); Check(clip.FrameCount >= 4, "Clip too short");
+            if (name == "Human Hero") await AnimationDialogSaveRegression.Verify(scene, clipName, output);
+            if (name == "Human Hero") await KimodoDraftRegression.Verify(scene, clipName);
             await AnimationAuthoringRegression.Verify(scene, clipName);
             await StoryboardRegression.Verify(scene, clipName);
             await StoryboardRegression.VerifyUi(scene, clipName, output);

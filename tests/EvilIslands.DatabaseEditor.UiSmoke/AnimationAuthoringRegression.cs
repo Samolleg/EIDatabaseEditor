@@ -48,10 +48,10 @@ internal static class AnimationAuthoringRegression
             if (Math.Abs(f - frame) > 1) Check(Same(smooth.Tracks[part].Rotation(f), clip.Tracks[part].Rotation(f)), "smooth touched outside radius");
             else if (f != frame) Check(Same(smooth.Tracks[part].Rotation(f), Quaternion.Normalize(Quaternion.Slerp(Quaternion.Identity, delta, .5f) * clip.Tracks[part].Rotation(f))), "smooth falloff");
         }
-        var settings = new AnimationAuthoringSettings { Frame = frame, First = 1, Last = 2, Part = part, SmoothRadius = 1, Ghost = true, Limits = false, Fps = 15, Loop = false };
+        var settings = new AnimationAuthoringSettings { Frame = frame, First = 1, Last = 2, Part = part, SmoothRadius = 1, Ghost = true, Ground = false, Limits = false, Fps = 15, Loop = false };
         byte[] project = editor.SaveProject(scene.Model, name, settings); var reopened = new FigureAnimationEditor(source);
         var loadedSettings = await reopened.LoadProjectAsync(project, scene.Model, name);
-        Check(loadedSettings.Frame == frame && loadedSettings.Ghost && loadedSettings.Fps == 15 && !loadedSettings.Loop && loadedSettings.SmoothRadius == 1 && reopened.ExportBytes().SequenceEqual(editor.ExportBytes()), "project roundtrip");
+        Check(loadedSettings.Frame == frame && loadedSettings.Ghost && loadedSettings.Ground == false && loadedSettings.Fps == 15 && !loadedSettings.Loop && loadedSettings.SmoothRadius == 1 && reopened.ExportBytes().SequenceEqual(editor.ExportBytes()), "project roundtrip");
         reopened.Undo(); Check(reopened.ExportBytes().SequenceEqual(original), "project undo history"); reopened.Redo();
         byte[] stable = reopened.ExportBytes();
         try { await reopened.LoadProjectAsync(project, "wrong-model", name); throw new Exception("wrong project accepted"); } catch (System.IO.InvalidDataException) { }

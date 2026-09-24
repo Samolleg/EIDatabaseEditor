@@ -14,6 +14,7 @@ public sealed partial class UnitModelPreviewView
     internal bool AllowAnimationEditing { get; init; } = true;
     private UnitModelScene? _editingScene;
     private readonly Button _editAnimation = new() { Content = "Редактор Анимаций", Margin = new Thickness(4) };
+    private readonly Button _editAdb = new() { Content = "Игровой список ADB", Margin = new Thickness(4), ToolTip = "Все записи анимаций модели в игровой базе ADB. Изменения сохраняются в RES отдельной командой в окне списка." };
     private readonly WrapPanel _animationTools = new() { Visibility = Visibility.Collapsed };
     private readonly ComboBox _clips = new() { Width = 190, Margin = new Thickness(4), IsTextSearchEnabled = true, ToolTip = "Клип из ANM. Начните вводить его имя для поиска." };
     private readonly Button _play = new() { Content = "▶ Играть", Margin = new Thickness(4) };
@@ -64,18 +65,26 @@ public sealed partial class UnitModelPreviewView
     private void InitializeAnimationControls(DockPanel toolbar)
     {
         foreach (UIElement control in new UIElement[] { new TextBlock { Text = "Анимация", Margin = new Thickness(8), VerticalAlignment = VerticalAlignment.Center }, _clips, _play, _pause, _stop, _frame, _frameText, _fps,
-            new TextBlock { Text = "кадр/с", VerticalAlignment = VerticalAlignment.Center }, _loop, _editAnimation, _animationError }) _animationTools.Children.Add(control);
+            new TextBlock { Text = "кадр/с", VerticalAlignment = VerticalAlignment.Center }, _loop, _editAnimation, _editAdb, _animationError }) _animationTools.Children.Add(control);
         _editAnimation.SetResourceReference(Button.StyleProperty,"AccentButton");
         _editAnimation.FontWeight=FontWeights.SemiBold;
         _editAnimation.ToolTip="Открыть редактор, задать русское название или создать новую анимацию";
         _clips.Width=290;
         _clips.ItemTemplate=Dialogs.AnimationLabelConverter.Template(()=>_editingScene?.Model??"");
-        _editAnimation.Click += (_, _) =>
+        _editAnimation.Click += async (_, _) =>
         {
             if (_editingScene is null || _animations is not {Names.Count: >0}) return;
             PauseAnimation();
-            new Dialogs.AnimationEditorDialog(_editingScene, EditorAnimationName!) { Owner = Window.GetWindow(this) }.ShowDialog();
-            _clips.Items.Refresh();
+            var editor = new Dialogs.AnimationEditorDialog(_editingScene, EditorAnimationName!) { Owner = Window.GetWindow(this) };
+            editor.ShowDialog();
+            if (editor.SavedAnimationSet is not null) await AdoptSavedAnimationAsync(editor.SavedAnimationSet, editor.SavedClipName);
+            else _clips.Items.Refresh();
+        };
+        _editAdb.Click += (_, _) =>
+        {
+            if (_editingScene is not { AnimationDatabase: not null, Animations: not null } scene) return;
+            PauseAnimation();
+            new Dialogs.AnimationDatabaseDialog(scene, scene.Animations) { Owner = Window.GetWindow(this) }.ShowDialog();
         };
         DockPanel.SetDock(_animationTools, Dock.Top); toolbar.Children.Add(_animationTools);
         _clips.SelectionChanged += (_, _) => { if (!_settingClips) AnimationLoadTask = SelectAnimationAsync(_clips.SelectedItem as string); };
@@ -84,6 +93,14 @@ public sealed partial class UnitModelPreviewView
         _stop.Click += (_, _) => StopAnimation();
         _frame.ValueChanged += (_, _) => { if (!_settingFrame) { _lastTick = _animationClock.Elapsed.TotalSeconds; ApplyAnimationFrame(); } };
         _animationTimer.Tick += (_, _) => AdvanceAnimation();
+    }
+
+    internal async Task AdoptSavedAnimationAsync(FigureAnimationSet saved, string? clipName)
+    {
+        if (_editingScene is null) throw new InvalidOperationException("Модель для сохранённого ANM не открыта.");
+        _editingScene = _editingScene with { Animations = saved };
+        SetAnimations(saved);
+        await SelectAnimationAsync(clipName);
     }
 
     private void ResetAnimation()
@@ -181,6 +198,8 @@ public sealed partial class UnitModelPreviewView
     {
         _editAnimation.Visibility = AllowAnimationEditing ? Visibility.Visible : Visibility.Collapsed;
         _editAnimation.IsEnabled = EditorAnimationName is not null;
+        _editAdb.Visibility = AllowAnimationEditing ? Visibility.Visible : Visibility.Collapsed;
+        _editAdb.IsEnabled = _editingScene is { AnimationDatabase: not null, Animations: not null };
         _play.IsEnabled = _animations is { Names.Count: > 0 } && !AnimationPlaying;
         _pause.IsEnabled = AnimationPlaying;
         _stop.IsEnabled = _frame.IsEnabled = _clip is not null;

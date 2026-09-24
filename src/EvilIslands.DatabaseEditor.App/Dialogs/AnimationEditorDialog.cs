@@ -12,6 +12,7 @@ namespace EvilIslands.DatabaseEditor.App.Dialogs;
 internal sealed partial class AnimationEditorDialog : LuaToolWindow
 {
     private readonly FigureAnimationEditor _editor;
+    internal FigureAnimationEditor WorkingEditor => _editor;
     private readonly UnitModelScene _scene;
     private readonly string _name;
     private readonly UnitModelPreviewView _preview = new() { AllowAnimationEditing = false };
@@ -50,7 +51,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
             await Refresh(); _frame.Text = frame.ToString(); ReadPose();
             _message.Text = "Изменение мышью сохранено в кадре. Отменить — возвращает весь жест.";
         });
-        var note = Paragraph("Тяните голубую точку кисти или стопы: IK сгибает руку или ногу в плоскости экрана. Якорь «Сгиб» меняет направление локтя/колена при неподвижной кисти/стопе. Поверните камеру для другой плоскости. Длины сегментов сохраняются; далёкие цели ограничены досягаемостью. Белую точку тоже можно тянуть: поворачивается родительская кость вместе с дочерними частями. Точка корня перемещает всю модель. Кольца X/Y/Z вращаются вправо/влево; стрелки перемещают корень. Esc отменяет жест. Кадры с 0; ADB не изменяется.");
+        var note = Paragraph("Тяните голубую точку кисти или стопы: IK сгибает руку или ногу в плоскости экрана. Якорь «Сгиб» меняет направление локтя/колена при неподвижной кисти/стопе. Поверните камеру для другой плоскости. Длины сегментов сохраняются; далёкие цели ограничены досягаемостью. Белую точку тоже можно тянуть: поворачивается родительская кость вместе с дочерними частями. Точка корня перемещает всю модель. Кольца X/Y/Z вращаются вправо/влево; стрелки перемещают корень. Esc отменяет жест. Кадры с 0; игровой список и длительность действия редактируются отдельно в ADB.");
         DockPanel.SetDock(note, Dock.Top); Body.Children.Add(note);
         void Field(string label, TextBox box)
         {
@@ -118,6 +119,11 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         Body.Children.Clear();
         var sidebar = new StackPanel { Margin = new Thickness(4, 0, 10, 0) };
         sidebar.Children.Add(Paragraph("КЛИП")); sidebar.Children.Add(_actions);
+        var adb = ActionButton("Игровой список ADB…", () => { });
+        adb.IsEnabled = scene.AnimationDatabase is not null;
+        adb.ToolTip = adb.IsEnabled ? "Все клипы ANM и записи ADB этой модели: параметры выбора, события и сохранение игрового списка." : "Ресурс ADB этой модели не найден.";
+        adb.Click += (_, _) => new AnimationDatabaseDialog(_scene, _editor.Preview()) { Owner = this }.ShowDialog();
+        sidebar.Children.Add(adb);
         sidebar.Children.Add(Paragraph("ПОЗА КАДРА")); sidebar.Children.Add(_poseActions);
 
         var help = new Expander { Header = "Управление мышью", Content = note, Margin = new Thickness(4, 8, 4, 4) };
@@ -131,6 +137,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         InitializeMotion(sidebar);
         InitializeCatalog(sidebar);
         InitializeStoryboard(sidebar);
+        InitializeKimodo(sidebar);
         Compact(sidebar); Compact(_playback); _mapping.Height=90;
         Loaded += async (_, _) => await Run(Refresh);
         Closing += (_, e) =>

@@ -211,12 +211,12 @@ internal sealed class DatabaseTableViewModel : ObservableObject
 
     internal void RemoveLastRecord(RecordRowViewModel record)
     {
-        if (Records.Count == 0 || !ReferenceEquals(Records[^1], record))
+        if (!ReferenceEquals(Records.LastOrDefault(r => !r.IsTextOnlyBriefing), record))
         {
             throw new InvalidOperationException("Безопасно удалить можно только последнюю добавленную строку таблицы.");
         }
 
-        Records.RemoveAt(Records.Count - 1);
+        Records.Remove(record);
     }
 
     public string StatusText => SupportState switch
@@ -652,6 +652,12 @@ internal sealed class RecordRowViewModel : ObservableObject
     public int Index => _displayIndex;
 
     public int SourceRecordIndex => _record.RecordIndex;
+
+    internal RecordRowViewModel? TextOnlyBriefingReference { get; set; }
+
+    public bool IsTextOnlyBriefing => TableKey == "quests.briefings" && _record.ResourceName == "texts.res";
+
+    public string BriefingSource => IsTextOnlyBriefing ? "texts.res (без записи БД)" : "quests.qdb";
 
     public int NameFieldId => _record.NameFieldId;
 

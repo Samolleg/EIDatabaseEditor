@@ -20,6 +20,7 @@ public sealed record UnitModelScene(string Model, IReadOnlyList<FigureMesh> Mesh
     IReadOnlyDictionary<int, MmpImage> Textures, IReadOnlyList<string> Sources, IReadOnlyList<string> Notes)
 {
     public FigureAnimationSet? Animations { get; init; }
+    public AnimationDatabaseSource? AnimationDatabase { get; init; }
 }
 
 public static class UnitModelPreview
@@ -54,6 +55,7 @@ public static class UnitModelPreview
                     indexes.Add((path, entries, length, written));
                 }
             }
+            AnimationSaveTarget? animationTarget = null;
             byte[] Resource(string name)
             {
                 foreach (var archive in indexes)
@@ -66,6 +68,7 @@ public static class UnitModelPreview
                         throw new IOException("Архив модели изменился. Обновите предпросмотр.");
                     stream.Position = entry.Offset;
                     var bytes = new byte[entry.Size]; stream.ReadExactly(bytes);
+                    if (name.EndsWith(".anm", StringComparison.OrdinalIgnoreCase)) animationTarget = new(archive.Path, entry.Name, bytes.ToArray());
                     used.Add(name + " — " + archive.Path);
                     return bytes;
                 }
@@ -275,16 +278,21 @@ public static class UnitModelPreview
                 // without a track inherit the animated parent using the original BON.
                 var bones = positions.Keys.ToDictionary(p => p, p => FigurePreviewDecoder.Bone(bon.GetResourceBytes(p).ToArray(), morph), StringComparer.OrdinalIgnoreCase);
                 animations = new FigureAnimationSet(mask, Resource(mask + ".anm"),
-                    positions.Keys.ToDictionary(p => p, p => parents[p], StringComparer.OrdinalIgnoreCase), bones, positions, token);
+                    positions.Keys.ToDictionary(p => p, p => parents[p], StringComparer.OrdinalIgnoreCase), bones, positions, token) { SaveTarget = animationTarget };
                 foreach (string skipped in animations.SkippedResources) notes.Add("ANM: пропущен вложенный архив или пустая заглушка: " + skipped);
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or DatabaseFormatException or NotSupportedException or ArgumentException)
             { notes.Add("Анимации недоступны: " + ex.Message); }
+            AnimationDatabaseSource? animationDatabase = null;
+            try { animationDatabase = await AnimationDatabaseSource.OpenAsync(databasePath, sources.ConfigurationPath, mask, token).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or DatabaseFormatException or NotSupportedException or ArgumentException)
+            { notes.Add("ADB недоступен: " + ex.Message); }
+            if (animationDatabase is null) notes.Add("ADB модели не найден: игровая регистрация анимаций недоступна.");
             notes.Add("Клипы показываются отдельно от игрового состояния; звуки, эффекты, AI и переходы между действиями не воспроизводятся.");
             notes.Add("Скорость предпросмотра задаётся в кадрах/с. Игровые настройки темпа и коррекция перемещения по росту не применяются.");
             if (dressed) notes.Add("Составная экипировка: визуальное совпадение с игрой ещё требует проверки.");
             if (selected.Table == "units.npcs") notes.Add("Внешность — из одноимённого прототипа монстра. Инвентарь NPC не определяет, что надето в конкретном сохранении.");
-            return new UnitModelScene(mask, meshes, textures, used.Distinct().ToArray(), notes.Distinct().ToArray()) { Animations = animations };
+            return new UnitModelScene(mask, meshes, textures, used.Distinct().ToArray(), notes.Distinct().ToArray()) { Animations = animations, AnimationDatabase = animationDatabase };
         }, token).ConfigureAwait(false);
     }
 

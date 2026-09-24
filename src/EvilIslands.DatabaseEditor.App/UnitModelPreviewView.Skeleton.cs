@@ -190,6 +190,12 @@ public sealed partial class UnitModelPreviewView
                     var ps = new Dictionary<string, V3>();
                     if (_gizmoPart is string part) { if (_gizmoRotation is Q q) qs[part] = q; if (_gizmoPosition is V3 p) ps[part] = p; }
                     try { _ikRotations = PoseFilter(_gizmoFrame, qs, ps); }
+                    catch (InvalidOperationException ex)
+                    {
+                        EndJointDrag();
+                        PoseRejected?.Invoke(ex.Message);
+                        return;
+                    }
                     catch (Exception ex) when (ex is ArgumentException or System.IO.InvalidDataException)
                     { _ikRotations = previousRotations; _gizmoRotation = previousRotation; _gizmoPosition = previousPosition; PoseRejected?.Invoke(ex.Message); }
                 }
@@ -207,6 +213,7 @@ public sealed partial class UnitModelPreviewView
                 double scale = 2 * Math.Tan(_camera.FieldOfView * Math.PI / 360) * depth / Math.Max(1, _viewport.ActualWidth);
                 var offset = (right * movement.X - up * movement.Y) * scale;
                 var target = _originalPosition + new V3((float)offset.X, (float)-offset.Z, (float)offset.Y);
+                if (!_ikPoleGesture) target = ClampToGround(_gizmoPart!, _gizmoFrame, target);
                 if (_pointRootGesture) { _gizmoPosition = target; AcceptPreview(); return; }
                 try { _ikRotations = _pointJointGesture
                     ? FigureLimbIk.SolveJoint(_animations, _clip, _gizmoFrame, _gizmoPart!, target)
@@ -222,7 +229,7 @@ public sealed partial class UnitModelPreviewView
                 var screenAxis = b.Value - a.Value;
                 if (screenAxis.LengthSquared < 1) return;
                 float amount = (float)(Vector.Multiply(movement, screenAxis) / screenAxis.LengthSquared);
-                _gizmoPosition = _originalPosition + Axes[_gizmoAxis] * amount;
+                _gizmoPosition = ClampToGround(_gizmoPart!, _gizmoFrame, _originalPosition + Axes[_gizmoAxis] * amount);
             }
             else _gizmoRotation = Q.Normalize(_originalRotation * Q.CreateFromAxisAngle(Axes[_gizmoAxis], (float)(movement.X * Math.PI / 180)));
             AcceptPreview();

@@ -2119,6 +2119,9 @@
                                                     </Grid.ColumnDefinitions>
                                                     <StackPanel>
                                                         <TextBlock Text="Сценарий брифинга" FontSize="15" FontWeight="SemiBold" />
+                                                        <Button Content="Выдача, изъятие и награды…" Click="BriefingActions_Click"
+                                                                Style="{StaticResource RoundedButton}" HorizontalAlignment="Left"
+                                                                Margin="0,6,0,6" Padding="10,5" />
                                                         <TextBlock Text="{Binding BriefingWorkspaceSummary}"
                                                                    Foreground="{StaticResource MutedTextBrush}"
                                                                    FontSize="11" />
