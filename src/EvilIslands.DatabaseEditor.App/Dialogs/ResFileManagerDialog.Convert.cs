@@ -55,11 +55,14 @@ public partial class ResFileManagerDialog
         var root=new StackPanel { Margin=new Thickness(20) };dialog.Content=new ScrollViewer { Content=root, VerticalScrollBarVisibility=ScrollBarVisibility.Auto };
         root.Children.Add(new TextBlock {Text="MMP с DXT-сжатием и полной mip-цепочкой",FontSize=19,Margin=new Thickness(0,0,0,12)});
         var scope=new ComboBox {ItemsSource=new[]{ $"Выбранные MMP: {selected.Length}",$"Все MMP архива: {all.Length}"},SelectedIndex=selected.Length>0?0:1};root.Children.Add(scope);
-        var format=new ComboBox {ItemsSource=new[]{"Авто: DXT1; при плавной прозрачности DXT5","DXT1 — пропуск полупрозрачных","DXT3 — плавная прозрачность","DXT5 — плавная прозрачность","DXT1 — явно упростить прозрачность (порог 50%)","Map x2: атлас 2×2, DXT1, alpha ≥128 (подтверждённые UV x2)","Компактный x2: исходник 512 → атлас 512, DXT1","Компактный: готовый атлас 1024 → 512, DXT1"},SelectedIndex=0,Margin=new Thickness(0,10,0,0)};root.Children.Add(format);
+        var format=new ComboBox {ItemsSource=new[]{
+            new { Label="Оружие: Исходное качество для маппера", Choice=MmpDxtChoice.MapAtlasX2 },
+            new { Label="Оружие: оптимизированное качество для маппера", Choice=MmpDxtChoice.CompactX2 }
+        },DisplayMemberPath="Label",SelectedValuePath="Choice",SelectedIndex=1,Margin=new Thickness(0,10,0,0)};root.Children.Add(format);
         var threshold=new TextBox { Text="128", Width=70, HorizontalAlignment=HorizontalAlignment.Left };
         root.Children.Add(new TextBlock { Text="Порог альфы для компактных режимов (0–255):", Margin=new Thickness(0,8,0,0) });root.Children.Add(threshold);
         var output=new ComboBox {ItemsSource=new[]{"Новый RES в отдельной папке","Папка MMP","Добавить в открытый RES (сохранить затем)"},SelectedIndex=2,Margin=new Thickness(0,10,0,0)};root.Children.Add(output);
-        root.Children.Add(new TextBlock {Text="Имена: имя.x2.mmp → имя.x2map.mmp. Оригиналы сохраняются. Готовый атлас 1024 сохраняется с прежним map-именем только в новый RES или папку.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,10,0,0)});
+        root.Children.Add(new TextBlock {Text="Имена: имя.x2.mmp → имя.x2map.mmp. Оригиналы сохраняются. Исходное качество: атлас 1024 из текстуры 512; оптимизированное: атлас 512. Оба режима используют DXT1.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,10,0,0)});
         root.Children.Add(new TextBlock {Text="PNT3 может быть слоем составной текстуры. Конвертация не собирает доспех, не исправляет UV и не гарантирует отображение объекта. Исходный архив не изменяется. DXT — сжатие с потерями.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,12)});
         var status=new TextBlock {Text="Выберите параметры и начните экспорт.",TextWrapping=TextWrapping.Wrap};root.Children.Add(status);
         var bar=new ProgressBar {Height=18,Margin=new Thickness(0,10,0,10)};root.Children.Add(bar);
@@ -74,7 +77,6 @@ public partial class ResFileManagerDialog
         {
             if (!byte.TryParse(threshold.Text, out byte compactThreshold)) { status.Text="Порог альфы: целое число от 0 до 255."; return; }
             bool intoCurrent = output.SelectedIndex == 2;
-            if (intoCurrent && (MmpDxtChoice)format.SelectedIndex == MmpDxtChoice.CompactAtlas512) { status.Text="Готовый атлас сохраняется с тем же именем. Выберите новый RES или папку, чтобы сохранить исходник отдельно."; return; }
             string parent = Path.GetTempPath();
             if (!intoCurrent)
             {
@@ -84,12 +86,12 @@ public partial class ResFileManagerDialog
             string destination=Path.Combine(parent,"MMP-export-"+Guid.NewGuid().ToString("N"));
             var names=scope.SelectedIndex==0?selected:all;
             if(names.Length==0){status.Text="Нет выбранных MMP.";return;}
-            var choice=(MmpDxtChoice)format.SelectedIndex;bool asRes=output.SelectedIndex==0;
+            var choice=(MmpDxtChoice)format.SelectedValue;bool asRes=output.SelectedIndex==0;
             cancellation=new();running=true;start.IsEnabled=scope.IsEnabled=format.IsEnabled=output.IsEnabled=false;cancel.IsEnabled=true;report.Clear();bar.Maximum=names.Length;
             try
             {
                 var rows=await MmpBatchConverter.RunAsync(archive,names,destination,asRes,choice,Path.Combine(AppContext.BaseDirectory,"third-party","DirectXTex","texconv.exe"),
-                    new Progress<MmpBatchProgress>(p=>{bar.Value=p.Completed;status.Text=$"{p.Completed} / {p.Total}: {p.Name}";}),cancellation.Token,choice is MmpDxtChoice.CompactX2 or MmpDxtChoice.CompactAtlas512 ? compactThreshold : (byte)128);
+                    new Progress<MmpBatchProgress>(p=>{bar.Value=p.Completed;status.Text=$"{p.Completed} / {p.Total}: {p.Name}";}),cancellation.Token,choice == MmpDxtChoice.CompactX2 ? compactThreshold : (byte)128);
                 int added = intoCurrent ? await StageConvertedMmpAsync(destination, rows, cancellation.Token) : 0;
                 report.Text=string.Join(Environment.NewLine,rows.Select(r=>$"{(r.Success?"OK":"ОШИБКА")} {r.Name}: {r.Detail}"));
                 status.Text=intoCurrent ? $"Подготовлено в открытом RES: {added}, ошибок: {rows.Count(r=>!r.Success)}. Закройте это окно и сохраните архив штатной кнопкой." : $"Готово: {rows.Count(r=>r.Success)}, ошибок: {rows.Count(r=>!r.Success)}. Результат: {destination}";
