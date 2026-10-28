@@ -222,7 +222,6 @@ public static class ItemModelPreview
         {
             _token.ThrowIfCancellationRequested();
             if (!_entries.TryGetValue(name, out var resource)) throw new FileNotFoundException("Не найдена инвентарная модель: " + name);
-            if (resource.Entry.Size > 128 * 1024 * 1024) throw new InvalidDataException("Модель превышает 128 МиБ.");
             using var stream = new FileStream(resource.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (stream.Length != resource.Length || ResourceFileStamp.Read(resource.Path) != resource.Written) throw new IOException("Архив модели изменился. Обновите предпросмотр.");
             stream.Position = resource.Entry.Offset; var bytes = new byte[resource.Entry.Size]; stream.ReadExactly(bytes);

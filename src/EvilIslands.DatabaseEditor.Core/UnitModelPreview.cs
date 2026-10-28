@@ -62,7 +62,6 @@ public static class UnitModelPreview
                 {
                     var entry = archive.Entries.FirstOrDefault(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
                     if (entry is null) continue;
-                    if (entry.Size > 128 * 1024 * 1024) throw new InvalidDataException("Модель превышает лимит 128 МиБ.");
                     using var stream = new FileStream(archive.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
                     if (stream.Length != archive.Length || ResourceFileStamp.Read(archive.Path) != archive.Written)
                         throw new IOException("Архив модели изменился. Обновите предпросмотр.");
