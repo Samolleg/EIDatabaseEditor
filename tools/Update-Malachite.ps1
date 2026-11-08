@@ -1,4 +1,3 @@
-param([Parameter(Mandatory=$true)][string]$PackagePath)
 $ErrorActionPreference = 'Stop'
 $workspaceRoot = $PSScriptRoot
 while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md') -PathType Leaf)) {
@@ -10,7 +9,10 @@ while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md') -PathType 
 $hostRoot = [IO.Path]::GetFullPath((Join-Path $workspaceRoot 'builds/dbeditor/current'))
 $moduleRelative = 'Modules\malachite\current\'
 $target = Join-Path $hostRoot $moduleRelative
-$source = (Resolve-Path -LiteralPath $PackagePath).Path
+$source = Join-Path $workspaceRoot 'builds/malachite/current'
+if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+    throw "Нет комплекта Малахита: $source. Сначала заполните builds\malachite\current приёмкой задания Малахита."
+}
 $allowed = @('Malachite.Core.dll','Malachite.UI.Wpf.dll','Malachite.Module.dll','Malachite.Module.deps.json','module.json','README.md','tools/ScriptCheck/ScriptCheck.exe','tools/ScriptCheck/README.md')
 $sdkNames = @('ModuleContracts.V1.dll','ModuleContracts.Wpf.V1.dll')
 $capabilities = @('workspace.read.v1','navigation.record.v1','files.export-copy.v1','documents.session.v1','documents.blobs.v1','transactions.v1','files.browse-folder.v1','saves.artifact-kind.v1')

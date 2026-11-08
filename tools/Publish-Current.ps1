@@ -1,6 +1,5 @@
 param(
-    [string]$PackagePath,
-    [string]$ModulePath
+    [string]$PackagePath
 )
 $ErrorActionPreference = 'Stop'
 $workspaceRoot = $PSScriptRoot
@@ -13,6 +12,10 @@ while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md') -PathType 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $destination = Join-Path $workspaceRoot 'builds/dbeditor/current'
 $manifestName = 'host-manifest.sha256.json'
+$moduleSource = Join-Path $workspaceRoot 'builds/malachite/current'
+if (-not $PackagePath -and -not (Test-Path -LiteralPath $moduleSource -PathType Container)) {
+    throw "Нет комплекта Малахита: $moduleSource. Сначала заполните builds\malachite\current приёмкой задания Малахита."
+}
 
 function Resolve-ContainedFile([string]$Root, [string]$Relative) {
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\')
@@ -48,13 +51,14 @@ try {
         New-Item -ItemType Directory -Path $temporary | Out-Null
         & dotnet publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -p:DebugType=none -p:DebugSymbols=false -o $temporary
         if ($LASTEXITCODE -ne 0) { throw "Сборка не завершена: $LASTEXITCODE" }
-        if ($ModulePath) {
-            $moduleTarget = Join-Path $temporary 'Modules\malachite\current'
-            New-Item -ItemType Directory -Path $moduleTarget -Force | Out-Null
-            Copy-Item -Path (Join-Path $ModulePath '*') -Destination $moduleTarget -Recurse
-        } elseif (Test-Path -LiteralPath (Join-Path $destination 'Modules')) {
-            Copy-Item -LiteralPath (Join-Path $destination 'Modules') -Destination $temporary -Recurse
-        } else { throw 'Для первой сборки укажите -ModulePath с проверенным комплектом Малахита.' }
+        $moduleTarget = Join-Path $temporary 'Modules\malachite\current'
+        New-Item -ItemType Directory -Path $moduleTarget -Force | Out-Null
+        Get-ChildItem -LiteralPath $moduleSource -Recurse -File | Where-Object Extension -ne '.pdb' | ForEach-Object {
+            $relative = $_.FullName.Substring($moduleSource.Length + 1)
+            $target = Join-Path $moduleTarget $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+            Copy-Item -LiteralPath $_.FullName -Destination $target
+        }
         Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\CURRENT_README.txt') -Destination (Join-Path $temporary 'README.txt')
         Get-ChildItem -LiteralPath $temporary -Recurse -File -Filter *.pdb | ForEach-Object { Remove-Item -LiteralPath $_.FullName }
         $entries = @(Get-ChildItem -LiteralPath $temporary -Recurse -File | ForEach-Object {
