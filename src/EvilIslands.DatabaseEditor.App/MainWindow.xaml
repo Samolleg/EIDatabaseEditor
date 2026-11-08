@@ -36,6 +36,38 @@
     </Window.InputBindings>
 
     <Window.Resources>
+        <Style x:Key="OpenDatabaseButton" TargetType="Button" BasedOn="{StaticResource RoundedButton}">
+            <Setter Property="Background" Value="#315843" />
+            <Setter Property="BorderBrush" Value="#4B705A" />
+            <Setter Property="Foreground" Value="#F0F4F1" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="OpenBorder" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="9" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="OpenBorder" Property="Background" Value="#3B654E" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="OpenBorder" Property="Background" Value="#294A39" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="OpenBorder" Property="BorderBrush" Value="#A4C4AE" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="OpenBorder" Property="Opacity" Value="0.38" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <CollectionViewSource x:Key="RelatedTextSearchView" Source="{Binding SelectedRecord.RelatedTexts}" Filter="RelatedTextSearch_Filter" />
         <CollectionViewSource x:Key="RelatedSoundSearchView" Source="{Binding SelectedRecord.RelatedSounds}" Filter="RelatedSoundSearch_Filter" />
         <Style x:Key="SurfaceCard" TargetType="Border">
@@ -342,7 +374,7 @@
 
         <Style x:Key="SpreadsheetCellText" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="FontSize" Value="14" />
+            <Setter Property="FontSize" Value="13" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="TextAlignment" Value="Center" />
@@ -370,6 +402,39 @@
             <Setter Property="ToolTipService.ShowDuration" Value="12000" />
         </Style>
 
+        <Style x:Key="RelatedSearchBox" TargetType="TextBox" BasedOn="{StaticResource DarkTextBox}">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Width" Value="320" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style x:Key="RelatedTextCell" TargetType="TextBlock" BasedOn="{StaticResource LocalizationGridCellText}">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+        </Style>
+        <Style x:Key="RelatedLocalizationCell" TargetType="DataGridCell" BasedOn="{StaticResource LocalizationEntryCellStyle}">
+            <Setter Property="Padding" Value="4,0" />
+        </Style>
+        <Style x:Key="RelatedSoundCell" TargetType="DataGridCell" BasedOn="{StaticResource SoundEntryCellStyle}">
+            <Setter Property="Padding" Value="4,0" />
+        </Style>
+        <Style x:Key="RelatedCellEditor" TargetType="TextBox" BasedOn="{StaticResource SpreadsheetCellEditor}">
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="3,1" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+
+        <Style x:Key="DetailsCompactButton" TargetType="Button" BasedOn="{StaticResource RoundedButton}">
+            <Setter Property="Height" Value="28" /><Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="8,2" /><Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style x:Key="DetailsCompactCombo" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="Height" Value="28" /><Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="6,2" /><Setter Property="FontSize" Value="13" />
+        </Style>
     </Window.Resources>
 
     <Border x:Name="MainRoot"
@@ -492,7 +557,7 @@
                         </Grid.RowDefinitions>
 
                         <StackPanel Grid.Row="0" Margin="10,14,10,8">
-                            <Button Style="{StaticResource AccentButton}"
+                            <Button Style="{StaticResource OpenDatabaseButton}"
                                     Command="{Binding OpenCommand}"
                                     ToolTip="Открыть database.res (Ctrl+O)">
                                 <StackPanel Orientation="Horizontal">
@@ -508,66 +573,6 @@
                                     Margin="0,8,0,0"
                                     Padding="12,8"
                                     Click="OpenResFileManagerButton_Click" />
-                            <Button Style="{StaticResource RoundedButton}"
-                                    Command="{Binding AttachTextsCommand}"
-                                    Content="{Binding AttachTextsButtonText}"
-                                    ToolTip="{Binding TextsPath}"
-                                    Margin="0,8,0,0"
-                                    Padding="12,8" />
-                            <Button Style="{StaticResource RoundedButton}"
-                                    Command="{Binding AttachSoundsCommand}"
-                                    Content="{Binding AttachSoundsButtonText}"
-                                    ToolTip="{Binding SoundArchivePaths}"
-                                    Margin="0,8,0,0"
-                                    Padding="12,8" />
-                            <Button x:Name="TextureSourcesButton" Style="{StaticResource RoundedButton}"
-                                    Content="{Binding AttachTexturesButtonText}" ToolTip="{Binding TextureSourcesDescription}"
-                                    IsEnabled="{Binding HasDocument}" Click="TextureSources_Click" Margin="0,8,0,0" Padding="12,8">
-                              <Button.ContextMenu>
-                                <ContextMenu Background="{StaticResource PopupBrush}" Foreground="{StaticResource TextBrush}"
-                                             BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1" Padding="5" MinWidth="270">
-                                  <ContextMenu.Template>
-                                    <ControlTemplate TargetType="ContextMenu">
-                                      <Border x:Name="TextureMenuBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                                              BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}" CornerRadius="6" SnapsToDevicePixels="True">
-                                        <ItemsPresenter />
-                                      </Border>
-                                    </ControlTemplate>
-                                  </ContextMenu.Template>
-                                  <ContextMenu.Resources>
-                                    <Style TargetType="MenuItem">
-                                      <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-                                      <Setter Property="Background" Value="Transparent" />
-                                      <Setter Property="Padding" Value="12,9" />
-                                      <Setter Property="Template">
-                                        <Setter.Value>
-                                          <ControlTemplate TargetType="MenuItem">
-                                            <Border x:Name="ItemSurface" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
-                                              <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" TextElement.Foreground="{TemplateBinding Foreground}" />
-                                            </Border>
-                                            <ControlTemplate.Triggers>
-                                              <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="{StaticResource RowSelectedBrush}" /></Trigger>
-                                              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="{StaticResource RowSelectedBrush}" /></Trigger>
-                                              <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" /></Trigger>
-                                            </ControlTemplate.Triggers>
-                                          </ControlTemplate>
-                                        </Setter.Value>
-                                      </Setter>
-                                    </Style>
-                                    <Style x:Key="TextureMenuSeparatorStyle" TargetType="Separator">
-                                      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Margin="8,5" Background="{StaticResource BorderBrush}" /></ControlTemplate></Setter.Value></Setter>
-                                    </Style>
-                                  </ContextMenu.Resources>
-                                  <MenuItem Header="Подключить из папки database.res" Click="TextureNearby_Click" />
-                                  <MenuItem Header="Добавить RES…" Click="TextureArchives_Click" />
-                                  <Separator Style="{StaticResource TextureMenuSeparatorStyle}" />
-                                  <MenuItem Header="Подключить папку игры…" Click="TextureGame_Click" />
-                                  <MenuItem Header="Выбрать мод (config.ini)…" Click="TextureMod_Click" />
-                                  <Separator Style="{StaticResource TextureMenuSeparatorStyle}" />
-                                  <MenuItem Header="Обновить источники" Click="TextureReload_Click" />
-                                </ContextMenu>
-                              </Button.ContextMenu>
-                            </Button>
                         </StackPanel>
 
                         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -719,10 +724,78 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                <StackPanel Margin="10,8,10,0">
+                                <Button Style="{StaticResource RoundedButton}"
+                                        Content="▧  Объекты карт из RES"
+                                        ToolTip="Поиск и просмотр моделей из архивов рядом с открытой БД"
+                                        IsEnabled="{Binding HasDocument}"
+                                        Margin="0,8,0,0" Padding="12,8"
+                                        Click="OpenMapObjectCatalog_Click" />
+                                <Button Style="{StaticResource RoundedButton}"
+                                        Command="{Binding AttachTextsCommand}"
+                                        Content="{Binding AttachTextsButtonText}"
+                                        ToolTip="{Binding TextsPath}"
+                                        Margin="0,8,0,0"
+                                        Padding="12,8" />
+                                <Button Style="{StaticResource RoundedButton}"
+                                        Command="{Binding AttachSoundsCommand}"
+                                        Content="{Binding AttachSoundsButtonText}"
+                                        ToolTip="{Binding SoundArchivePaths}"
+                                        Margin="0,8,0,0"
+                                        Padding="12,8" />
+                                <Button x:Name="TextureSourcesButton" Style="{StaticResource RoundedButton}"
+                                        Content="{Binding AttachTexturesButtonText}" ToolTip="{Binding TextureSourcesDescription}"
+                                        IsEnabled="{Binding HasDocument}" Click="TextureSources_Click" Margin="0,8,0,0" Padding="12,8">
+                                  <Button.ContextMenu>
+                                    <ContextMenu Background="{StaticResource PopupBrush}" Foreground="{StaticResource TextBrush}"
+                                                 BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1" Padding="5" MinWidth="270">
+                                      <ContextMenu.Template>
+                                        <ControlTemplate TargetType="ContextMenu">
+                                          <Border x:Name="TextureMenuBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                                  BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}" CornerRadius="6" SnapsToDevicePixels="True">
+                                            <ItemsPresenter />
+                                          </Border>
+                                        </ControlTemplate>
+                                      </ContextMenu.Template>
+                                      <ContextMenu.Resources>
+                                        <Style TargetType="MenuItem">
+                                          <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                          <Setter Property="Background" Value="Transparent" />
+                                          <Setter Property="Padding" Value="12,9" />
+                                          <Setter Property="Template">
+                                            <Setter.Value>
+                                              <ControlTemplate TargetType="MenuItem">
+                                                <Border x:Name="ItemSurface" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="4">
+                                                  <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" TextElement.Foreground="{TemplateBinding Foreground}" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                  <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="{StaticResource RowSelectedBrush}" /></Trigger>
+                                                  <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="{StaticResource RowSelectedBrush}" /></Trigger>
+                                                  <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" /></Trigger>
+                                                </ControlTemplate.Triggers>
+                                              </ControlTemplate>
+                                            </Setter.Value>
+                                          </Setter>
+                                        </Style>
+                                        <Style x:Key="TextureMenuSeparatorStyle" TargetType="Separator">
+                                          <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Margin="8,5" Background="{StaticResource BorderBrush}" /></ControlTemplate></Setter.Value></Setter>
+                                        </Style>
+                                      </ContextMenu.Resources>
+                                      <MenuItem Header="Подключить из папки database.res" Click="TextureNearby_Click" />
+                                      <MenuItem Header="Добавить RES…" Click="TextureArchives_Click" />
+                                      <Separator Style="{StaticResource TextureMenuSeparatorStyle}" />
+                                      <MenuItem Header="Подключить папку игры…" Click="TextureGame_Click" />
+                                      <MenuItem Header="Выбрать мод (config.ini)…" Click="TextureMod_Click" />
+                                      <Separator Style="{StaticResource TextureMenuSeparatorStyle}" />
+                                      <MenuItem Header="Обновить источники" Click="TextureReload_Click" />
+                                    </ContextMenu>
+                                  </Button.ContextMenu>
+                                </Button>
+                                </StackPanel>
                             </StackPanel>
                         </ScrollViewer>
 
-                        <Border Grid.Row="2" Margin="10,8,10,12" Padding="12" Background="#202020" BorderBrush="#343434" BorderThickness="1" CornerRadius="10">
+                        <Border Grid.Row="2" Visibility="{Binding HasDocument, Converter={StaticResource BooleanToVisibilityConverter}}" Margin="10,8,10,12" Padding="12" Background="#202020" BorderBrush="#343434" BorderThickness="1" CornerRadius="10">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
@@ -733,10 +806,9 @@
                                     <Border Width="22" Height="22" CornerRadius="6" Background="#263A34">
                                         <TextBlock Text="▣" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                     </Border>
-                                    <TextBlock Text="Редактирование" Margin="8,0,0,0" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <TextBlock Text="Текущая база" Margin="8,0,0,0" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 </StackPanel>
                                 <TextBlock Grid.Row="1" Text="{Binding SourceFileName}" Margin="0,9,0,0" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding SourcePath}" />
-                                <TextBlock Grid.Row="2" Text="Сохранение с резервной копией" Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource AccentBrush}" />
                             </Grid>
                         </Border>
                     </Grid>
@@ -786,7 +858,7 @@
                                 <TextBlock Text="{Binding PageTitle}" Style="{StaticResource PageHeading}" />
                                 <TextBlock Text="{Binding PageSubtitle}" Margin="0,2,0,0" FontSize="12" Foreground="{StaticResource MutedTextBrush}" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                            <StackPanel x:Name="DatabaseSaveActions" Grid.Column="1" Visibility="{Binding HasDocument, Converter={StaticResource BooleanToVisibilityConverter}}" Orientation="Horizontal" VerticalAlignment="Center" shell:WindowChrome.IsHitTestVisibleInChrome="True">
                                 <Button Style="{StaticResource AccentButton}" Command="{Binding SaveCommand}" Margin="10,0,0,0" ToolTip="Сохранить текущий файл (Ctrl+S)">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="✓" Foreground="White" />
@@ -833,21 +905,75 @@
 
                     <Grid Grid.Row="3">
                         <!-- Welcome state -->
-                        <Grid Visibility="{Binding HasDocument, Converter={StaticResource InverseBooleanToVisibilityConverter}}">
-                            <StackPanel Width="590" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Border Width="68" Height="68" CornerRadius="20" Background="#263A34" HorizontalAlignment="Center">
-                                    <TextBlock Text="EI" Foreground="{StaticResource AccentBrush}" FontWeight="Bold" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <ScrollViewer x:Name="HomePage" Visibility="{Binding HasDocument, Converter={StaticResource InverseBooleanToVisibilityConverter}}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel MaxWidth="720" Margin="24" HorizontalAlignment="Center">
+                                <StackPanel.Resources>
+                                    <Style x:Key="HomeCard" TargetType="Border">
+                                        <Setter Property="Width" Value="344" />
+                                        <Setter Property="MinHeight" Value="150" />
+                                        <Setter Property="Margin" Value="4" />
+                                        <Setter Property="Padding" Value="18" />
+                                        <Setter Property="CornerRadius" Value="12" />
+                                        <Setter Property="Background" Value="#1B211F" />
+                                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                                        <Setter Property="BorderThickness" Value="1" />
+                                    </Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="TextWrapping" Value="Wrap" />
+                                        <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    </Style>
+                                </StackPanel.Resources>
+                                <TextBlock Text="Продолжить работу" FontSize="27" FontWeight="SemiBold" Margin="4,4,4,16" />
+                                <Border Background="#20372E" BorderBrush="#335C49" BorderThickness="1" CornerRadius="12" Padding="20" Margin="4,0,4,20">
+                                    <StackPanel>
+                                        <TextBlock Text="ПОСЛЕДНЯЯ БАЗА" FontSize="11" Foreground="{StaticResource AccentBrush}" />
+                                        <TextBlock x:Name="HomeDatabaseName" FontSize="20" FontWeight="SemiBold" Margin="0,6,0,4" />
+                                        <TextBlock x:Name="HomeDatabasePath" Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
+                                        <WrapPanel Margin="0,14,0,0">
+                                            <Button x:Name="OpenLastDatabaseButton" Style="{StaticResource OpenDatabaseButton}" Content="Открыть последнюю БД" Margin="0,0,8,4" Click="OpenLastDatabase_Click" />
+                                            <Button Style="{StaticResource RoundedButton}" Command="{Binding OpenCommand}" Content="Выбрать другую…" Margin="0,0,0,4" />
+                                        </WrapPanel>
+                                    </StackPanel>
                                 </Border>
-                                <TextBlock Text="Безопасный редактор database.res" FontSize="27" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,22,0,0" />
-                                <TextBlock Text="Откройте database.res — все распознанные таблицы сразу будут доступны для редактирования. Приложение ничего не устанавливает в игру автоматически." TextWrapping="Wrap" TextAlignment="Center" Foreground="{StaticResource MutedTextBrush}" FontSize="14" LineHeight="22" Margin="0,12,0,0" />
-                                <Button Style="{StaticResource AccentButton}" Command="{Binding OpenCommand}" Content="Открыть database.res…" HorizontalAlignment="Center" Margin="0,24,0,0" Padding="20,10" />
-                                <Button x:Name="OpenLastDatabaseButton" Style="{StaticResource RoundedButton}" Content="↶  Открыть последнюю БД" HorizontalAlignment="Center" Margin="0,10,0,0" Padding="20,10" Click="OpenLastDatabase_Click" />
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
-                                    <TextBlock Text="▣  автоматическая .bak-копия" Foreground="{StaticResource AccentBrush}" />
-                                    <TextBlock Text="     •     редактирование включено сразу" Foreground="{StaticResource MutedTextBrush}" />
-                                </StackPanel>
+                                <DockPanel Margin="4,0,4,8">
+                                    <Button x:Name="HomeRefreshButton" DockPanel.Dock="Right" Style="{StaticResource RoundedButton}" Content="Обновить сведения" Click="HomeRefresh_Click" />
+                                    <TextBlock Text="Инструменты" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                </DockPanel>
+                                <WrapPanel x:Name="HomeCards">
+                                    <Border Style="{StaticResource HomeCard}">
+                                        <StackPanel>
+                                            <TextBlock Text="Редактор БД" FontSize="17" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="HomeEditorVersion" FontSize="22" Foreground="{StaticResource AccentBrush}" Margin="0,10,0,8" />
+                                            <TextBlock Text="Таблицы базы, русские тексты и связанные ресурсы." Foreground="{StaticResource MutedTextBrush}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource HomeCard}">
+                                        <StackPanel>
+                                            <TextBlock Text="Малахит" FontSize="17" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="HomeMalachiteVersion" FontSize="19" Foreground="{StaticResource AccentBrush}" Margin="0,10,0,8" Text="Проверка комплекта…" />
+                                            <TextBlock x:Name="HomeMalachiteStatus" Foreground="{StaticResource MutedTextBrush}" Text="Квесты и скрипты MOB" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource HomeCard}">
+                                        <StackPanel>
+                                            <TextBlock Text="Редактор анимаций" FontSize="17" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="HomeAnimationVersion" FontSize="19" Foreground="{StaticResource AccentBrush}" Margin="0,10,0,8" />
+                                            <TextBlock x:Name="HomeKimodoStatus" Foreground="{StaticResource MutedTextBrush}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource HomeCard}">
+                                        <StackPanel>
+                                            <TextBlock Text="Локальная модель Малахита" FontSize="17" FontWeight="SemiBold" />
+                                            <TextBlock x:Name="HomeModelName" FontSize="19" Foreground="{StaticResource AccentBrush}" Margin="0,10,0,8" Text="Проверка файлов…" />
+                                            <TextBlock x:Name="HomeModelStatus" Foreground="{StaticResource MutedTextBrush}" Text="Генерация квестов и скриптов" />
+                                        </StackPanel>
+                                    </Border>
+                                </WrapPanel>
+                                <Expander Header="Подробнее о компонентах" Margin="4,14,4,4">
+                                    <TextBox x:Name="HomeComponentDetails" IsReadOnly="True" TextWrapping="Wrap" Background="Transparent" BorderThickness="0" Margin="0,10,0,0" />
+                                </Expander>
                             </StackPanel>
-                        </Grid>
+                        </ScrollViewer>
 
                         <!-- Loaded workspace pages -->
                         <Grid Visibility="{Binding HasDocument, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -1000,7 +1126,7 @@
                                             <StackPanel>
                                                 <TextBlock Text="Безопасный цикл работы" FontSize="16" FontWeight="SemiBold" />
                                                 <TextBlock Text="1   Открытие без изменений" Margin="0,15,0,0" />
-                                                <TextBlock Text="2   Редактирование доступно сразу" Margin="0,9,0,0" />
+                                                <TextBlock Text="2   Выберите таблицу в меню слева" Margin="0,9,0,0" />
                                                 <TextBlock Text="3   Просмотр отличий и проверка" Margin="0,9,0,0" />
                                                 <TextBlock Text="4   Резервная копия + проверенная запись" Margin="0,9,0,0" Foreground="{StaticResource AccentBrush}" />
                                             </StackPanel>
@@ -1337,7 +1463,7 @@
                                     <Grid Grid.Column="0">
                                         <TextBox x:Name="RecordSearchBox" Style="{StaticResource DarkTextBox}" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="34,8,34,8" />
                                         <TextBlock Text="⌕" Foreground="{StaticResource MutedTextBrush}" FontSize="17" Margin="11,0,0,1" VerticalAlignment="Center" HorizontalAlignment="Left" IsHitTestVisible="False" />
-                                        <TextBlock Text="Поиск по имени и пути…" Foreground="{StaticResource SubtleTextBrush}" Margin="34,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False">
+                                        <TextBlock Text="{Binding RecordSearchPlaceholder}" Foreground="{StaticResource SubtleTextBrush}" Margin="34,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False">
                                             <TextBlock.Style>
                                                 <Style TargetType="TextBlock">
                                                     <Setter Property="Visibility" Value="Collapsed" />
@@ -1352,6 +1478,13 @@
                                         <Button Style="{StaticResource RoundedButton}" Command="{Binding ClearSearchCommand}" Content="×" HorizontalAlignment="Right" Width="30" MinHeight="0" Padding="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource MutedTextBrush}" />
                                     </Grid>
 
+                                    <CheckBox Grid.Column="1"
+                                              Content="По содержимому"
+                                              IsChecked="{Binding SearchPrototypeContents}"
+                                              Visibility="{Binding CanSearchPrototypeContents, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                              HorizontalAlignment="Left" VerticalAlignment="Center" Margin="10,0"
+                                              ToolTip="Искать по луту, оружию 1 и 2, доспехам и заклинаниям" />
+
                                     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                                         <CheckBox x:Name="ShowLuaColumnsButton" Content="Показывать Lua" Checked="ShowLuaColumns_Changed" Unchecked="ShowLuaColumns_Changed" VerticalAlignment="Center" Margin="0,0,10,0" ToolTip="Показать связанные параметры Lua справа от полей БД" />
                                         <Button x:Name="NewRowButton"
@@ -1360,6 +1493,13 @@
                                                 Content="＋ Новая строка"
                                                 ToolTip="Создать строку в конце таблицы. Сначала выберите наиболее похожую строку: редактор скопирует её безопасную структуру, затем измените ключ и значения. Ctrl+Insert."
                                                 ToolTipService.ShowOnDisabled="True"
+                                                Padding="11,6"
+                                                Margin="0,0,10,0" />
+                                        <Button Style="{StaticResource RoundedButton}"
+                                                Click="DeleteDatabaseRow_Click"
+                                                IsEnabled="{Binding IsCurrentTableAddable}"
+                                                Content="− Удалить строку"
+                                                ToolTip="Удалить выбранную последнюю строку после проверки ссылок в БД. Ctrl+Z — отменить. Ссылки карт и скриптов нужно проверить отдельно."
                                                 Padding="11,6"
                                                 Margin="0,0,10,0" />
                                         <Button Style="{StaticResource RoundedButton}"
@@ -1569,8 +1709,8 @@
                                               BorderThickness="0"
                                               IsReadOnly="False"
                                               FontSize="14"
-                                              RowHeight="38"
-                                              ColumnHeaderHeight="58"
+                                              RowHeight="28"
+                                              ColumnHeaderHeight="48"
                                               GridLinesVisibility="All"
                                               HorizontalGridLinesBrush="{StaticResource GridLineBrush}"
                                               VerticalGridLinesBrush="{StaticResource GridLineBrush}"
@@ -1585,6 +1725,17 @@
                                               CellEditEnding="RecordsGrid_CellEditEnding"
                                               RowEditEnding="RecordsGrid_RowEditEnding"
                                               Sorting="RecordsGrid_Sorting">
+                                        <DataGrid.Resources>
+                                            <Style TargetType="ToolTip" BasedOn="{StaticResource {x:Type ToolTip}}">
+                                                <Setter Property="ContentTemplate">
+                                                    <Setter.Value>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding}" TextWrapping="Wrap" MaxWidth="420" Foreground="{StaticResource TextBrush}" />
+                                                        </DataTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </DataGrid.Resources>
                                         <DataGrid.Columns>
                                             <DataGridTemplateColumn Header="#"
                                                                     Width="56"
@@ -1646,7 +1797,7 @@
                                                 Background="{StaticResource LocalizationSurfaceBrush}"
                                                 BorderBrush="{StaticResource LocalizationBorderBrush}"
                                                 BorderThickness="0,2,0,0"
-                                                Padding="12,10"
+                                                Padding="8,6"
                                                 Visibility="{Binding SelectedRecord.HasLocalizationReferences, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid>
                                                 <Grid.RowDefinitions>
@@ -1654,7 +1805,7 @@
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="*" />
                                                 </Grid.RowDefinitions>
-                                                <Grid Margin="2,0,0,8">
+                                                <Grid Margin="2,0,0,4">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
                                                         <ColumnDefinition Width="Auto" />
@@ -1743,7 +1894,7 @@
                                                         </ScrollViewer>
                                                     </Grid>
                                                 </Border>
-                                                <DockPanel Grid.Row="2"><DockPanel Margin="0,0,0,8" DockPanel.Dock="Top"><TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBox x:Name="RelatedTextSearch" ToolTip="Поиск по тексту, названию и ключу…" TextChanged="RelatedSearch_TextChanged"/></DockPanel><DataGrid x:Name="LocalizationGrid"
+                                                <DockPanel Grid.Row="2"><DockPanel Margin="0,0,0,4" DockPanel.Dock="Top"><TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,8,0"/><TextBox x:Name="RelatedTextSearch" Style="{StaticResource RelatedSearchBox}" ToolTip="Поиск по тексту, названию и ключу…" TextChanged="RelatedSearch_TextChanged"/></DockPanel><DataGrid x:Name="LocalizationGrid"
                                                           
                                                           ItemsSource="{Binding Source={StaticResource RelatedTextSearchView}}"
                                                           AutoGenerateColumns="False"
@@ -1752,18 +1903,18 @@
                                                           SelectionMode="Extended"
                                                           SelectionUnit="CellOrRowHeader"
                                                           ClipboardCopyMode="ExcludeHeader"
-                                                          FontSize="14"
-                                                          RowHeight="42"
-                                                          ColumnHeaderHeight="42"
+                                                          FontSize="13"
+                                                          RowHeight="28"
+                                                          ColumnHeaderHeight="30"
                                                           GridLinesVisibility="Horizontal"
                                                           HorizontalGridLinesBrush="{StaticResource LocalizationBorderBrush}"
                                                           VerticalGridLinesBrush="Transparent"
                                                           Visibility="{Binding SelectedRecord.HasRelatedTexts, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <DataGrid.Columns>
-                                                        <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="94" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                                        <DataGridTextColumn x:Name="RelatedTextsKeyColumn" Visibility="Collapsed" Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="220" IsReadOnly="True" ElementStyle="{StaticResource LocalizationGridCellText}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="220" ElementStyle="{StaticResource LocalizationGridCellText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="280" ElementStyle="{StaticResource LocalizationGridDescriptionText}" EditingElementStyle="{StaticResource SpreadsheetCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource LocalizationEntryCellStyle}" />
+                                                        <DataGridTextColumn Header="Тип" Binding="{Binding Prefix}" Width="94" IsReadOnly="True" ElementStyle="{StaticResource RelatedTextCell}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource RelatedLocalizationCell}" />
+                                                        <DataGridTextColumn x:Name="RelatedTextsKeyColumn" Visibility="Collapsed" Header="Ключ texts.res" Binding="{Binding ResourceName}" Width="220" IsReadOnly="True" ElementStyle="{StaticResource RelatedTextCell}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource RelatedLocalizationCell}" />
+                                                        <DataGridTextColumn Header="Название RU" Binding="{Binding Title, UpdateSourceTrigger=LostFocus}" Width="220" ElementStyle="{StaticResource RelatedTextCell}" EditingElementStyle="{StaticResource RelatedCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource RelatedLocalizationCell}" />
+                                                        <DataGridTextColumn Header="Описание RU" Binding="{Binding Description, UpdateSourceTrigger=LostFocus}" Width="*" MinWidth="280" ElementStyle="{StaticResource RelatedTextCell}" EditingElementStyle="{StaticResource RelatedCellEditor}" HeaderStyle="{StaticResource LocalizationColumnHeaderStyle}" CellStyle="{StaticResource RelatedLocalizationCell}" />
                                                     </DataGrid.Columns>
                                                 </DataGrid></DockPanel>
                                             </Grid>
@@ -1785,14 +1936,14 @@
                                                 Background="{StaticResource SoundSurfaceBrush}"
                                                 BorderBrush="{StaticResource SoundBorderBrush}"
                                                 BorderThickness="0,2,0,0"
-                                                Padding="12,10"
+                                                Padding="8,6"
                                                 Visibility="{Binding SelectedRecord.HasSoundReferences, Converter={StaticResource BooleanToVisibilityConverter}}">
                                             <Grid>
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto" />
                                                     <RowDefinition Height="*" />
                                                 </Grid.RowDefinitions>
-                                                <Grid Margin="2,0,0,8">
+                                                <Grid Margin="2,0,0,4">
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="*" />
                                                         <ColumnDefinition Width="Auto" />
@@ -1822,7 +1973,7 @@
                                                             Click="DetailsPaneDetachButton_Click"
                                                             ToolTip="Открыть связанные тексты и звук в отдельном окне" />
                                                 </Grid>
-                                                <DockPanel Grid.Row="1"><DockPanel Margin="0,0,0,8" DockPanel.Dock="Top"><TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,8,0"/><Button Content="■ Стоп" DockPanel.Dock="Right" Click="RelatedSoundStop_Click" Margin="8,0,0,0"/><TextBox x:Name="RelatedSoundSearch" ToolTip="Поиск по тексту реплики, файлу и персонажу…" TextChanged="RelatedSearch_TextChanged"/></DockPanel><DataGrid x:Name="SoundLinksGrid"
+                                                <DockPanel Grid.Row="1"><DockPanel Margin="0,0,0,4" DockPanel.Dock="Top"><TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,8,0"/><Button Content="■ Стоп" MinHeight="0" Height="28" Padding="8,2" DockPanel.Dock="Right" Click="RelatedSoundStop_Click" Margin="8,0,0,0"/><TextBox x:Name="RelatedSoundSearch" Style="{StaticResource RelatedSearchBox}" ToolTip="Поиск по тексту реплики, файлу и персонажу…" TextChanged="RelatedSearch_TextChanged"/></DockPanel><DataGrid x:Name="SoundLinksGrid"
                                                           
                                                           ItemsSource="{Binding Source={StaticResource RelatedSoundSearchView}}"
                                                           AutoGenerateColumns="False"
@@ -1834,8 +1985,8 @@
                                                           ClipboardCopyMode="ExcludeHeader"
                                                           FrozenColumnCount="2"
                                                           FontSize="13"
-                                                          RowHeight="36"
-                                                          ColumnHeaderHeight="38"
+                                                          RowHeight="28"
+                                                          ColumnHeaderHeight="30"
                                                           EnableRowVirtualization="True"
                                                           VirtualizingPanel.IsVirtualizing="True"
                                                           VirtualizingPanel.VirtualizationMode="Recycling"
@@ -1846,14 +1997,14 @@
                                                           HorizontalGridLinesBrush="{StaticResource SoundBorderBrush}"
                                                           VerticalGridLinesBrush="Transparent"
                                                           PreviewMouseWheel="SoundLinksGrid_PreviewMouseWheel">
-                                                    <DataGrid.Columns><DataGridTemplateColumn Header="▶" Width="70" MinWidth="60"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="▶" ToolTip="Воспроизвести звук" IsEnabled="{Binding IsResolved}" Click="RelatedSoundPlay_Click" Padding="8,3"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
-                                                        <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" Width="100" MinWidth="90" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Связь / персонаж" Binding="{Binding Source}" Width="220" MinWidth="180" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Текст реплики из texts.res" Binding="{Binding TranscriptText}" Width="*" MinWidth="360" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Файл в RES" Binding="{Binding DisplayResourceName}" Width="360" MinWidth="260" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Архив" Binding="{Binding ArchiveName}" Width="150" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Формат" Binding="{Binding Format}" Width="78" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
-                                                        <DataGridTextColumn Header="Размер" Binding="{Binding LengthText}" Width="92" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource SoundEntryCellStyle}" />
+                                                    <DataGrid.Columns><DataGridTemplateColumn Header="▶" Width="46" MinWidth="46"><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Content="▶" ToolTip="Воспроизвести звук" IsEnabled="{Binding IsResolved}" Click="RelatedSoundPlay_Click" MinHeight="0" Height="24" Padding="6,0"/></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+                                                        <DataGridTextColumn Header="Статус" Binding="{Binding StatusText}" Width="100" MinWidth="90" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource RelatedSoundCell}" />
+                                                        <DataGridTextColumn Header="Связь / персонаж" Binding="{Binding Source}" Width="220" MinWidth="180" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource RelatedSoundCell}" />
+                                                        <DataGridTextColumn Header="Текст реплики из texts.res" Binding="{Binding TranscriptText}" Width="*" MinWidth="360" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource RelatedSoundCell}" />
+                                                        <DataGridTextColumn Header="Файл в RES" Binding="{Binding DisplayResourceName}" Width="360" MinWidth="260" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource RelatedSoundCell}" />
+                                                        <DataGridTextColumn Header="Архив" Binding="{Binding ArchiveName}" Width="150" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource RelatedSoundCell}" />
+                                                        <DataGridTextColumn Header="Формат" Binding="{Binding Format}" Width="78" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource RelatedSoundCell}" />
+                                                        <DataGridTextColumn Header="Размер" Binding="{Binding LengthText}" Width="92" ElementStyle="{StaticResource SoundGridCellText}" HeaderStyle="{StaticResource SoundColumnHeaderStyle}" CellStyle="{StaticResource RelatedSoundCell}" />
                                                     </DataGrid.Columns>
                                                 </DataGrid></DockPanel>
                                             </Grid>
@@ -1862,35 +2013,24 @@
                                           </TabItem>
                                           
                                           <TabItem Header="Текстуры" x:Name="TextureTab">
-                                            <Grid x:Name="TextureBrowser" Margin="10">
+                                            <Grid x:Name="TextureBrowser" Margin="8,6">
                                               <Grid.RowDefinitions>
                                                 <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                                                 <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                                                 <RowDefinition Height="*" /><RowDefinition Height="Auto" />
                                               </Grid.RowDefinitions>
-                                              <DockPanel Margin="0,0,0,8">
-                                                <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
-                                                  <Button x:Name="TextureExpandButton" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="6,0,0,0" />
-                                                  <Button x:Name="TextureDetachButton" Content="В отдельное окно" Click="DetailsPaneDetachButton_Click" Margin="6,0,0,0" />
-                                                </WrapPanel>
-                                                <TextBlock Text="Текстуры и источники" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                              </DockPanel>
-
-                                              <Grid Grid.Row="2" Margin="0,0,0,8">
-                                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="200" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                                <DockPanel Margin="0,0,8,0">
-                                                  <TextBlock Text="Поиск" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" Margin="0,0,8,0" />
-                                                  <TextBox Text="{Binding TextureSearch, UpdateSourceTrigger=PropertyChanged}" ToolTip="Имя файла, материал, запись или архив" />
-                                                </DockPanel>
-                                                <ComboBox Grid.Column="1" SelectedIndex="{Binding TextureFilterIndex}" Margin="0,0,8,0">
-                                                  <ComboBoxItem Content="Все ресурсы" />
-                                                  <ComboBoxItem Content="Файл найден" />
-                                                  <ComboBoxItem Content="Нет / повреждён" />
-                                                  <ComboBoxItem Content="Нужно уточнить" />
+                                              <WrapPanel Margin="0,0,0,4">
+                                                <TextBlock Text="Поиск" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                <TextBox x:Name="TextureSearchBox" Style="{StaticResource RelatedSearchBox}" Margin="0,0,8,2" Text="{Binding TextureSearch, UpdateSourceTrigger=PropertyChanged}" ToolTip="Имя файла, материал, запись или архив" />
+                                                <ComboBox x:Name="TextureFilterBox" Style="{StaticResource DetailsCompactCombo}" Width="170" SelectedIndex="{Binding TextureFilterIndex}" Margin="0,0,8,2">
+                                                  <ComboBoxItem Content="Все ресурсы" /><ComboBoxItem Content="Файл найден" />
+                                                  <ComboBoxItem Content="Нет / повреждён" /><ComboBoxItem Content="Нужно уточнить" />
                                                 </ComboBox>
-                                                <CheckBox Grid.Column="2" Content="Вся БД" IsChecked="{Binding TextureShowAll}" VerticalAlignment="Center" Margin="8,0,2,0" />
-                                              </Grid>
-                                              <TextBlock Grid.Row="3" Text="{Binding TextureSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                                <CheckBox Content="Вся БД" IsChecked="{Binding TextureShowAll}" VerticalAlignment="Center" Margin="0,0,8,2" />
+                                                <Button x:Name="TextureExpandButton" Style="{StaticResource DetailsCompactButton}" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="0,0,6,2" />
+                                                <Button x:Name="TextureDetachButton" Style="{StaticResource DetailsCompactButton}" Content="В отдельное окно" Click="DetailsPaneDetachButton_Click" Margin="0,0,0,2" />
+                                              </WrapPanel>
+                                              <TextBlock Grid.Row="3" Text="{Binding TextureSummary}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,0,0,4" />
                                               <Grid Grid.Row="4">
                                                 <Grid.ColumnDefinitions><ColumnDefinition Width="3*" MinWidth="280" /><ColumnDefinition Width="7" /><ColumnDefinition Width="2*" MinWidth="240" /></Grid.ColumnDefinitions>
                                                 <ListBox x:Name="TextureLinksGrid" ItemsSource="{Binding TextureView}" SelectedItem="{Binding SelectedTexture, Mode=TwoWay}"
@@ -1900,13 +2040,13 @@
                                                   <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem" BasedOn="{StaticResource DarkListBoxItem}"><Setter Property="Padding" Value="0" /></Style></ListBox.ItemContainerStyle>
                                                   <ListBox.ItemTemplate>
                                                     <DataTemplate>
-                                                      <Border Padding="10,9" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                                                      <Border Padding="6,3" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
                                                         <Grid>
                                                           <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="160" /></Grid.ColumnDefinitions>
                                                           <StackPanel Margin="0,0,10,0">
                                                             <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="{StaticResource TextBrush}" />
-                                                            <TextBlock Text="{Binding Purpose}" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,0" TextWrapping="Wrap" />
-                                                            <TextBlock Text="{Binding RecordName}" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0">
+                                                            <TextBlock Text="{Binding Purpose}" Foreground="{StaticResource MutedTextBrush}" Margin="0,1,0,0" TextWrapping="Wrap" />
+                                                            <TextBlock Text="{Binding RecordName}" Foreground="{StaticResource MutedTextBrush}" Margin="0,1,0,0">
                                                               <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" />
                                                                 <Style.Triggers><DataTrigger Binding="{Binding DataContext.TextureShowAll, RelativeSource={RelativeSource AncestorType=ListBox}}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers>
                                                               </Style></TextBlock.Style>
@@ -1919,7 +2059,7 @@
                                                   </ListBox.ItemTemplate>
                                                 </ListBox>
                                                 <GridSplitter Grid.Column="1" Width="7" HorizontalAlignment="Stretch" ResizeDirection="Columns" Background="{StaticResource BorderBrush}" />
-                                                <Border Grid.Column="2" Padding="14" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
+                                                <Border Grid.Column="2" Padding="8" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource StrongBorderBrush}" BorderThickness="1">
                                                   <Grid>
                                                     <TextBlock Text="Выберите ресурс слева. Если список пуст, измените поиск или фильтр." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}">
                                                       <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding SelectedTexture}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
@@ -1935,11 +2075,11 @@
                                                             <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TextBox"><ScrollViewer x:Name="PART_ContentHost" /></ControlTemplate></Setter.Value></Setter>
                                                           </Style>
                                                         </StackPanel.Resources>
-                                                        <TextBox Text="{Binding DisplayName, Mode=OneWay}" Style="{StaticResource TextureCopyText}" FontSize="16" FontWeight="SemiBold" />
-                                                        <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ScrollViewer}}" Margin="0,10,0,12">
-                                                          <DockPanel Margin="0,0,0,8">
+                                                        <TextBox Text="{Binding DisplayName, Mode=OneWay}" Style="{StaticResource TextureCopyText}" FontSize="14" FontWeight="SemiBold" />
+                                                        <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=ScrollViewer}}" Margin="0,4,0,6">
+                                                          <DockPanel Margin="0,0,0,4">
                                                             <TextBlock Text="Масштаб" VerticalAlignment="Center" Margin="0,0,8,0" />
-                                                            <ComboBox SelectedIndex="{Binding TextureZoomIndex}" MinWidth="110">
+                                                            <ComboBox Style="{StaticResource DetailsCompactCombo}" SelectedIndex="{Binding TextureZoomIndex}" MinWidth="110">
                                                               <ComboBoxItem Content="Вписать" /><ComboBoxItem Content="100%" /><ComboBoxItem Content="200%" /><ComboBoxItem Content="400%" />
                                                             </ComboBox>
                                                           </DockPanel>
@@ -1969,7 +2109,7 @@
                                                         <TextBlock Text="{Binding ApplicabilityText}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
                                                         <TextBlock Text="{Binding RecordName}" Margin="0,14,0,3" FontWeight="SemiBold" TextWrapping="Wrap" />
                                                         <TextBlock Text="{Binding Purpose}" Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" />
-                                                        <Button Content="Перейти к записи БД" Click="TextureNavigate_Click" HorizontalAlignment="Left" Margin="0,8,0,14" />
+                                                        <Button Style="{StaticResource DetailsCompactButton}" Content="Перейти к записи БД" Click="TextureNavigate_Click" HorizontalAlignment="Left" Margin="0,8,0,14" />
                                                         <TextBlock Text="Почему этот ресурс" FontWeight="SemiBold" Margin="0,0,0,5" />
                                                         <TextBox Text="{Binding Explanation, Mode=OneWay}" Style="{StaticResource TextureCopyText}" />
                                                         <TextBlock Text="{Binding ResourceName, StringFormat=Источник записи: {0}}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,14,0,5" />
@@ -1981,23 +2121,23 @@
                                                   </Grid>
                                                 </Border>
                                               </Grid>
-                                              <TextBlock Grid.Row="5" Text="{Binding TextureVisibleSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" />
+                                              <TextBlock Grid.Row="5" Text="{Binding TextureVisibleSummary}" Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" />
                                             </Grid>
                                           </TabItem>
                                                                                   <TabItem Header="Модель" x:Name="ModelTab">
                                             <DockPanel>
                                               <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                <Button x:Name="ModelExpandButton" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="4"/>
-                                                <Button Content="В отдельное окно / вернуть" Click="DetailsPaneDetachButton_Click" Margin="4"/>
+                                                <Button Style="{StaticResource DetailsCompactButton}" x:Name="ModelExpandButton" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="4,2"/>
+                                                <Button Style="{StaticResource DetailsCompactButton}" Content="В отдельное окно / вернуть" Click="DetailsPaneDetachButton_Click" Margin="4,2"/>
                                               </StackPanel>
-                                              <local:UnitModelPreviewView/>
+                                              <local:UnitModelPreviewView x:Name="DetailsModelPreview"/>
                                             </DockPanel>
                                           </TabItem>
                                           <TabItem Header="Визуальные эффекты" x:Name="SpellEffectsTab">
                                             <DockPanel>
                                               <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                <Button x:Name="SpellEffectsExpandButton" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="4"/>
-                                                <Button Content="В отдельное окно / вернуть" Click="DetailsPaneDetachButton_Click" Margin="4"/>
+                                                <Button Style="{StaticResource DetailsCompactButton}" x:Name="SpellEffectsExpandButton" Content="↗ Развернуть" Click="TextureExpand_Click" Margin="4,2"/>
+                                                <Button Style="{StaticResource DetailsCompactButton}" Content="В отдельное окно / вернуть" Click="DetailsPaneDetachButton_Click" Margin="4,2"/>
                                               </StackPanel>
                                               <local:SpellVisualEffectsView/>
                                             </DockPanel>
@@ -2567,7 +2707,7 @@
                                   Visibility="{Binding CurrentSection, Converter={StaticResource SectionVisibilityConverter}, ConverterParameter=Validation}">
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="12" />
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="12" />
                                     <RowDefinition Height="*" />
@@ -2595,9 +2735,15 @@
                                     <Border Grid.Column="2" Background="#1D2A26" CornerRadius="8" Padding="12,7" Margin="8,0,0,0">
                                         <TextBlock Text="{Binding DiagnosticFilterSummary}" Foreground="{StaticResource MutedTextBrush}" />
                                     </Border>
-                                    <Button Grid.Column="4" Style="{StaticResource RoundedButton}" Command="{Binding RefreshValidationCommand}" Content="↻  Проверить снова  ·  F5" />
+                                    <StackPanel Grid.Column="4" Orientation="Horizontal">
+                                        <Button Style="{StaticResource RoundedButton}" Command="{Binding CancelResourceValidationCommand}" Content="Отменить" Margin="0,0,8,0" />
+                                        <Button Style="{StaticResource RoundedButton}" Command="{Binding RefreshValidationCommand}" Content="↻  Проверить снова  ·  F5" />
+                                    </StackPanel>
                                 </Grid>
 
+                                <StackPanel Grid.Row="1" Margin="0,8,0,8">
+                                    <TextBlock x:Name="ResourceValidationCoverageText" Text="{Binding ResourceValidationStatus}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" />
+                                </StackPanel>
                                 <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="12">
                                     <Grid>
                                         <Grid.ColumnDefinitions>

@@ -22,11 +22,18 @@ public sealed record AnimationAuthoringSettings
     public bool Onion { get; init; }
     public bool Ghost { get; init; }
     public bool? Ground { get; init; }
+    public bool? ShowPoints { get; init; }
     public int Fps { get; init; } = 30;
     public bool Loop { get; init; } = true;
 }
 public sealed record AnimationProjectDocument(int Version, string Model, string Clip, string SourceHash,
-    byte[] Animation, byte[][] Undo, byte[][] Redo, AnimationAuthoringSettings Settings);
+    byte[] Animation, byte[][] Undo, byte[][] Redo, AnimationAuthoringSettings Settings)
+{
+    public byte[]? SourceAnimation { get; init; }
+    public string? SkeletonHash { get; init; }
+    public string? WriteBaselineHash { get; init; }
+    public string? CoordinateIdentity { get; init; }
+}
 
 public sealed partial class FigureAnimationEditor
 {
@@ -40,6 +47,22 @@ public sealed partial class FigureAnimationEditor
             foreach (var state in recent) _undo.Push(state);
         }
         _undo.Push(_bytes); _redo.Clear(); _bytes = bytes;
+    }
+    private void CheckMotionPins(FigureAnimationSet set, FigureAnimationClip before,
+        FigureAnimationClip after, int first, int last)
+    {
+        if (MotionPins.Count == 0) return;
+        if (before.FrameCount != after.FrameCount)
+            throw new InvalidOperationException("Снимите фиксацию стоп перед изменением длины клипа; изменение отменено целиком.");
+        for (int frame = first; frame <= last; frame++)
+        {
+            var oldPose = set.Pose(before, frame);
+            var nextPose = set.Pose(after, frame);
+            foreach (var pin in MotionPins)
+                if (!oldPose.TryGetValue(pin.Key, out var old) || !nextPose.TryGetValue(pin.Key, out var next) ||
+                    Vector3.Distance(next.Position, old.Position) > .0001f && Vector3.Distance(next.Position, pin.Value) > .0001f)
+                    throw new InvalidOperationException("Фиксация стопы «" + pin.Key + "» нарушена в кадре " + frame + ". Снимите фиксацию или измените позу с сохранением опоры; изменение отменено целиком.");
+        }
     }
     private (ResArchiveDocument Outer, ResEntry? Nested, ResArchiveDocument Tracks) Containers(string name)
     {
@@ -76,6 +99,11 @@ public sealed partial class FigureAnimationEditor
             var before = await Preview().LoadAsync(name).ConfigureAwait(false);
             if (before.FrameCount == candidate.FrameCount)
                 for (int f = 0; f < before.FrameCount; f++) CheckLockedPose(_source, before, candidate, f, LockedParts);
+        }
+        if (MotionPins.Count > 0)
+        {
+            var before = await Preview().LoadAsync(name).ConfigureAwait(false);
+            CheckMotionPins(Preview(), before, candidate, 0, before.FrameCount - 1);
         }
         Accept(bytes);
     }
@@ -229,17 +257,40 @@ public sealed partial class FigureAnimationEditor
         }
         await ApplyAuthoringAsync(name, frame, rotations, new Dictionary<string, Vector3>(), 0, limits, pins);
     }
-    private string SourceIdentity()
+    private static string SourceIdentity(FigureAnimationSet source)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData(_source.ExportBytes());
-        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(_source.Parents.OrderBy(p => p.Key, StringComparer.Ordinal), ProjectJson));
-        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(_source.Bones.OrderBy(p => p.Key, StringComparer.Ordinal), ProjectJson));
+        hash.AppendData(source.ExportBytes());
+        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(source.Parents.OrderBy(p => p.Key, StringComparer.Ordinal), ProjectJson));
+        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(source.Bones.OrderBy(p => p.Key, StringComparer.Ordinal), ProjectJson));
         return Convert.ToHexString(hash.GetHashAndReset());
+    }
+    private static string SkeletonIdentity(FigureAnimationSet source)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(source.Parents.OrderBy(p => p.Key, StringComparer.Ordinal), ProjectJson));
+        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(source.Bones.OrderBy(p => p.Key, StringComparer.Ordinal), ProjectJson));
+        hash.AppendData(JsonSerializer.SerializeToUtf8Bytes(source.BindPositions.OrderBy(p => p.Key, StringComparer.Ordinal), ProjectJson));
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+    public static string SkeletonFingerprint(FigureAnimationSet source) => SkeletonIdentity(source);
+    public FigureAnimationSet SourceSet => _source;
+    public bool ProjectMayWriteSource { get; private set; } = true;
+    public string? ProjectCoordinateWarning { get; private set; }
+    public static (string Model, string Clip) ProjectTarget(byte[] bytes)
+    {
+        if (bytes.Length > 256 * 1024 * 1024) throw new InvalidDataException("Проект превышает 256 МиБ.");
+        var d = JsonSerializer.Deserialize<AnimationProjectDocument>(bytes, ProjectJson) ?? throw new InvalidDataException("Пустой проект.");
+        return (d.Model, d.Clip);
     }
     public byte[] SaveProject(string model, string clip, AnimationAuthoringSettings settings)
     {
-        var document = new AnimationProjectDocument(1, model, clip, SourceIdentity(), ExportBytes(), _undo.ToArray(), _redo.ToArray(), settings);
+        var document = new AnimationProjectDocument(2, model, clip, SourceIdentity(_source), ExportBytes(), _undo.ToArray(), _redo.ToArray(), settings)
+        {
+            SourceAnimation = _source.ExportBytes(), SkeletonHash = SkeletonIdentity(_source), CoordinateIdentity = CurrentCoordinateIdentity(),
+            WriteBaselineHash = ProjectMayWriteSource && _source.SaveTarget is { } target
+                ? Convert.ToHexString(SHA256.HashData(target.OriginalBytes)) : null
+        };
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(document, ProjectJson);
         if (bytes.Length > 256 * 1024 * 1024) throw new InvalidDataException("Проект превышает 256 МиБ. Экспортируйте ANM отдельно.");
         return bytes;
@@ -248,7 +299,27 @@ public sealed partial class FigureAnimationEditor
     {
         if (bytes.Length > 256 * 1024 * 1024) throw new InvalidDataException("Проект превышает 256 МиБ.");
         var d = JsonSerializer.Deserialize<AnimationProjectDocument>(bytes, ProjectJson) ?? throw new InvalidDataException("Пустой проект.");
-        if (d.Version != 1 || d.Model != model || d.Clip != clip || d.SourceHash != SourceIdentity()) throw new InvalidDataException("Проект создан для другой модели, клипа или исходного ANM.");
+        if (d.Model != model || d.Clip != clip) throw new InvalidDataException("Проект создан для другой модели или клипа.");
+        FigureAnimationSet projectSource;
+        bool mayWrite;
+        if (d.Version == 1)
+        {
+            if (d.SourceHash != SourceIdentity(_source))
+                throw new InvalidDataException("Старому проекту не хватает снимка исходного ANM. Откройте его с прежним неизменённым ANM, затем сохраните проект заново; текущий файл не перезаписывается.");
+            projectSource = _source; mayWrite = true;
+        }
+        else if (d.Version == 2 && d.SourceAnimation is { Length: > 0 } && d.SkeletonHash is not null)
+        {
+            if (d.SkeletonHash != SkeletonIdentity(_source))
+                throw new InvalidDataException("Скелет или геометрия модели не совпадает с проектом.");
+            projectSource = _source.WithBytes(d.SourceAnimation);
+            if (d.SourceHash != SourceIdentity(projectSource))
+                throw new InvalidDataException("Снимок исходного ANM внутри проекта повреждён или не соответствует скелету.");
+            byte[] current = _source.ExportBytes();
+            mayWrite = current.AsSpan().SequenceEqual(d.Animation) ||
+                d.WriteBaselineHash is not null && d.WriteBaselineHash == Convert.ToHexString(SHA256.HashData(current));
+        }
+        else throw new InvalidDataException("Неизвестная версия проекта или отсутствует снимок исходного ANM.");
         if (d.Animation is null || d.Undo is null || d.Redo is null || d.Settings is null || d.Settings.Pins is null || d.Settings.Part is null ||
             d.Undo.Length + d.Redo.Length > 32 || d.Settings.SmoothRadius is < 0 or > 120 ||
             d.Settings.Fps is not (10 or 15 or 20 or 25 or 30 or 60) ||
@@ -256,21 +327,34 @@ public sealed partial class FigureAnimationEditor
         foreach (byte[] state in d.Undo.Concat(d.Redo).Append(d.Animation))
         {
             if (state is null) throw new InvalidDataException("Пустое состояние проекта.");
-            _ = await _source.WithBytes(state).LoadAsync(clip);
+            _ = await projectSource.WithBytes(state).LoadAsync(clip);
         }
-        var loaded = await _source.WithBytes(d.Animation).LoadAsync(clip);
+        var loaded = await projectSource.WithBytes(d.Animation).LoadAsync(clip);
         if (d.Settings.Frame < 0 || d.Settings.Frame >= loaded.FrameCount || d.Settings.First < 0 || d.Settings.Last < d.Settings.First || d.Settings.Last >= loaded.FrameCount ||
-            (d.Settings.Part.Length > 0 && !loaded.Tracks.ContainsKey(d.Settings.Part)) || d.Settings.Pins.Keys.Any(p => !FigureLimbIk.Supports(_source, loaded, p)))
+            (d.Settings.Part.Length > 0 && !loaded.Tracks.ContainsKey(d.Settings.Part)) || d.Settings.Pins.Keys.Any(p => !FigureLimbIk.Supports(projectSource, loaded, p)))
             throw new InvalidDataException("Кадры или части проекта не соответствуют клипу.");
         if (d.Settings.Contacts is null || d.Settings.Poses is null || d.Settings.Contacts.Count > 1000 || d.Settings.Poses.Count > 500) throw new InvalidDataException("Некорректная библиотека/контакты.");
-        foreach(var c in d.Settings.Contacts) if(c.First<0||c.Last<c.First||c.Last>=loaded.FrameCount||!float.IsFinite(c.Anchor.LengthSquared())||!FigureLimbIk.Supports(_source,loaded,c.Part)) throw new InvalidDataException("Некорректный контакт.");
+        foreach(var c in d.Settings.Contacts) if(c.First<0||c.Last<c.First||c.Last>=loaded.FrameCount||!float.IsFinite(c.Anchor.LengthSquared())||!FigureLimbIk.Supports(projectSource,loaded,c.Part)) throw new InvalidDataException("Некорректный контакт.");
         foreach(var p in d.Settings.Poses) if(p.Rotations is null || p.Positions is null || p.Rotations.Any(q=>!float.IsFinite(q.Value.LengthSquared())||q.Value.LengthSquared()<.0001f)||p.Positions.Any(v=>!float.IsFinite(v.Value.LengthSquared()))) throw new InvalidDataException("Некорректная поза.");
         if (d.Settings.LockedParts is null || d.Settings.UnlockedLimbs is null ||
             d.Settings.LockedParts.Any(p => p is null || !loaded.Tracks.ContainsKey(p)) ||
             d.Settings.UnlockedLimbs.Any(p => p is not ("lh3" or "rh3" or "ll3" or "rl3")))
             throw new InvalidDataException("Некорректные блокировки частей.");
+        string? coordinateWarning = null;
+        string? coordinateIdentity = CurrentCoordinateIdentity();
+        bool compatibleSpace = coordinateIdentity is not null && (d.CoordinateIdentity == coordinateIdentity ||
+            d.CoordinateIdentity is null && projectSource.RootSpace.Coefficient == 1);
+        if (!compatibleSpace && (d.Settings.Pins.Count > 0 || d.Settings.Contacts.Count > 0))
+        {
+            // Restore the raw clip/history. Old absolute anchors cannot be applied
+            // in a changed display space; report their removal to the caller.
+            d = d with { Settings = d.Settings with { Pins = new(), Contacts = new() } };
+            coordinateWarning = "Сырые дорожки проекта восстановлены. Фиксации и контакты сняты: координаты ADB/роста изменились или старый проект не содержит их identity. Задайте опоры заново.";
+        }
         LockedParts.Clear(); LockedParts.UnionWith(d.Settings.LockedParts);
         UnlockedLimbs.Clear(); UnlockedLimbs.UnionWith(d.Settings.UnlockedLimbs);
+        _source = projectSource; ProjectMayWriteSource = mayWrite; ProjectCoordinateWarning = coordinateWarning;
+        MotionPins = d.Settings.Pins;
         Contacts = d.Settings.Contacts.ToArray();
         _bytes = d.Animation; _undo.Clear(); _redo.Clear(); foreach (byte[] state in d.Undo.Reverse()) _undo.Push(state); foreach (byte[] state in d.Redo.Reverse()) _redo.Push(state);
         return d.Settings;

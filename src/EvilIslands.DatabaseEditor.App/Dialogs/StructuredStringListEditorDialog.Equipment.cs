@@ -124,7 +124,7 @@ public partial class StructuredStringListEditorDialog
         var shapes = _magicContext.Armors.Where(c => slot < 0 || _equipmentRecords.Any(r =>
             r.Table == "items.armors" && r.Name == c.Value && r.Integer(2, -1) == slot)).ToArray();
         _syncingMagicConstructor = true;
-        try { MagicShapeComboBox.ItemsSource = shapes; MagicShapeComboBox.SelectedItem = shapes.FirstOrDefault(c => c.Value == previous); }
+        try { SetShapeChoices(shapes, FindChoice(shapes, previous)); }
         finally { _syncingMagicConstructor = false; }
         RefreshMagicEvaluation();
     }
@@ -210,9 +210,7 @@ public partial class StructuredStringListEditorDialog
         try
         {
             await Task.Delay(180, token);
-            // The general viewer selects weapon 1; when editing weapon 2, display that draft weapon.
-            var preview = _equipmentField == 42 ? draft with { Fields = new Dictionary<int, string>(draft.Fields) { [33] = draft.Text(42), [42] = "" } } : draft;
-            var scene = await UnitModelPreview.LoadAsync(_equipmentPath, preview, _equipmentRecords, token);
+            var scene = await UnitModelPreview.LoadAsync(_equipmentPath, draft, _equipmentRecords, token, lua: _equipmentLua);
             token.ThrowIfCancellationRequested();
             _equipmentPreview!.Visibility = Visibility.Visible;
             await _equipmentPreview.ShowEquipmentSceneAsync(scene, token);

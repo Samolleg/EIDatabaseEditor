@@ -124,6 +124,7 @@ internal sealed class ParsedDatabaseResource
                         editSync));
                 }
 
+                AddOptionalMaterialGraphics(resourceName, schema, recordIndex, fields, original, editSync);
                 var displayName = fields.FirstOrDefault(field => field.Id == schema.NameFieldId)?.Value.ToString()
                     ?? $"Запись {recordIndex + 1}";
                 var record = new DatabaseRecord(
@@ -150,6 +151,18 @@ internal sealed class ParsedDatabaseResource
         }
 
         return new ParsedDatabaseResource(resourceName, original, topChunks, root, rootChildren, sections);
+    }
+
+    private static void AddOptionalMaterialGraphics(string resourceName, SectionSchema schema, int recordIndex,
+        List<DatabaseField> fields, byte[] backingData, object editSync)
+    {
+        if (!resourceName.Equals("items.idb", StringComparison.OrdinalIgnoreCase) || schema.Id != 4 ||
+            fields.Any(f => f.Id == 28) || !schema.Fields.TryGetValue(28, out var fieldSchema)) return;
+        // Expose the new optional setting in old databases without adding bytes
+        // until the user supplies a value. HeaderOffset -1 marks an absent field.
+        fields.Add(new DatabaseField(28, fieldSchema,
+            $"{resourceName}/{schema.Name}[{recordIndex}]/field-28", -1,
+            new ChunkSlice(28, -1, 0, 0, 0), backingData, editSync));
     }
 
     public IReadOnlyList<DatabaseRecord> GetRecords(byte sectionId) =>
@@ -206,6 +219,7 @@ internal sealed class ParsedDatabaseResource
                 editSync));
         }
 
+        AddOptionalMaterialGraphics(ResourceName, section.Schema, recordIndex, fields, cloneBacking, editSync);
         string displayName = fields.FirstOrDefault(field => field.Id == section.Schema.NameFieldId)?.Value.ToString()
             ?? $"Запись {recordIndex + 1}";
         var clone = new DatabaseRecord(
@@ -253,11 +267,16 @@ internal sealed class ParsedDatabaseResource
         ArgumentNullException.ThrowIfNull(record);
         if (!_sections.TryGetValue(record.SectionId, out var section) ||
             section.Records.Count == 0 || !ReferenceEquals(section.Records[^1], record) ||
-            !section.HistoryRecords.Contains(record))
+            (!section.HistoryRecords.Contains(record) &&
+             (!section.Schema.CanAppendRecords ||
+              !section.OriginalRecordsByHeaderOffset.Values.Contains(record))))
         {
-            throw new InvalidOperationException("Безопасно отменить можно только последнюю добавленную строку этой таблицы.");
+            throw new InvalidOperationException("Удалить можно только последнюю строку поддерживаемой таблицы: номера остальных записей должны сохраниться.");
         }
 
+        // Original tail rows can be deleted too; register them for the same
+        // presence history used by append Undo/Redo.
+        section.HistoryRecords.Add(record);
         if (!section.AddedRecords.Remove(record)) section.RemovedOriginalRecords.Add(record);
         section.Records.RemoveAt(section.Records.Count - 1);
     }
@@ -371,7 +390,7 @@ internal sealed class ParsedDatabaseResource
 
     private byte[] BuildRecordPayload(DatabaseRecord record)
     {
-        var fieldsByOffset = record.Fields.ToDictionary(field => field.Chunk.HeaderOffset);
+        var fieldsByOffset = record.Fields.Where(field => field.Chunk.HeaderOffset >= 0).ToDictionary(field => field.Chunk.HeaderOffset);
         byte[] backingData = record.BackingData;
         var chunks = ChunkCodec.ReadList(
             backingData,
@@ -390,6 +409,9 @@ internal sealed class ParsedDatabaseResource
                 output.Write(backingData.AsSpan(chunk.HeaderOffset, chunk.TotalLength));
             }
         }
+
+        foreach (var field in record.Fields.Where(f => f.Chunk.HeaderOffset < 0 && f.IsModified))
+            output.Write(ChunkCodec.Encode((byte)field.Id, field.Payload, 2));
 
         return output.ToArray();
     }

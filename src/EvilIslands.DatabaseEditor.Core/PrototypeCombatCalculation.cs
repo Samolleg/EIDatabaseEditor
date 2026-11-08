@@ -228,7 +228,7 @@ public static class PrototypeCombatCalculation
             general.Add(new(title + " · атака", N(Math.Truncate(attack))));
             general.Add(new(title + " · защита", N(Math.Truncate(defense))));
             general.Add(new(title + " · урон", N(Math.Max(1, min * factor)) + "–" + N(Math.Max(1, max * factor))));
-            general.Add(new(title + " · левая рука", paired ? unit.Text(other.Field) : "нет"));
+            general.Add(new(title + " · парная рука при выборе основным", paired ? unit.Text(other.Field) : "нет"));
             report.Details.Add(new(title + " · расчёт", [new("Навык", N(skill)), new("Атака: основа после учёта пары", N(baseAttack)),
                 new("Защита: навык + оружие", N(baseDefense)), new("Броня: атака / защита", N(attackArmor) + " / " + N(defenseArmor)),
                 new("Левая рука: атака / защита", N(leftAttack) + " / " + N(leftDefense)), new("Парное оружие: штраф атаки", N(pairPenalty)),

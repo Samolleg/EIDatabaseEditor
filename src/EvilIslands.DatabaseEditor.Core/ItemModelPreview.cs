@@ -16,7 +16,11 @@ public static class ItemModelPreview
         if (IsSpellContainer(item)) return new("Заклинание", records.Where(r => r.Table == "spells.prototypes").ToArray());
         if (item.Table is "items.weapons" or "items.armors" or "items.quick_items" &&
             !item.Text(3).Equals("None", StringComparison.OrdinalIgnoreCase))
-            return new("Материал", records.Where(r => r.Table == "items.materials" && r.Text(1).Equals(item.Text(3), StringComparison.OrdinalIgnoreCase)).ToArray());
+        {
+            var graphics = QuickItemMaterialGraphics.ForItem(item);
+            return new("Материал", records.Where(r => r.Table == "items.materials" &&
+                (r.Text(1).Equals(item.Text(3), StringComparison.OrdinalIgnoreCase) || graphics.ContainsKey(r.Text(2)))).ToArray());
+        }
         if (item.Table == "items.loot_items" && item.Integer(21) is 1 or 2 && item.Integer(23, -1) < 0)
         {
             string table = TargetTable(item);
@@ -48,10 +52,18 @@ public static class ItemModelPreview
         if (options.Choices.Count == 0 || options.Label != "Материал" || item.Table == "items.loot_items") return options.Choices.FirstOrDefault();
         var sources = await TextureSources.FromDatabaseFolderAsync(database, token).ConfigureAwait(false);
         var catalog = await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
+        return DefaultChoice(item, records, catalog, token);
+    }
+
+    internal static ModelRecord? DefaultChoice(ModelRecord item, IReadOnlyList<ModelRecord> records,
+        TextureResourceCatalog catalog, CancellationToken token)
+    {
+        var options = Options(item, records);
+        if (options.Choices.Count == 0 || options.Label != "Материал" || item.Table == "items.loot_items") return options.Choices.FirstOrDefault();
         foreach (var material in options.Choices)
         {
             token.ThrowIfCancellationRequested();
-            string stem = item.Table == "items.quick_items" ? $"qitem{item.Integer(5):D4}.{material.Text(2)}" :
+            string stem = item.Table == "items.quick_items" ? $"qitem{QuickItemMaterialGraphics.Index(item, material):D4}.{material.Text(2)}" :
                 $"unhuma{(item.Table == "items.weapons" ? WeaponCode(item.Integer(2)) : ArmorCode(item.Integer(2)))}_{item.Integer(5):D2}.{material.Text(2)}.{item.Integer(6)}";
             if (new[] { ".x4.mmp", ".x2.mmp", ".mmp" }.Any(s => catalog.Check(stem + s).Matches.Count > 0)) return material;
         }
@@ -60,13 +72,21 @@ public static class ItemModelPreview
 
     public static async Task<UnitModelScene> LoadAsync(string databasePath, ModelRecord selected, IReadOnlyList<ModelRecord> records,
         CancellationToken token = default, ModelRecord? choice = null)
+        => await LoadInternalAsync(databasePath, selected, records, token, choice, null).ConfigureAwait(false);
+
+    internal static Task<UnitModelScene> ValidateResourcesAsync(string databasePath, ModelRecord selected,
+        IReadOnlyList<ModelRecord> records, ResourceValidationSession session, CancellationToken token, ModelRecord? choice) =>
+        LoadInternalAsync(databasePath, selected, records, token, choice, session);
+
+    private static async Task<UnitModelScene> LoadInternalAsync(string databasePath, ModelRecord selected,
+        IReadOnlyList<ModelRecord> records, CancellationToken token, ModelRecord? choice, ResourceValidationSession? validation)
     {
         if (!Supports(selected.Table)) throw new NotSupportedException("Выберите предмет.");
         if (string.IsNullOrWhiteSpace(selected.Name)) throw new InvalidDataException("Пустая служебная запись: предмет и его модель не заданы.");
         var options = Options(selected, records);
         if (options.Label.Length > 0 && (choice is null || !options.Choices.Contains(choice)))
             throw new InvalidDataException(options.Choices.Count == 0 ? "В БД нет совместимых вариантов: " + options.Label : "Выберите: " + options.Label);
-        var sources = await TextureSources.FromDatabaseFolderAsync(databasePath, token).ConfigureAwait(false);
+        var sources = validation?.Sources ?? await TextureSources.FromDatabaseFolderAsync(databasePath, token).ConfigureAwait(false);
         return await Task.Run(async () =>
         {
             var used = new List<string>(); var notes = new List<string>();
@@ -86,7 +106,7 @@ public static class ItemModelPreview
                 item = target < 0 ? choice! : target < targets.Length ? targets[target] : throw new InvalidDataException("Индекс содержимого вне таблицы: " + target);
                 notes.Add("Содержимое: " + item.Name + (target < 0 ? ". Это выбранный пример: общая запись БД не задаёт конкретное содержимое." : ""));
             }
-            int index = item.Integer(5);
+            int index = QuickItemMaterialGraphics.Index(item, instruction ? null : choice);
             string root, part, texture; int logical = 64;
             switch (item.Table)
             {
@@ -120,13 +140,16 @@ public static class ItemModelPreview
                     root = "initqi1"; part = "item"; texture = $"modifier{index:D4}"; break;
                 default: throw new NotSupportedException("Для этой записи не определён вид предмета: " + item.Table);
             }
-            var reader = new FigureResources(databasePath, sources, used, token);
+            if (validation is not null) validation.Context = "Инвентарная модель: " + root;
+            var reader = new FigureResources(databasePath, sources, used, token, validation);
             Dictionary<string, string> parents;
             Func<string, byte[]> figure, bone;
             if (reader.Contains(root + ".mod"))
             {
-                var mod = ResArchiveDocument.Parse(root + ".mod", reader.Read(root + ".mod"), token);
-                var bon = ResArchiveDocument.Parse(root + ".bon", reader.Read(root + ".bon"), token);
+                var mod = validation is null ? ResArchiveDocument.Parse(root + ".mod", reader.Read(root + ".mod"), token) :
+                    validation.Parse(root + ".mod", () => reader.Read(root + ".mod"), token);
+                var bon = validation is null ? ResArchiveDocument.Parse(root + ".bon", reader.Read(root + ".bon"), token) :
+                    validation.Parse(root + ".bon", () => reader.Read(root + ".bon"), token);
                 parents = UnitModelPreview.ReadHierarchy(mod.GetResourceBytes(root).ToArray());
                 figure = p => mod.GetResourceBytes(p).ToArray(); bone = p => bon.GetResourceBytes(p).ToArray();
             }
@@ -157,14 +180,23 @@ public static class ItemModelPreview
             foreach (string name in parents.Keys)
             {
                 token.ThrowIfCancellationRequested();
-                var mesh = FigurePreviewDecoder.Decode(name, figure(name), new(.5f));
+                FigureMesh mesh;
+                try { mesh = validation is null ? FigurePreviewDecoder.Decode(name, figure(name), new(.5f)) :
+                    validation.Decode(name, () => figure(name), new(.5f), validation.FigurePath(reader.Contains(root + ".mod") ? root + ".mod" : root + name + ".fig") + " → " + name); }
+                catch (Exception ex) when (validation is not null && ResourceValidationSession.IsResourceFailure(ex)) { validation.Failure(ex); continue; }
+                if (validation is not null) { meshes.Add(mesh); continue; }
                 Vector3 offset = Position(name);
                 for (int i = 0; i < mesh.Positions.Length; i++) mesh.Positions[i] += offset;
                 if (mesh.Indices.Length > 0) meshes.Add(mesh);
             }
-            if (meshes.Count == 0) throw new InvalidDataException("В инвентарной модели нет геометрии.");
-            var catalog = await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
+            if (meshes.Count == 0 && validation is null) throw new InvalidDataException("В инвентарной модели нет геометрии.");
+            var catalog = validation?.Catalog ?? await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
             string? resolved = new[] { ".x4.mmp", ".x2.mmp", ".mmp" }.Select(s => texture + s).FirstOrDefault(n => catalog.Check(n).Matches.Count > 0);
+            if (validation is not null)
+            {
+                await validation.TextureAsync(resolved ?? texture + ".mmp", token).ConfigureAwait(false);
+                return new UnitModelScene(root, [], new Dictionary<int, MmpImage>(), used, notes);
+            }
             var textures = new Dictionary<int, MmpImage>();
             if (resolved is null) notes.Add("Не найдена текстура предмета: " + texture + ".mmp");
             else
@@ -204,9 +236,11 @@ public static class ItemModelPreview
         private readonly Dictionary<string, (string Path, ResEntry Entry, long Length, long Written)> _entries = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> _used;
         private readonly CancellationToken _token;
-        public FigureResources(string database, TextureSources sources, List<string> used, CancellationToken token)
+        private readonly ResourceValidationSession? _validation;
+        public FigureResources(string database, TextureSources sources, List<string> used, CancellationToken token, ResourceValidationSession? validation = null)
         {
-            _used = used; _token = token;
+            _used = used; _token = token; _validation = validation;
+            if (validation is not null) return;
             foreach (string path in UnitModelPreview.FigureArchives(database, sources).Where(File.Exists))
             {
                 token.ThrowIfCancellationRequested();
@@ -217,10 +251,11 @@ public static class ItemModelPreview
                 foreach (var entry in entries) _entries.TryAdd(entry.Name, (path, entry, length, written));
             }
         }
-        public bool Contains(string name) => _entries.ContainsKey(name);
+        public bool Contains(string name) => _validation?.Contains(name) ?? _entries.ContainsKey(name);
         public byte[] Read(string name)
         {
             _token.ThrowIfCancellationRequested();
+            if (_validation is not null) return _validation.Read(name, _token);
             if (!_entries.TryGetValue(name, out var resource)) throw new FileNotFoundException("Не найдена инвентарная модель: " + name);
             using var stream = new FileStream(resource.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (stream.Length != resource.Length || ResourceFileStamp.Read(resource.Path) != resource.Written) throw new IOException("Архив модели изменился. Обновите предпросмотр.");

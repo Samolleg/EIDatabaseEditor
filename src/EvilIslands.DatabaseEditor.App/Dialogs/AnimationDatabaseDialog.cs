@@ -8,26 +8,31 @@ using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.App.Dialogs;
 
-internal sealed class AnimationDatabaseDialog : LuaToolWindow
+internal sealed partial class AnimationDatabaseDialog : LuaToolWindow
 {
     private sealed record Row(int? Index, string Id, string Russian, string State, string Action, string Length);
     private sealed record FlagChoice(string Title, uint Value) { public override string ToString() => Title; }
     private readonly UnitModelScene _scene;
-    private readonly FigureAnimationSet _preview;
+    private FigureAnimationSet _preview;
+    internal FigureAnimationSet? SavedAnimationSet { get; private set; }
     private readonly AnimationDatabaseSource _source;
     private AnimationDatabase _draft;
     internal AnimationDatabase Draft => _draft;
+    internal Task ClipLengthTask { get; private set; } = Task.CompletedTask;
     private readonly DataGrid _list = new() { AutoGenerateColumns = false, IsReadOnly = true, SelectionMode = DataGridSelectionMode.Single };
     private readonly TextBox _search = new() { ToolTip = "Поиск по ID или русскому названию" };
     private readonly ComboBox _template = new() { MinWidth = 240 };
     private readonly TextBlock _summary = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap };
     private readonly TextBox _id = new(), _flags = new(), _flags2 = new(), _probability = new(), _length = new(), _speed = new();
+    private readonly TextBlock _actionHelp = HelpBlock(), _stageHelp = HelpBlock(), _stateHelp = HelpBlock();
     private readonly ComboBox _action = new(), _stage = new(), _state = new();
     private readonly TextBox _hides = new(), _steps = new(), _hit = new(), _sfxFrame = new(), _sfxIndices = new();
     private readonly TextBlock _hint = new() { TextWrapping = TextWrapping.Wrap };
     private bool _dirty;
     private bool _reading;
+    private readonly Button _applyButton;
+    private readonly Stack<byte[]> _history = new();
 
     public AnimationDatabaseDialog(UnitModelScene scene, FigureAnimationSet preview) : base("Игровой список анимаций ADB — " + scene.Model)
     {
@@ -58,7 +63,7 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
         fields.Children.Add(new TextBlock { Text = "Параметры выбранной записи", FontWeight = FontWeights.Bold, Margin = new Thickness(4, 2, 4, 8) });
         fields.Children.Add(_hint);
         Field(fields, "Игровой ID (до 15 латинских символов)", _id);
-        Field(fields, "Шаблон для новой записи", _template);
+        Field(fields, "Начальные настройки (копирование необязательно)", _template);
         _action.ItemsSource = new[] { new FlagChoice("Особая", 0x00040000), new FlagChoice("Атака", 0x00080000), new FlagChoice("Заклинание", 0x000C0000),
             new FlagChoice("Бег", 0x00100000), new FlagChoice("Ходьба", 0x00140000), new FlagChoice("Ожидание", 0x00180000),
             new FlagChoice("Смерть", 0x001C0000), new FlagChoice("Урон", 0x00200000), new FlagChoice("Переход", 0x00240000) };
@@ -66,13 +71,17 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
             new FlagChoice("Цикл", 0x80000000), new FlagChoice("Конец", 0xC0000000) };
         _state.ItemsSource = new[] { new FlagChoice("Нейтральное", 0), new FlagChoice("Отдых", 0x00008000),
             new FlagChoice("Атака", 0x00010000), new FlagChoice("Оборона", 0x00020000), new FlagChoice("Лёжа", 0x00030000) };
-        Field(fields, "Действие", _action); Field(fields, "Стадия", _stage); Field(fields, "Состояние", _state);
+        fields.Children.Add(new TextBlock { Text = "Эти параметры описывают, когда игра выбирает клип. Они не меняют позы ANM и сами не запускают анимацию. Выбор также зависит от оружия и дополнительных флагов.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 8, 4, 8) });
+        Field(fields, "Действие — что делает персонаж", _action); fields.Children.Add(_actionHelp);
+        Field(fields, "Стадия — какая часть действия", _stage); fields.Children.Add(_stageHelp);
+        Field(fields, "Состояние — в какой позе/режиме персонаж", _state); fields.Children.Add(_stateHelp);
+        _flags.TextChanged += (_, _) => UpdateFlagHelp();
+        fields.Children.Add(new TextBlock { Text = "Пример: танец по отдельной команде обычно оформляют как «Особая». «Ожидание» означает движение во время бездействия — танец может попасть в обычный выбор анимаций покоя при совпадении остальных флагов. Для повторяющегося танца нужна стадия «Цикл» и согласованные начало/конец клипа; одной регистрации ADB недостаточно для запуска.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 8, 4, 8) });
         _action.SelectionChanged += (_, _) => SetFlagBits(0x003C0000, _action);
         _stage.SelectionChanged += (_, _) => SetFlagBits(0xC0000000, _stage);
         _state.SelectionChanged += (_, _) => SetFlagBits(0x00038000, _state);
-        _template.SelectionChanged += (_, _) => { if (_list.SelectedItem is Row { Index: null }) ReadSelection(); };
-        Field(fields, "Флаги действия / состояния / оружия, hex", _flags);
-        Field(fields, "Флаги событий, hex", _flags2);
+        _template.SelectionChanged += (_, _) => { if (!_reading && _list.SelectedItem is Row { Index: null }) ReadSelection(); };
+        BuildFlagControls(fields);
         Field(fields, "Вероятность 0–100", _probability);
         Field(fields, "Длительность ADB, кадров (игра: 15 кадр/с)", _length);
         Field(fields, "Скорость перемещения, м/с", _speed);
@@ -82,11 +91,13 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
         Field(fields, "Кадр визуального эффекта", _sfxFrame);
         Field(fields, "Индексы спецэффектов — 4 числа", _sfxIndices);
         var actions = new WrapPanel { Margin = new Thickness(0, 8, 0, 8) };
-        Button apply = Button("Применить поля", () => Apply()); actions.Children.Add(apply);
-        Button add = Button("Добавить запись", () => Add()); actions.Children.Add(add);
+        _applyButton = Button("Выберите анимацию", ApplySelectedFields); actions.Children.Add(_applyButton);
+        actions.Children.Add(Button("Удалить запись ADB…", Delete));
+        actions.Children.Add(Button("Удалить клип ANM…", async () => await DeleteClip()));
+        actions.Children.Add(Button("Отменить изменение", UndoDraft));
         Button save = Button("Сохранить ADB с копией", async () => await Save()); actions.Children.Add(save);
         footer.Children.Add(actions);
-        fields.Children.Add(new TextBlock { Text = "Новая запись наследует действие, состояние, оружие и модификатор шаблона, поэтому может стать случайной альтернативой его анимации. Проверьте флаги перед сохранением. Старые номера не меняются; индекс выше 253 требует доработки addon.dll.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 8, 4, 8) });
+        fields.Children.Add(new TextBlock { Text = "Без шаблона: особое одиночное действие, нейтральное состояние, вероятность 100, скорость 0, события выключены. Настройте назначение и оружие перед сохранением. Копирование переносит флаги и скорость, но очищает события. Удаляется только последняя запись ADB: номера остальных сохраняются. В середине списка можно заменить ID клипа. Клип ANM удаляется отдельной кнопкой, если на него нет ссылок в сохранённом ADB.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 8, 4, 8) });
         footer.Children.Add(_status);
         var scroll = new ScrollViewer { Content = fields, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetColumn(scroll, 1); grid.Children.Add(scroll); root.Children.Add(grid);
@@ -98,7 +109,78 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
         };
     }
 
-    internal void DiscardDraft() { _draft = _source.CreateDraft(); _dirty = false; }
+    internal void DiscardDraft() { _draft = _source.CreateDraft(); _dirty = false; _history.Clear(); }
+
+    private void Remember(byte[] before)
+    {
+        if (before.AsSpan().SequenceEqual(_draft.ExportBytes())) return;
+        _history.Push(before); _dirty = true;
+    }
+
+    internal void UndoDraft()
+    {
+        if (!_history.TryPop(out var before)) { _status.Text = "Нет изменений для отмены."; return; }
+        _draft = AnimationDatabase.Parse(before);
+        _dirty = !_draft.ExportBytes().AsSpan().SequenceEqual(_source.Database.ExportBytes());
+        RefreshRows(); _status.Text = "Последнее изменение отменено.";
+    }
+
+    internal void DeleteRecord(int index)
+    {
+        byte[] before = _draft.ExportBytes();
+        _draft.RemoveAt(index); Remember(before);
+        _template.SelectedIndex = 0;
+        RefreshRows();
+        _status.Text = "Запись удалена из черновика ADB. Клип ANM сохранён. Доступна отмена; для записи на диск нажмите «Сохранить ADB с копией».";
+    }
+
+    private void Delete()
+    {
+        if (_list.SelectedItem is not Row { Index: int index } row)
+        { _status.Text = "Выберите зарегистрированную запись ADB. Строка «Только ANM» не является записью ADB."; return; }
+        if (index != _draft.Count - 1)
+        { _status.Text = "Запись в середине ADB: удаление сдвинет номера. Замените ID клипа в этой записи, чтобы сохранить номер. Удалять можно только последнюю запись."; return; }
+        if (MessageBox.Show(this, $"Удалить последнюю запись #{index} «{row.Id}» из ADB?\nНомера остальных записей сохранятся. Клип ANM останется. Ссылки на удаляемый номер перестанут работать.\nДо сохранения доступна отмена.",
+            "Удаление записи ADB", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes)
+            DeleteRecord(index);
+    }
+
+    private static TextBlock HelpBlock() => new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 4, 4, 8), Opacity = .85 };
+    private void UpdateFlagHelp()
+    {
+        uint flags;
+        try { flags = Hex(_flags); }
+        catch (FormatException) { _actionHelp.Text = _stageHelp.Text = _stateHelp.Text = "Введите корректные флаги, чтобы увидеть их значение."; return; }
+        _actionHelp.Text = (flags & 0x003C0000) switch
+        {
+            0x00040000 => "Особая — отдельное специальное действие: например жест или танец. Нужен соответствующий вызов игры или скрипта; добавление записи не запускает его автоматически.",
+            0x00080000 => "Атака — движение при выполнении удара или выстрела. Сам клип не задаёт урон: момент попадания и подходящий тип оружия настраиваются отдельно.",
+            0x000C0000 => "Заклинание — движение при применении магии. Этот флаг не добавляет заклинание и не определяет его эффект.",
+            0x00100000 => "Бег — движение для бега. Позы должны соответствовать бегу, а скорость согласовываться с перемещением персонажа.",
+            0x00140000 => "Ходьба — движение для шага. Этот выбор не превращает танец в ходьбу и не создаёт траекторию.",
+            0x00180000 => "Ожидание — движение во время бездействия: стоять, дышать, оглядываться. Это не пауза перед запуском и не задержка в секундах.",
+            0x001C0000 => "Смерть — движение умирания персонажа. Назначение этого типа само по себе не убивает персонажа.",
+            0x00200000 => "Урон — реакция на полученный удар: вздрагивание, отшатывание. Это получение удара, а не нанесение урона противнику.",
+            0x00240000 => "Переход — смена состояния/стойки, например из обычной в боевую или в положение лёжа. Цель перехода задаётся дополнительными флагами.",
+            _ => "Неизвестный код действия. Редактор сохраняет его, но не приписывает ему неподтверждённый смысл."
+        };
+        _stageHelp.Text = (flags & 0xC0000000) switch
+        {
+            0 => "Одиночная — самостоятельный клип действия, без обозначения начала, повторяющейся части или конца. Это не число кадров.",
+            0x40000000 => "Начало — вступительная часть действия перед основной фазой, например принять нужную стойку.",
+            0x80000000 => "Цикл — повторяемая основная часть действия. Первый и последний кадры должны стыковаться. Это игровой признак ADB, отдельный от флажка «Повтор» в предпросмотре.",
+            _ => "Конец — завершающая часть действия, например выйти из стойки. Это не номер последнего кадра."
+        };
+        _stateHelp.Text = (flags & 0x00038000) switch
+        {
+            0 => "Нейтральное — обычное состояние персонажа вне специальных стоек. Это условие выбора клипа, а не команда выйти из боя.",
+            0x8000 => "Отдых — клип для состояния отдыха. Отличается от действия «Ожидание»: здесь задаётся состояние персонажа, а там — вид движения.",
+            0x10000 => "Атака — атакующая боевая стойка/режим. В этой стойке персонаж может ожидать, идти или атаковать: конкретное движение задаёт поле «Действие».",
+            0x20000 => "Оборона — защитная боевая стойка/режим. Сам флаг не даёт бонус к защите и не задаёт блокирование удара.",
+            0x30000 => "Лёжа — клип для персонажа в положении лёжа. Флаг не поворачивает модель автоматически: нужная поза должна быть в ANM.",
+            _ => "Неизвестный код состояния. Существующие биты сохраняются без изменения."
+        };
+    }
 
     private static DataGridTextColumn Column(string title, string path, double width) => new()
     { Header = title, Binding = new Binding(path), Width = new DataGridLength(width) };
@@ -127,8 +209,10 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
                 r.Russian.Contains(_search.Text, StringComparison.OrdinalIgnoreCase)).ToArray();
         _list.ItemsSource = rows;
         _summary.Text = $"ADB: {entries.Count} записей · ANM: {clips.Count} клипов · только в ANM: {clips.Count(name => !registered.Contains(name))} · записи без клипа: {entries.Count(e => !clips.Contains(e.Name))} · записи выше байтового предела: {entries.Count(e => e.Index > AnimationDatabase.MaximumLegacySafeIndex)}";
-        _template.ItemsSource = entries.Select(e => $"{e.Index}: {e.Name} ({ActionLabel(e.Flags)})").ToArray();
-        if (templateIndex >= 0 && entries.Count > 0) _template.SelectedIndex = Math.Clamp(templateIndex, 0, entries.Count - 1);
+        _reading = true;
+        _template.ItemsSource = new[] { "Без шаблона — новая запись" }.Concat(entries.Select(e => $"Копировать #{e.Index}: {e.Name} ({ActionLabel(e.Flags)})")).ToArray();
+        _template.SelectedIndex = Math.Clamp(templateIndex, 0, entries.Count);
+        _reading = false;
         _list.SelectedItem = selectedId is null ? rows.FirstOrDefault() :
             rows.FirstOrDefault(r => r.Index == selectedIndex && r.Id.Equals(selectedId, StringComparison.OrdinalIgnoreCase)) ?? rows.FirstOrDefault();
     }
@@ -140,33 +224,35 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
     };
     private void ReadSelection()
     {
+        _applyButton.IsEnabled = _list.SelectedItem is Row;
+        _applyButton.Content = _list.SelectedItem is Row selected
+            ? selected.Index is null ? "Добавить в ADB" : "Применить изменения"
+            : "Выберите анимацию";
+        _applyButton.ToolTip = _list.SelectedItem is Row { Index: null }
+            ? "Создать запись ADB с указанными справа параметрами. Затем сохраните ADB."
+            : "Применить параметры к выбранной записи в черновике. Затем сохраните ADB.";
         if (_list.SelectedItem is not Row row) return;
         _id.Text = row.Id;
         AnimationDatabaseEntry? entry = row.Index is int index ? _draft.Entries[index] : null;
-        if (entry is null && _template.SelectedIndex >= 0) entry = _draft.Entries[_template.SelectedIndex];
-        if (entry is null)
-        {
-            _hint.Text = "Клип не зарегистрирован. Выберите похожую запись-шаблон, затем проверьте её флаги и добавьте запись. Клип должен быть уже сохранён в ANM.";
-            if (row.Index is null) _ = SetClipLength(row.Id);
-            return;
-        }
+        if (entry is null && _template.SelectedIndex > 0) entry = _draft.Entries[_template.SelectedIndex - 1];
+        uint flags = entry?.Flags ?? 0x00040000;
         _reading = true;
-        _flags.Text = $"0x{entry.Flags:X8}"; _flags2.Text = $"0x{(row.Index is null ? entry.Flags2 & ~0xFu : entry.Flags2):X8}";
-        _action.SelectedItem = ((IEnumerable<FlagChoice>)_action.ItemsSource).FirstOrDefault(x => x.Value == (entry.Flags & 0x003C0000));
-        _stage.SelectedItem = ((IEnumerable<FlagChoice>)_stage.ItemsSource).FirstOrDefault(x => x.Value == (entry.Flags & 0xC0000000));
-        _state.SelectedItem = ((IEnumerable<FlagChoice>)_state.ItemsSource).FirstOrDefault(x => x.Value == (entry.Flags & 0x00038000));
+        _flags.Text = $"0x{flags:X8}"; _flags2.Text = $"0x{(row.Index is null ? (entry?.Flags2 ?? 0) & ~0xFu : entry!.Flags2):X8}";
+        _action.SelectedItem = ((IEnumerable<FlagChoice>)_action.ItemsSource).FirstOrDefault(x => x.Value == (flags & 0x003C0000));
+        _stage.SelectedItem = ((IEnumerable<FlagChoice>)_stage.ItemsSource).FirstOrDefault(x => x.Value == (flags & 0xC0000000));
+        _state.SelectedItem = ((IEnumerable<FlagChoice>)_state.ItemsSource).FirstOrDefault(x => x.Value == (flags & 0x00038000));
         _reading = false;
-        _probability.Text = entry.Probability.ToString(); _length.Text = row.Index is null ? "" : entry.Length.ToString();
-        _speed.Text = entry.Speed.ToString("R", CultureInfo.InvariantCulture);
-        _hides.Text = Join(row.Index is null ? new uint[2] : entry.Hides);
-        _steps.Text = Join(row.Index is null ? new uint[4] : entry.Steps);
-        _hit.Text = row.Index is null ? "0" : entry.Hit.ToString();
-        _sfxFrame.Text = row.Index is null ? "0" : entry.SfxFrame.ToString();
-        _sfxIndices.Text = Join(row.Index is null ? new uint[4] : entry.SfxIndices);
+        _probability.Text = (entry?.Probability ?? 100).ToString(); _length.Text = row.Index is null ? "" : entry!.Length.ToString();
+        _speed.Text = (entry?.Speed ?? 0).ToString("R", CultureInfo.InvariantCulture);
+        _hides.Text = Join(row.Index is null ? new uint[2] : entry!.Hides);
+        _steps.Text = Join(row.Index is null ? new uint[4] : entry!.Steps);
+        _hit.Text = row.Index is null ? "0" : entry!.Hit.ToString();
+        _sfxFrame.Text = row.Index is null ? "0" : entry!.SfxFrame.ToString();
+        _sfxIndices.Text = Join(row.Index is null ? new uint[4] : entry!.SfxIndices);
         _hint.Text = row.Index is int i
-            ? $"Запись #{i}: {row.State}. Действие: {ActionLabel(entry.Flags)}. Номер записи не меняется. Флаги можно редактировать в hex; неизвестные биты сохраняются."
-            : "Клип пока не зарегистрирован в ADB. Выберите похожий шаблон, затем добавьте запись. Клип должен быть уже сохранён в исходный ANM.";
-        if (row.Index is null) _ = SetClipLength(row.Id);
+            ? $"Запись #{i}: {row.State}. Действие: {ActionLabel(flags)}. Выбирайте флаги ниже; неизвестные биты сохраняются."
+            : "Новая запись: настройте поля и нажмите «Добавить в ADB». Шаблон необязателен. Длина берётся из ANM; клип должен быть сохранён.";
+        if (row.Index is null) ClipLengthTask = SetClipLength(row.Id);
     }
     private async Task SetClipLength(string id)
     {
@@ -209,13 +295,19 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
             if (!_id.Text.Trim().Equals(row.Id, StringComparison.OrdinalIgnoreCase) && !SavedClipExists(_id.Text.Trim()))
                 throw new InvalidOperationException("Новый ID должен указывать на уже сохранённый клип ANM.");
             float speed = float.TryParse(_speed.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float n) ? n : throw new FormatException("Скорость: число с точкой.");
+            byte[] before = _draft.ExportBytes();
             _draft.Update(index, _id.Text.Trim(), Hex(_flags), Hex(_flags2), UInt(_probability), UInt(_length), speed,
                 Array(_hides, 2), Array(_steps, 4), UInt(_hit), UInt(_sfxFrame), Array(_sfxIndices, 4));
-            _dirty = true; _status.Text = "Поля изменены в памяти. Нажмите «Сохранить ADB с копией».";
+            Remember(before); _status.Text = "Поля изменены в памяти. Нажмите «Сохранить ADB с копией».";
             RefreshRows(_id.Text.Trim(), index);
             return true;
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or InvalidOperationException or IOException or DatabaseFormatException) { Error(ex); return false; }
+    }
+    private void ApplySelectedFields()
+    {
+        if (_list.SelectedItem is Row { Index: null }) Add();
+        else if (_list.SelectedItem is Row) Apply();
     }
     private void Add()
     {
@@ -223,7 +315,6 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
         {
             if (_list.SelectedItem is not Row { Index: null } row) throw new InvalidOperationException("Выберите клип со статусом «Только ANM».");
             if (!_id.Text.Trim().Equals(row.Id, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Для добавления выберите существующий клип ANM; переименовать его здесь нельзя.");
-            if (_template.SelectedIndex < 0) throw new InvalidOperationException("Выберите похожую запись-шаблон.");
             if (!SavedClipExists(row.Id)) throw new InvalidOperationException("Сначала сохраните этот клип в исходный ANM и обновите предпросмотр.");
             uint length = UInt(_length);
             if (length == 0) throw new FormatException("Укажите число кадров клипа.");
@@ -233,16 +324,34 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
                 "Индекс выше игрового предела", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             float speed = float.TryParse(_speed.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out float n)
                 ? n : throw new FormatException("Скорость: число с точкой.");
-            index = _draft.AppendConfigured(_template.SelectedIndex, row.Id, Hex(_flags), Hex(_flags2),
+            byte[] before = _draft.ExportBytes();
+            index = _draft.AppendConfigured(_template.SelectedIndex > 0 ? _template.SelectedIndex - 1 : null, row.Id, Hex(_flags), Hex(_flags2),
                 UInt(_probability), length, speed, Array(_hides, 2), Array(_steps, 4), UInt(_hit), UInt(_sfxFrame), Array(_sfxIndices, 4));
-            _dirty = true; RefreshRows(row.Id, index);
-            _status.Text = $"Добавлена запись #{index} по шаблону. Проверьте флаги и остальные параметры, затем сохраните ADB.";
+            Remember(before); RefreshRows(row.Id, index);
+            _status.Text = $"Добавлена запись #{index}. Проверьте параметры, затем сохраните ADB.";
         }
         catch (Exception ex) when (ex is ArgumentException or FormatException or InvalidOperationException or IOException or DatabaseFormatException) { Error(ex); }
     }
+    private async Task DeleteClip()
+    {
+        if (_list.SelectedItem is not Row row) return;
+        if (_dirty) { _status.Text = "Сначала сохраните или отмените изменения ADB, затем удалите клип ANM."; return; }
+        if (_draft.Entries.Any(e => e.Name.Equals(row.Id, StringComparison.OrdinalIgnoreCase)))
+        { _status.Text = "Клип используется в ADB. Сначала удалите или замените все ссылки на него и сохраните ADB."; return; }
+        if (MessageBox.Show(this, $"Удалить клип «{row.Id}» и все его дорожки из ANM?\nИзменение сразу запишется с резервной копией. Отмена ADB его не возвращает.\nВнешние обращения к этому имени не проверяются.", "Удаление клипа ANM",
+            MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        try
+        {
+            SavedAnimationSet = await AnimationClipDeletion.SaveAsync(_preview, _source, row.Id);
+            _preview = SavedAnimationSet; RefreshRows();
+            _status.Text = "Клип удалён из ANM. Файл проверен, резервная копия создана. Остальные клипы и номера ADB сохранены.";
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ArgumentException or UnauthorizedAccessException or DatabaseFormatException) { Error(ex); }
+    }
+
     private bool SavedClipExists(string id)
     {
-        var target = _scene.Animations?.SaveTarget;
+        var target = _preview.SaveTarget;
         if (target is null) return false;
         byte[] bytes;
         if (target.ResourceName is null) bytes = File.ReadAllBytes(target.Path);
@@ -261,7 +370,7 @@ internal sealed class AnimationDatabaseDialog : LuaToolWindow
             if (_list.SelectedItem is Row { Index: int } && !Apply()) return;
             if (!_dirty) { _status.Text = "Изменений ADB нет."; return; }
             string? backup = await _source.SaveAsync(_draft);
-            _draft = _source.CreateDraft(); _dirty = false;
+            _draft = _source.CreateDraft(); _dirty = false; _history.Clear();
             _status.Text = "ADB сохранён и проверен. Резервная копия: " + (backup ?? "не потребовалась");
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or DatabaseFormatException) { Error(ex); }

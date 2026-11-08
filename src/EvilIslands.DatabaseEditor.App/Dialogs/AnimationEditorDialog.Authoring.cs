@@ -16,7 +16,8 @@ internal sealed partial class AnimationEditorDialog
     private readonly CheckBox _limits = new() { Content = "Ограничения локтей и колен", IsChecked = true, Margin = new(4) };
     private readonly CheckBox _leftFoot = new() { Content = "Фиксировать левую стопу", Margin = new(4) };
     private readonly CheckBox _rightFoot = new() { Content = "Фиксировать правую стопу", Margin = new(4) };
-    private readonly CheckBox _ground = new() { Content = "Опорная поверхность", IsChecked = true, Margin = new(4), ToolTip = "Показывает пол под моделью и не даёт перетащить стопы или всю модель сквозь него. Снимите флажок для свободного движения по вертикали." };
+    private readonly CheckBox _ground = new() { Content = "Опорная поверхность · Z=0", IsChecked = true, Margin = new(4), ToolTip = "Нулевой уровень игровых координат модели после поправки ADB. Поверхность не подстраивается под высоту клипа и не изменяет готовую анимацию. Ограничивает перетаскивание стоп и корня; снимите флажок для свободного движения по вертикали." };
+    private readonly CheckBox _showPoints = new() { Content = "Показывать точки и оси", IsChecked = true, Margin = new(4), ToolTip = "Скрыть точки, кости и кольца редактирования для просмотра чистой анимации. На данные клипа это не влияет." };
     private readonly CheckBox _before = new() { Content = "Показать оригинал", Margin = new(4), ToolTip = "Сравнение по номеру кадра; за концом оригинала удерживается его последний кадр." };
     private readonly CheckBox _ghost = new() { Content = "Призрак оригинала", Margin = new(4) };
     private readonly Dictionary<string, Vector3> _pins = new();
@@ -36,7 +37,7 @@ internal sealed partial class AnimationEditorDialog
         if (_before.IsChecked == true) throw new InvalidOperationException("Выключите показ оригинала для редактирования.");
         if (!int.TryParse(_smooth.Text, out int radius)) throw new ArgumentException("Введите целый радиус сглаживания: 0–120 кадров.");
         var grounded = _ground.IsChecked == true
-            ? positions.ToDictionary(p => p.Key, p => _preview.ClampToGround(p.Key, frame, p.Value))
+            ? positions.ToDictionary(p => p.Key, p => _editor.Preview().RootSpace.ToRaw(_preview.ClampToGround(p.Key, frame, _editor.Preview().RootSpace.ToGame(p.Value))))
             : new Dictionary<string, Vector3>(positions);
         return _editor.ApplyAuthoringAsync(_name, frame, rotations, grounded, radius, _limits.IsChecked == true, _pins);
     }
@@ -46,6 +47,8 @@ internal sealed partial class AnimationEditorDialog
         _preview.GroundEnabled = true;
         _ground.Checked += (_, _) => _preview.GroundEnabled = true;
         _ground.Unchecked += (_, _) => _preview.GroundEnabled = false;
+        _showPoints.Checked += (_, _) => _preview.ShowSkeletonOverlay = true;
+        _showPoints.Unchecked += (_, _) => _preview.ShowSkeletonOverlay = false;
         _preview.PoseFilter = (frame, rotations, positions) => { var pins = _editor.ContactPins(frame); foreach(var p in _pins)pins[p.Key]=p.Value; return _loadedClip is null ? rotations : FigureAnimationEditor.ConstrainPreview(_scene.Animations!, _loadedClip, frame, rotations, positions, _limits.IsChecked == true, pins, _editor.UnlockedLimbs, _editor.LockedParts); };
         _preview.PoseRejected = message => _message.Text = message;
         _limits.ToolTip = "Для стандартных цепочек рук/ног: предел сгиба и запрет обратного сгиба относительно исходной позы кадра. Для нестандартных скелетов ограничения не назначаются.";
@@ -68,7 +71,7 @@ internal sealed partial class AnimationEditorDialog
         columns.Children.Remove(_preview);
         var right = new Grid(); right.RowDefinitions.Add(new RowDefinition()); right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         right.Children.Add(_preview); Grid.SetColumn(_preview, 0);
-        var footer = new StackPanel(); footer.Children.Add(_storyTools); footer.Children.Add(_storyScroll); footer.Children.Add(_timeline); _preview.MoveEditorPlaybackTo(_playback); _playback.Children.Add(_ground); footer.Children.Add(_playback);
+        var footer = new StackPanel(); footer.Children.Add(_storyTools); footer.Children.Add(_storyScroll); footer.Children.Add(_timeline); _preview.MoveEditorPlaybackTo(_playback); _playback.Children.Add(_ground); _playback.Children.Add(_showPoints); footer.Children.Add(_playback);
         Grid.SetRow(footer, 1); right.Children.Add(footer); Grid.SetColumn(right, 1); columns.Children.Add(right);
         _timeline.Seek += frame => { if (_busy) return; _preview.PauseAnimation(); _frame.Text = frame.ToString(); ReadPose(); SyncStoryboardSelection(); };
         _timeline.RangeChanged += (first, last) => { _first.Text = first.ToString(); _last.Text = last.ToString(); _length.Text = (last - first + 1).ToString(); SyncStoryboardSelection(); };
@@ -130,7 +133,7 @@ internal sealed partial class AnimationEditorDialog
         Part = _part.SelectedItem as string ?? "", Limits = _limits.IsChecked == true,
         LockedParts = _editor.LockedParts.ToList(), UnlockedLimbs = _editor.UnlockedLimbs.ToList(),
         Contacts = _editor.Contacts.ToList(), Poses = _poses.ToList(), Trajectory = _trajectoryCheck.IsChecked == true, Onion = _onionCheck.IsChecked == true,
-        Ghost = _ghost.IsChecked == true, Ground = _ground.IsChecked == true, Pins = new(_pins), Fps = _preview.EditorFps, Loop = _preview.EditorLoop
+        Ghost = _ghost.IsChecked == true, Ground = _ground.IsChecked == true, ShowPoints = _showPoints.IsChecked == true, Pins = new(_pins), Fps = _preview.EditorFps, Loop = _preview.EditorLoop
     };
     private byte[] ProjectBytes() => _editor.SaveProject(_scene.Model, _name, Settings());
     private bool HasUnsavedWork() => _savedProject is not null ? !ProjectSaved() : _editor.LockedParts.Count > 0 || _editor.UnlockedLimbs.Count > 0 || _poses.Count > 0 || _editor.Contacts.Count > 0 || !_editor.ExportBytes().AsSpan().SequenceEqual(_exported);
@@ -159,13 +162,30 @@ internal sealed partial class AnimationEditorDialog
         if (picker.ShowDialog(this) != true) return;
         if (HasUnsavedWork() && MessageBox.Show(this, "Заменить текущие несохранённые правки проектом?", Title, MessageBoxButton.YesNo) != MessageBoxResult.Yes) return;
         if (new FileInfo(picker.FileName).Length > 256L * 1024 * 1024) throw new InvalidDataException("Проект превышает 256 МиБ.");
-        var settings = await _editor.LoadProjectAsync(File.ReadAllBytes(picker.FileName), _scene.Model, _name);
+        await RestoreProjectAsync(File.ReadAllBytes(picker.FileName));
+    }
+    internal async Task RestoreProjectAsync(byte[] project)
+    {
+        var target = FigureAnimationEditor.ProjectTarget(project);
+        if (target.Model != _scene.Model) throw new InvalidDataException("Проект относится к другой модели.");
+        var current = _scene.Animations ?? throw new InvalidOperationException("Источник ANM не определён.");
+        var restored = new FigureAnimationEditor(current);
+        var settings = await restored.LoadProjectAsync(project, _scene.Model, target.Clip);
+        _editor = restored; _name = target.Clip; _scene = _scene with { Animations = restored.SourceSet };
+        _originalClip = null;
+        _workingClips.Clear(); _workingClips.Add(_name); _generatedBaselines.Clear(); _workingSettings.Clear(); _workingSavedProjects.Clear();
+        _settingWorkingClip = true;
+        try { _workingClipPicker.Items.Refresh(); _workingClipPicker.SelectedItem = _name; }
+        finally { _settingWorkingClip = false; }
+        _saveBaseline = restored.ProjectMayWriteSource ? current.SaveTarget?.OriginalBytes.ToArray() : null;
+        _exported = current.ExportBytes();
+        Title = "Редактирование анимации — " + _name;
         await Refresh(); _loadingSettings = true;
         try
         {
             _preview.EditorFps = settings.Fps; _preview.EditorLoop = settings.Loop;
             _poses.Clear(); _poses.AddRange(settings.Poses); RefreshLibrary(); _trajectoryCheck.IsChecked=settings.Trajectory; _onionCheck.IsChecked=settings.Onion;
-            _smooth.Text = settings.SmoothRadius.ToString(); _limits.IsChecked = true; _ghost.IsChecked = settings.Ghost; _ground.IsChecked = settings.Ground ?? true; _before.IsChecked = false;
+            _smooth.Text = settings.SmoothRadius.ToString(); _limits.IsChecked = true; _ghost.IsChecked = settings.Ghost; _ground.IsChecked = settings.Ground ?? true; _showPoints.IsChecked = settings.ShowPoints ?? true; _before.IsChecked = false;
             if (!settings.Limits) _editor.UnlockedLimbs.UnionWith(new[] { "lh3", "rh3", "ll3", "rl3" }); // Legacy projects used one global switch.
             _pins.Clear(); foreach (var pin in settings.Pins) _pins[pin.Key] = pin.Value;
             _leftFoot.IsChecked = _pins.ContainsKey("ll3"); _rightFoot.IsChecked = _pins.ContainsKey("rl3");
@@ -174,6 +194,10 @@ internal sealed partial class AnimationEditorDialog
             _timeline.First = settings.First; _timeline.Last = settings.Last; ReadPose();
         }
         finally { _loadingSettings = false; }
-        UpdateComparison(); await RefreshMotion(); RefreshStoryboard(); _savedProject = ProjectBytes(); _message.Text = "Проект открыт. История отмены и настройки восстановлены.";
+        UpdateComparison(); await RefreshMotion(); RefreshStoryboard(); _savedProject = ProjectBytes();
+        _message.Text = restored.ProjectMayWriteSource
+            ? "Проект открыт. История отмены и настройки восстановлены. Перед записью ANM будет проверено внешнее изменение файла."
+            : "Проект открыт. История и настройки восстановлены; текущий ANM отличается. Доступен экспорт в отдельный файл, запись в источник запрещена.";
+        if (restored.ProjectCoordinateWarning is { } warning) _message.Text += "\n" + warning;
     }
 }

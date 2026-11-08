@@ -125,6 +125,7 @@
 4	25	String
 4	26	ByteList
 4	27	Hex
+4	28	String
 # Quest Items
 5	0	String
 5	1	String

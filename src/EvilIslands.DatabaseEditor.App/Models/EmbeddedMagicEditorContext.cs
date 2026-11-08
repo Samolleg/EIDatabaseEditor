@@ -4,6 +4,18 @@ namespace EvilIslands.DatabaseEditor.App.Models;
 
 internal sealed record EmbeddedMagicChoice(string Value, string DisplayText)
 {
+    public string SearchText { get; init; } = string.Empty;
+    public string ModelText { get; init; } = string.Empty;
+    public string Description => ModelText.Length == 0 ? DisplayText : DisplayText + "\nКоды моделей по БД: " + ModelText;
+
+    public bool MatchesSearch(string? query)
+    {
+        string searchable = NormalizeSearch(Value + "\n" + DisplayText + "\n" + SearchText);
+        return NormalizeSearch(query ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .All(term => searchable.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeSearch(string text) => text.Replace('ё', 'е').Replace('Ё', 'Е').Replace('_', ' ');
     public override string ToString() => DisplayText;
 }
 
@@ -34,9 +46,7 @@ internal sealed class EmbeddedMagicEditorContext
         Catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _localizedTitles = localizedTitles ?? new Dictionary<string, string>();
         Shapes = catalog.Shapes
-            .Select(shape => new EmbeddedMagicChoice(
-                shape.Value,
-                CreateShapeDisplayText(shape)))
+            .Select(CreateShapeChoice)
             .OrderBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
             .ToArray();
         Weapons = CreateShapeChoices("items.weapons");
@@ -106,14 +116,14 @@ internal sealed class EmbeddedMagicEditorContext
 
     private IReadOnlyList<EmbeddedMagicChoice> CreateShapeChoices(string tableKey) => Catalog.Shapes
         .Where(shape => shape.TableKey.Equals(tableKey, StringComparison.Ordinal))
-        .Select(shape => new EmbeddedMagicChoice(shape.Value, CreateShapeDisplayText(shape)))
+        .Select(CreateShapeChoice)
         .OrderBy(choice => choice.DisplayText, StringComparer.CurrentCultureIgnoreCase)
         .ToArray();
 
     public EmbeddedMagicChoice LocalizeShapeChoice(EmbeddedMagicChoice choice, string? material)
     {
         var shape = Catalog.Shapes.FirstOrDefault(s => s.Value.Equals(choice.Value, StringComparison.OrdinalIgnoreCase));
-        return shape is null ? choice : new(choice.Value, CreateShapeDisplayText(shape, material));
+        return shape is null ? choice : choice with { DisplayText = CreateShapeDisplayText(shape, material) };
     }
 
     public EmbeddedMagicChoice ReferenceChoice(string value)
@@ -126,6 +136,21 @@ internal sealed class EmbeddedMagicEditorContext
             if (title.Length > 0) return new(value, value + " — " + title);
         }
         return new(value, value);
+    }
+
+    private EmbeddedMagicChoice CreateShapeChoice(EmbeddedMagicShapeOption shape)
+    {
+        string prefix = shape.TableKey == "items.weapons" ? "WEAPON" : "ARMOR";
+        string key = $"{prefix} {Normalize(shape.Value)}";
+        // Include every compatible material title, not just the example currently displayed.
+        var titles = Catalog.GetCompatibleMaterials(shape.Value)
+            .Select(m => FindTitle($"{key} {Normalize(m.Value)}"));
+        string models = string.Join(", ", shape.ModelNames);
+        return new(shape.Value, CreateShapeDisplayText(shape))
+        {
+            SearchText = FindTitle(key) + "\n" + string.Join("\n", titles) + "\n" + models,
+            ModelText = models
+        };
     }
 
     private string CreateShapeDisplayText(EmbeddedMagicShapeOption shape, string? material = null)

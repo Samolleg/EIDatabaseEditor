@@ -15,6 +15,9 @@ internal interface IDatabaseWorkspaceService
 
     Task<IReadOnlyList<ValidationMessageViewModel>> ValidateAsync(CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<ValidationMessageViewModel>> ValidateAsync(CancellationToken cancellationToken,
+        bool includeResources, IProgress<ResourceValidationProgress>? progress) => ValidateAsync(cancellationToken);
+
     Task<DatabaseComparisonResult> CompareAsync(string path, CancellationToken cancellationToken);
 
     Task<DatabaseReferenceSearchResult> FindReferencesAsync(

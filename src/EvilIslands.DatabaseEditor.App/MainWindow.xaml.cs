@@ -74,10 +74,11 @@ public partial class MainWindow : Window
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         _recoveryStore = recoveryStore ?? new RecoverySnapshotStore();
         InitializeComponent();
+        DetailsModelPreview.UseCompactDetailsLayout();
         ShowTextsKeysCheckBox.IsChecked = _preferences.GetShowTextsKeys();
         ApplyTextsKeyVisibility();
         string version = typeof(MainWindow).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "";
-        string revision = version.Split("preview.").Last().Split('+')[0];
+        string revision = version;
         ProgramVersionText.Text = $"   ·   Версия {revision}";
         RefreshLastDatabaseButton();
         AddHandler(FrameworkElement.LoadedEvent, new RoutedEventHandler(SpreadsheetElement_Loaded));
@@ -101,6 +102,7 @@ public partial class MainWindow : Window
         _viewModel = new MainWindowViewModel();
         DataContext = _viewModel;
         InitializeModules();
+        StartHomeRefresh();
         _viewModel.OpenFileRequested += ViewModel_OpenFileRequested;
         _viewModel.AttachTextsRequested += ViewModel_AttachTextsRequested;
         _viewModel.AttachSoundsRequested += ViewModel_AttachSoundsRequested;
@@ -287,6 +289,12 @@ public partial class MainWindow : Window
             Owner = this,
         };
         manager.ShowDialog();
+    }
+
+    private void OpenMapObjectCatalog_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_viewModel.HasDocument) return;
+        new MapObjectCatalogDialog(_viewModel.SourcePath) { Owner = this }.ShowDialog();
     }
 
     private async void ViewModel_ImportBriefingAudioRequested(object? sender, EventArgs e)
@@ -764,14 +772,16 @@ public partial class MainWindow : Window
             if (!localizationColumnsAdded &&
                 descriptor.Projection is null &&
                 descriptor.FieldId == nameFieldId &&
-                _spreadsheetViewModel.HasTextsDocument)
+                _spreadsheetViewModel.HasTextsDocument &&
+                _spreadsheetViewModel.CurrentTableSupportsLocalization)
             {
                 AddLocalizationColumns(elementStyle, editingStyle, tableKey);
                 localizationColumnsAdded = true;
             }
         }
 
-        if (!localizationColumnsAdded && _spreadsheetViewModel.HasTextsDocument)
+        if (!localizationColumnsAdded && _spreadsheetViewModel.HasTextsDocument &&
+            _spreadsheetViewModel.CurrentTableSupportsLocalization)
         {
             AddLocalizationColumns(elementStyle, editingStyle, tableKey);
         }
@@ -1083,6 +1093,8 @@ public partial class MainWindow : Window
         style.Setters.Add(new Setter(
             TextBlock.TextAlignmentProperty,
             TextAlignment.Center));
+        style.Setters.Add(new Setter(FrameworkElement.ToolTipProperty,
+            new Binding("ToolTip") { RelativeSource = new RelativeSource(RelativeSourceMode.FindAncestor, typeof(DataGridCell), 1) }));
         return style;
     }
 
@@ -1099,10 +1111,10 @@ public partial class MainWindow : Window
     {
         var baseStyle = (Style)Application.Current.FindResource(typeof(DataGridCell));
         var style = new Style(typeof(DataGridCell), baseStyle);
-        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(6, 0, 6, 0)));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(3, 0, 3, 0)));
         style.Setters.Add(new Setter(
             ToolTipService.ToolTipProperty,
-            new Binding($"Cells[{descriptor.FieldId}].Path")));
+            descriptor.HeaderToolTip));
         if (descriptor.IsNameField)
         {
             style.Setters.Add(new Setter(Control.BackgroundProperty, FindResource("DatabaseSurfaceBrush")));
@@ -2533,6 +2545,15 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private async void DeleteDatabaseRow_Click(object sender, RoutedEventArgs e)
+    {
+        await _viewModel.DeleteSelectedRecordAsync(name =>
+            new ConfirmDialog("Удалить строку БД?", name,
+                "Ссылки внутри БД проверены. Использования в картах, Lua и сохранениях не проверяются. " +
+                "Связанные тексты и ресурсы сохранятся. Ctrl+Z вернёт строку до сохранения БД.",
+                "Удалить строку") { Owner = this }.ShowDialog() == true);
+    }
+
     private static bool TryResolvePasteAnchor<T>(
         DataGrid grid,
         T[] rows,
@@ -2867,8 +2888,11 @@ public partial class MainWindow : Window
     private void RefreshLastDatabaseButton()
     {
         var path = _preferences.GetLastDatabasePath();
-        OpenLastDatabaseButton.IsEnabled = !string.IsNullOrWhiteSpace(path);
+        OpenLastDatabaseButton.IsEnabled = File.Exists(path);
         OpenLastDatabaseButton.ToolTip = path ?? "Сначала откройте БД";
+        HomeDatabaseName.Text = string.IsNullOrWhiteSpace(path) ? "База ещё не выбрана" : Path.GetFileName(path);
+        HomeDatabasePath.Text = path is null ? "Откройте database.res из папки вашей игры или мода." :
+            path + (File.Exists(path) ? "" : "\nФайл не найден. Выберите его новое расположение.");
     }
     private void OpenLastDatabase_Click(object sender, RoutedEventArgs e)
     {

@@ -4,7 +4,8 @@ namespace EvilIslands.DatabaseEditor.Core;
 
 public sealed record FootContact(string Part, int First, int Last, Vector3 Anchor);
 public sealed record StoredAnimationPose(string Name, Dictionary<string, Quaternion> Rotations, Dictionary<string, Vector3> Positions);
-public sealed record MotionTransfer(int Version, string Model, string Clip, byte[] Anm, Dictionary<string,string> Parents, Dictionary<string,Vector3> Bones);
+public sealed record MotionTransfer(int Version, string Model, string Clip, byte[] Anm, Dictionary<string,string> Parents, Dictionary<string,Vector3> Bones)
+{ public float? RootCoefficient { get; init; } }
 public sealed record AnimationIssue(int Frame, string Part, string Message) { public override string ToString() => $"{Frame} · {Part} · {Message}"; }
 public enum MotionEase { Linear, Smooth, EaseIn, EaseOut, Hold }
 public sealed partial class FigureAnimationEditor
@@ -162,12 +163,13 @@ public sealed partial class FigureAnimationEditor
         if(Contacts.Count>0)throw new ArgumentException("Сначала снимите диапазоны контактов перед изменением длины клипа.");
         await ReplaceTracks(name,replacement);
     }
-    public MotionTransfer ExportMotion(string model,string clip)=>new(1,model,clip,ExportBytes(),new(_source.Parents),new(_source.Bones));
+    public MotionTransfer ExportMotion(string model,string clip)=>new(1,model,clip,ExportBytes(),new(_source.Parents),new(_source.Bones)) { RootCoefficient = _source.RootSpace.Coefficient };
     public static FigureAnimationSet ReadMotion(MotionTransfer motion)
     {
         if(motion.Version!=1||motion.Anm is null||motion.Parents is null||motion.Bones is null||motion.Parents.Count>4096||motion.Bones.Values.Any(v=>!float.IsFinite(v.LengthSquared())))throw new InvalidDataException("Некорректный пакет движения.");
+        if (motion.RootCoefficient is float coefficient && !float.IsFinite(coefficient)) throw new InvalidDataException("Неконечная поправка корня в пакете движения.");
         foreach(var p in motion.Parents){var seen=new HashSet<string>();string n=p.Key;while(n!=""){if(seen.Count>=128||!motion.Bones.ContainsKey(n)||!seen.Add(n)||!motion.Parents.TryGetValue(n,out n!))throw new InvalidDataException("Повреждена иерархия скелета.");}}
-        return new(motion.Model,motion.Anm,motion.Parents,motion.Bones,motion.Bones);
+        return new(motion.Model,motion.Anm,motion.Parents,motion.Bones,motion.Bones) { RootSpace = motion.RootCoefficient is float c ? FigureRootSpace.FromTransfer(c) : FigureRootSpace.Raw };
     }
     public async Task RetargetAsync(string name,MotionTransfer motion,IReadOnlyDictionary<string,string> mapping)
     {
@@ -186,21 +188,21 @@ public sealed partial class FigureAnimationEditor
             var frames=new Dictionary<int,(Quaternion?,Vector3?)>();var sourceBone=source.Bones[m.Value];var targetBone=_source.Bones[m.Key];
             // Compatible bind axes only: explicit rejection avoids an invented basis for dissimilar rigs.
             if(sourceBone.LengthSquared()>1e-8f&&targetBone.LengthSquared()>1e-8f&&Vector3.Dot(Vector3.Normalize(sourceBone),Vector3.Normalize(targetBone))<.98f)throw new ArgumentException("Различаются оси исходного скелета: "+m.Key+". Нужна корректировка базиса вне этого переноса.");
-            for(int f=0;f<clip.FrameCount;f++){float sf=clip.FrameCount==1?0:f*(input.FrameCount-1f)/(clip.FrameCount-1);frames[f]=(input.Tracks[m.Value].Rotation(sf),_source.Parents[m.Key]==""?(PositionAt(input.Tracks[m.Value],sf,source.Bones[m.Value])-PositionAt(input.Tracks[m.Value],0,source.Bones[m.Value]))*scale+PositionAt(clip.Tracks[m.Key],0,_source.Bones[m.Key]):null);}
+            for(int f=0;f<clip.FrameCount;f++){float sf=clip.FrameCount==1?0:f*(input.FrameCount-1f)/(clip.FrameCount-1);frames[f]=(input.Tracks[m.Value].Rotation(sf),_source.Parents[m.Key]==""?_source.RootSpace.ToRaw((source.RootSpace.ToGame(PositionAt(input.Tracks[m.Value],sf,source.Bones[m.Value]))-source.RootSpace.ToGame(PositionAt(input.Tracks[m.Value],0,source.Bones[m.Value])))*scale+_source.RootSpace.ToGame(PositionAt(clip.Tracks[m.Key],0,_source.Bones[m.Key]))):null);}
             edits[m.Key]=frames;
         }
         await WriteMotion(name,edits);
     }
-    public async Task<IReadOnlyList<AnimationIssue>> DiagnoseAsync(string name)
+    public async Task<IReadOnlyList<AnimationIssue>> DiagnoseAsync(string name, bool checkCycle = true)
     {
         var set=Preview();var clip=await set.LoadAsync(name);var issues=new List<AnimationIssue>();float size=Math.Max(.001f,set.Bones.Values.Sum(v=>v.Length())/15);
         void Add(int f,string p,string message){if(issues.Count<2000)issues.Add(new(f,p,message));}
         foreach(var part in clip.Tracks)
         {
             float Angle(Quaternion a,Quaternion b)=>2*MathF.Acos(Math.Clamp(Math.Abs(Quaternion.Dot(a,b)),0,1))*180/MathF.PI;
-            for(int f=1;f<clip.FrameCount;f++){float angle=Angle(part.Value.Rotation(f-1),part.Value.Rotation(f));if(angle>45)Add(f,part.Key,$"Поворот {angle:0}° за кадр (порог 45°)");if(set.Parents.GetValueOrDefault(part.Key)==""&&Vector3.Distance(part.Value.Position(f),part.Value.Position(f-1))>size*.5f)Add(f,part.Key,"Скачок корня > половины масштаба скелета");}
-            if(set.Parents.GetValueOrDefault(part.Key)==""&&Vector3.Distance(part.Value.Position(0),part.Value.Position(clip.FrameCount-1))>size*.05f)Add(clip.FrameCount-1,part.Key,"Смещение корня между концом и началом цикла");
-            if(Angle(part.Value.Rotation(0),part.Value.Rotation(clip.FrameCount-1))>10)Add(clip.FrameCount-1,part.Key,"Разрыв поворота в цикле >10°");
+            for(int f=1;f<clip.FrameCount;f++){float angle=Angle(part.Value.Rotation(f-1),part.Value.Rotation(f));if(angle>45)Add(f,part.Key,$"Поворот {angle:0}° за кадр (порог 45°)");if(set.Parents.GetValueOrDefault(part.Key)==""&&Vector3.Distance(set.RootSpace.ToGame(part.Value.Position(f)),set.RootSpace.ToGame(part.Value.Position(f-1)))>size*.5f)Add(f,part.Key,"Скачок корня > половины масштаба скелета");}
+            if(checkCycle&&set.Parents.GetValueOrDefault(part.Key)==""&&Vector3.Distance(set.RootSpace.ToGame(part.Value.Position(0)),set.RootSpace.ToGame(part.Value.Position(clip.FrameCount-1)))>size*.05f)Add(clip.FrameCount-1,part.Key,"Смещение корня между концом и началом цикла");
+            if(checkCycle&&Angle(part.Value.Rotation(0),part.Value.Rotation(clip.FrameCount-1))>10)Add(clip.FrameCount-1,part.Key,"Разрыв поворота в цикле >10°");
         }
         foreach(var contact in Contacts)for(int f=contact.First;f<=Math.Min(contact.Last,clip.FrameCount-1);f++)if(set.Pose(clip,f).TryGetValue(contact.Part,out var pose)&&Vector3.Distance(pose.Position,contact.Anchor)>size*.01f)Add(f,contact.Part,"Скольжение в отмеченном контакте");
         return issues;

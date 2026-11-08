@@ -29,7 +29,9 @@ public sealed partial class UnitModelPreviewView
     {
         var vertices = scene.Meshes.SelectMany(m => m.Positions).ToArray();
         if (vertices.Length == 0) { _groundVisual.Content = null; GroundEnabled = _groundEnabled; return; }
-        _groundLevel = vertices.Min(p => p.Z);
+        // ANM root positions are absolute. A floor below the bind mesh (whose hip
+        // is often at zero) conceals a missing root height in a saved animation.
+        _groundLevel = 0;
         float minX = vertices.Min(p => p.X), maxX = vertices.Max(p => p.X);
         float minY = vertices.Min(p => p.Y), maxY = vertices.Max(p => p.Y);
         float size = Math.Max(2, Math.Max(maxX - minX, maxY - minY) * 2.5f);

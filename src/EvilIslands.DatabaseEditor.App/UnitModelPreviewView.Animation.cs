@@ -1,12 +1,23 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using System.Windows.Threading;
+using EvilIslands.DatabaseEditor.App.Services;
 using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.App;
+
+internal sealed class PreviewAnimationLabelConverter(Func<string, string> label) : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is string id && id != "Исходная поза" ? label(id) : value;
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => Binding.DoNothing;
+}
 
 public sealed partial class UnitModelPreviewView
 {
@@ -16,7 +27,13 @@ public sealed partial class UnitModelPreviewView
     private readonly Button _editAnimation = new() { Content = "Редактор Анимаций", Margin = new Thickness(4) };
     private readonly Button _editAdb = new() { Content = "Игровой список ADB", Margin = new Thickness(4), ToolTip = "Все записи анимаций модели в игровой базе ADB. Изменения сохраняются в RES отдельной командой в окне списка." };
     private readonly WrapPanel _animationTools = new() { Visibility = Visibility.Collapsed };
-    private readonly ComboBox _clips = new() { Width = 190, Margin = new Thickness(4), IsTextSearchEnabled = true, ToolTip = "Клип из ANM. Начните вводить его имя для поиска." };
+    private readonly TextBlock _clipSearchLabel = new() { Text = "Поиск", Margin = new Thickness(4), VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBox _clipSearch = new() { Width = 165, Margin = new Thickness(4), ToolTip = "Поиск анимации по ID, русскому названию или номеру ADB" };
+    private readonly TextBlock _clipCount = new() { Margin = new Thickness(4), VerticalAlignment = VerticalAlignment.Center };
+    private readonly StackPanel _searchMatches = new();
+    private readonly Border _searchMatchesBorder = new() { Tag = "AnimationLiveSearchResults", Visibility = Visibility.Collapsed, Margin = new Thickness(112, 0, 8, 8),
+        BorderBrush = Brushes.DimGray, BorderThickness = new Thickness(1), Background = new SolidColorBrush(Color.FromRgb(27, 31, 29)) };
+    private readonly ComboBox _clips = new() { Width = 385, Margin = new Thickness(4), IsTextSearchEnabled = true, ToolTip = "Клипы ANM: ID, номер записи ADB и русское название" };
     private readonly Button _play = new() { Content = "▶ Играть", Margin = new Thickness(4) };
     private readonly Button _pause = new() { Content = "Ⅱ Пауза", Margin = new Thickness(4) };
     private readonly Button _stop = new() { Content = "■ Стоп", Margin = new Thickness(4) };
@@ -28,9 +45,13 @@ public sealed partial class UnitModelPreviewView
     private readonly DispatcherTimer _animationTimer = new(DispatcherPriority.Render) { Interval = TimeSpan.FromSeconds(1.0 / 30) };
     private readonly Stopwatch _animationClock = new();
     private FigureAnimationSet? _animations;
+    private IReadOnlyList<AnimationClipChoice> _clipChoices = [];
+    private IReadOnlyDictionary<string, string> _clipLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private FigureAnimationClip? _clip;
     private CancellationTokenSource? _clipCancellation;
     private bool _settingFrame, _settingClips;
+    private int _globalSearchVersion;
+    internal Task GlobalSearchTask { get; private set; } = Task.CompletedTask;
     private double _lastTick;
     private sealed record AnimatedMesh(FigureMesh Source, MeshGeometry3D Mesh, GeometryModel3D Model, Point3DCollection Bind);
     private readonly List<AnimatedMesh> _animatedMeshes = [];
@@ -50,6 +71,8 @@ public sealed partial class UnitModelPreviewView
     {
         if (_animationTools.Parent is Panel parent) parent.Children.Remove(_animationTools);
         _clips.Visibility = Visibility.Collapsed;
+        _clipSearchLabel.Visibility = _clipSearch.Visibility = _clipCount.Visibility = Visibility.Collapsed;
+        _searchMatchesBorder.Visibility = Visibility.Collapsed;
         if (_animationTools.Children[0] is TextBlock label) label.Visibility = Visibility.Collapsed;
         _frame.Width = 170; _fps.Width = 55;
         destination.Children.Add(_animationTools);
@@ -64,13 +87,22 @@ public sealed partial class UnitModelPreviewView
 
     private void InitializeAnimationControls(DockPanel toolbar)
     {
-        foreach (UIElement control in new UIElement[] { new TextBlock { Text = "Анимация", Margin = new Thickness(8), VerticalAlignment = VerticalAlignment.Center }, _clips, _play, _pause, _stop, _frame, _frameText, _fps,
+        foreach (UIElement control in new UIElement[] { new TextBlock { Text = "Анимация", Margin = new Thickness(8), VerticalAlignment = VerticalAlignment.Center },
+            _clipSearchLabel, _clipSearch, _clips, _clipCount, _play, _pause, _stop, _frame, _frameText, _fps,
             new TextBlock { Text = "кадр/с", VerticalAlignment = VerticalAlignment.Center }, _loop, _editAnimation, _editAdb, _animationError }) _animationTools.Children.Add(control);
         _editAnimation.SetResourceReference(Button.StyleProperty,"AccentButton");
         _editAnimation.FontWeight=FontWeights.SemiBold;
         _editAnimation.ToolTip="Открыть редактор, задать русское название или создать новую анимацию";
-        _clips.Width=290;
-        _clips.ItemTemplate=Dialogs.AnimationLabelConverter.Template(()=>_editingScene?.Model??"");
+        var label = new FrameworkElementFactory(typeof(TextBlock));
+        label.SetBinding(TextBlock.TextProperty, new Binding { Converter = new PreviewAnimationLabelConverter(id => _clipLabels.GetValueOrDefault(id, id)) });
+        _clips.ItemTemplate = new DataTemplate { VisualTree = label };
+        _clipSearch.TextChanged += (_, _) => FilterClips();
+        _clipSearch.KeyDown += (_, e) =>
+        {
+            if (e.Key == System.Windows.Input.Key.Escape) { _clipSearch.Clear(); e.Handled = true; }
+            else if (e.Key == System.Windows.Input.Key.Enter && _searchMatches.Children.OfType<Button>().FirstOrDefault() is { } first)
+            { first.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); e.Handled = true; }
+        };
         _editAnimation.Click += async (_, _) =>
         {
             if (_editingScene is null || _animations is not {Names.Count: >0}) return;
@@ -78,15 +110,22 @@ public sealed partial class UnitModelPreviewView
             var editor = new Dialogs.AnimationEditorDialog(_editingScene, EditorAnimationName!) { Owner = Window.GetWindow(this) };
             editor.ShowDialog();
             if (editor.SavedAnimationSet is not null) await AdoptSavedAnimationAsync(editor.SavedAnimationSet, editor.SavedClipName);
-            else _clips.Items.Refresh();
+            else RefreshClipCatalog();
         };
-        _editAdb.Click += (_, _) =>
+        _editAdb.Click += async (_, _) =>
         {
             if (_editingScene is not { AnimationDatabase: not null, Animations: not null } scene) return;
             PauseAnimation();
-            new Dialogs.AnimationDatabaseDialog(scene, scene.Animations) { Owner = Window.GetWindow(this) }.ShowDialog();
+            var dialog = new Dialogs.AnimationDatabaseDialog(scene, scene.Animations) { Owner = Window.GetWindow(this) };
+            dialog.ShowDialog();
+            if (dialog.SavedAnimationSet is { } saved) await AdoptSavedAnimationAsync(saved, null);
+            if (scene.Animations.SaveTarget is { } target)
+                AnimationGlobalClipIndex.Invalidate(Path.GetDirectoryName(target.Path)!);
+            RefreshClipCatalog();
         };
         DockPanel.SetDock(_animationTools, Dock.Top); toolbar.Children.Add(_animationTools);
+        _searchMatchesBorder.Child = new ScrollViewer { Content = _searchMatches, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        DockPanel.SetDock(_searchMatchesBorder, Dock.Top); toolbar.Children.Add(_searchMatchesBorder);
         _clips.SelectionChanged += (_, _) => { if (!_settingClips) AnimationLoadTask = SelectAnimationAsync(_clips.SelectedItem as string); };
         _play.Click += (_, _) => AnimationLoadTask = PlayAnimationAsync();
         _pause.Click += (_, _) => PauseAnimation();
@@ -98,6 +137,8 @@ public sealed partial class UnitModelPreviewView
     internal async Task AdoptSavedAnimationAsync(FigureAnimationSet saved, string? clipName)
     {
         if (_editingScene is null) throw new InvalidOperationException("Модель для сохранённого ANM не открыта.");
+        if (saved.SaveTarget is { } target)
+            AnimationGlobalClipIndex.Invalidate(Path.GetDirectoryName(target.Path)!);
         _editingScene = _editingScene with { Animations = saved };
         SetAnimations(saved);
         await SelectAnimationAsync(clipName);
@@ -111,7 +152,14 @@ public sealed partial class UnitModelPreviewView
         _clip = null; _animations = null; _animatedMeshes.Clear();
         _ghostMeshes.Clear(); _viewport.Children.Remove(_ghostVisual); _originalSet = null; _originalClip = null; _showOriginal = _showGhost = false;
         _animationError.Visibility = Visibility.Collapsed;
+        _globalSearchVersion++;
+        _searchMatchesBorder.Visibility = Visibility.Collapsed;
+        _searchMatches.Children.Clear();
         _settingClips = true; _clips.ItemsSource = null; _settingClips = false;
+        _clipChoices = [];
+        _clipLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        _clipSearch.Text = "";
+        _clipCount.Text = "";
         _animationTools.Visibility = Visibility.Collapsed;
     }
 
@@ -120,9 +168,101 @@ public sealed partial class UnitModelPreviewView
         _animations = animations;
         _animationTools.Visibility = animations is { Names.Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
         _settingClips = true;
-        _clips.ItemsSource = new[] { BindPoseLabel }.Concat(animations?.Names ?? []).ToArray();
-        _clips.SelectedIndex = 0; _settingClips = false;
+        _clipSearch.Text = "";
+        _clips.SelectedItem = BindPoseLabel;
+        _settingClips = false;
+        RefreshClipCatalog();
         UpdateAnimationControls();
+    }
+
+    private void RefreshClipCatalog()
+    {
+        string model = _editingScene?.Model ?? "";
+        _clipChoices = AnimationClipCatalog.Build(_animations?.Names ?? [], _editingScene?.AnimationDatabase?.Database,
+            AnimationNames.Shared.ForModel(model));
+        _clipLabels = _clipChoices.ToDictionary(choice => choice.Id, choice => choice.Label, StringComparer.OrdinalIgnoreCase);
+        FilterClips();
+        _clips.Items.Refresh();
+    }
+
+    private void FilterClips(string? preferred = null)
+    {
+        var matches = AnimationClipCatalog.Search(_clipChoices, _clipSearch.Text);
+        string selected = preferred ?? _clips.SelectedItem as string ?? BindPoseLabel;
+        var visible = matches.Select(choice => choice.Id).ToList();
+        if (selected != BindPoseLabel && _clipLabels.ContainsKey(selected) &&
+            !visible.Contains(selected, StringComparer.OrdinalIgnoreCase)) visible.Insert(0, selected);
+        visible.Insert(0, BindPoseLabel);
+        bool setting = _settingClips;
+        _settingClips = true;
+        _clips.ItemsSource = visible;
+        _clips.SelectedItem = visible.Contains(selected, StringComparer.OrdinalIgnoreCase) ? selected : BindPoseLabel;
+        _settingClips = setting;
+        string query = _clipSearch.Text.Trim();
+        _clipCount.Text = query.Length == 0 ? "" : $"В этой модели: {matches.Count}";
+        // Opening the ComboBox steals focus from the search box. Subsequent keys then go to
+        // the ComboBox and the list can show stale results. Keep the result list independent.
+        _clips.IsDropDownOpen = false;
+        int version = ++_globalSearchVersion;
+        _searchMatches.Children.Clear();
+        _searchMatchesBorder.Visibility = query.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (query.Length == 0) return;
+        foreach (var choice in matches.Take(100))
+        {
+            var id = choice.Id;
+            var button = new Button { Content = choice.Label, HorizontalContentAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(4, 2, 4, 2), Padding = new Thickness(8, 5, 8, 5),
+                ToolTip = "Выбрать и показать эту анимацию" };
+            button.Click += (_, _) => { AnimationLoadTask = SelectAnimationAsync(id); _clipSearch.Clear(); };
+            _searchMatches.Children.Add(button);
+        }
+        if (matches.Count > 100) AddSearchMessage($"Показаны первые 100 из {matches.Count}. Уточните запрос.");
+        if (query.Length > 0 && matches.Count == 0)
+        {
+            string model = _editingScene?.Model ?? "";
+            AddSearchMessage($"В модели {model} совпадений нет. Ищу в других моделях…");
+            GlobalSearchTask = ShowOtherModelMatchesAsync(query, model, version);
+        }
+    }
+
+    private void AddSearchMessage(string message) => _searchMatches.Children.Add(new TextBlock
+    {
+        Text = message, Margin = new Thickness(10, 7, 10, 7), TextWrapping = TextWrapping.Wrap,
+        Foreground = Brushes.LightGoldenrodYellow
+    });
+
+    private async Task ShowOtherModelMatchesAsync(string query, string model, int version)
+    {
+        string? archive = _animations?.SaveTarget?.Path;
+        if (archive is null)
+        {
+            _searchMatches.Children.Clear();
+            AddSearchMessage($"В модели {model} совпадений нет. Путь к игровым ресурсам неизвестен.");
+            return;
+        }
+        try
+        {
+            var catalog = await AnimationGlobalClipIndex.OpenAsync(Path.GetDirectoryName(archive)!);
+            if (version != _globalSearchVersion || _editingScene?.Model != model) return;
+            var hits = catalog.Search(query, model);
+            _searchMatches.Children.Clear();
+            if (hits.Count == 0)
+                AddSearchMessage($"В модели {model} и других доступных моделях совпадений нет." +
+                    (catalog.Issues.Count > 0 ? $" Не удалось прочитать ресурсов: {catalog.Issues.Count}." : ""));
+            else
+            {
+                AddSearchMessage("Найдено в других моделях. Для просмотра выберите прототип указанной модели:");
+                foreach (var hit in hits) AddSearchMessage(hit.Label);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            if (version == _globalSearchVersion)
+            {
+                _searchMatches.Children.Clear();
+                AddSearchMessage("Не удалось проверить другие модели: " + ex.Message);
+            }
+        }
     }
 
     internal async Task SelectAnimationAsync(string? name)
@@ -133,6 +273,7 @@ public sealed partial class UnitModelPreviewView
         var token = _clipCancellation.Token;
         _clip = null; RestoreBindPose(); UpdateAnimationControls();
         _animationError.Visibility = Visibility.Collapsed;
+        FilterClips(name);
         _settingClips = true; _clips.SelectedItem = name ?? BindPoseLabel; _settingClips = false;
         if (_animations is null || name is null or BindPoseLabel) return;
         _play.IsEnabled = false; _frameText.Text = "Загрузка…";
@@ -162,6 +303,7 @@ public sealed partial class UnitModelPreviewView
         var bounds=await Task.Run(()=>AnimationBounds(set,clip,meshes,CancellationToken.None));
         _clipCancellation?.Cancel();
         _animations=set;_clip=clip;
+        FilterClips(clip.Name);
         if(_editingScene is not null)_editingScene=_editingScene with {Animations=set};
         _pendingEditorBounds=bounds;
         _settingFrame=true;

@@ -58,6 +58,7 @@ internal static class AnimationMotionRegression
         {
             string created=bind?"user_bind":"user_copy";await creator.CreateAnimationAsync(name,created,9,bind);
             var added=await creator.Preview().LoadAsync(created);Check(added.FrameCount==9,"new clip length");
+            AnimationSaveRegression.CheckNested(creator.ExportBytes(),created,clip.Tracks.Count);
             var oldArchive=ResArchiveDocument.Parse("old",initial);var newArchive=ResArchiveDocument.Parse("new",creator.ExportBytes());
             foreach(var entry in oldArchive.Entries)Check(oldArchive.GetResourceBytes(entry).Span.SequenceEqual(newArchive.GetResourceBytes(entry.Name).Span),"new clip modified original");
             foreach(var track in added.Tracks)Check(Same(track.Value.Rotation(0),bind?Quaternion.Identity:clip.Tracks[track.Key].Rotation(0)),"new clip pose");

@@ -7,13 +7,26 @@ public sealed partial class FigureAnimationEditor
 {
     private byte[] _bytes;
     private readonly Stack<byte[]> _undo = new(), _redo = new();
-    private readonly FigureAnimationSet _source;
+    private FigureAnimationSet _source;
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
     public bool HasChanges => !_bytes.AsSpan().SequenceEqual(_source.ExportBytes());
-    public FigureAnimationEditor(FigureAnimationSet source) { _source = source; _bytes = source.ExportBytes(); }
+    private string? _coordinateIdentity;
+    public int CoordinateRevision { get; private set; }
+    private string? CurrentCoordinateIdentity()
+    { try { return _source.RootSpace.Identity; } catch (InvalidDataException) { return null; } }
+    private void RefreshCoordinateSpace()
+    {
+        string? identity = CurrentCoordinateIdentity();
+        if (identity == _coordinateIdentity) return;
+        _coordinateIdentity = identity; CoordinateRevision++;
+        if (MotionPins.Count == 0 && Contacts.Count == 0) return;
+        MotionPins = new Dictionary<string, Vector3>(); Contacts = Array.Empty<FootContact>();
+        ProjectCoordinateWarning = "Поправка корня ADB изменилась. Фиксации стоп и контакты сняты; задайте их заново. Сырые дорожки и история сохранены.";
+    }
+    public FigureAnimationEditor(FigureAnimationSet source) { _source = source; _bytes = source.ExportBytes(); _coordinateIdentity = CurrentCoordinateIdentity(); }
     public byte[] ExportBytes() => (byte[])_bytes.Clone();
-    public FigureAnimationSet Preview() => _source.WithBytes(_bytes);
+    public FigureAnimationSet Preview() { RefreshCoordinateSpace(); return _source.WithBytes(_bytes); }
     public void AdoptSavedBytes(byte[] bytes)
     {
         // A nested editor starts from this editor's current preview; preserve local authoring settings and history.
@@ -30,6 +43,8 @@ public sealed partial class FigureAnimationEditor
         if (first < 0 || last < first || last >= clip.FrameCount || frames < 1 || frames > 10000)
             throw new ArgumentOutOfRangeException(nameof(first), "Укажите диапазон существующих кадров и длину от 1 до 10000 кадров.");
         if (first == 0 && last == clip.FrameCount - 1 && frames == clip.FrameCount) return;
+        if (MotionPins.Count > 0)
+            throw new InvalidOperationException("Снимите фиксацию стоп перед изменением диапазона или длины клипа; изменение отменено целиком.");
         var archive = ResArchiveDocument.Parse("animation.anm", _bytes, token);
         var nested = archive.Entries.FirstOrDefault(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         var tracks = nested is null ? archive : ResArchiveDocument.Parse(name, archive.GetResourceBytes(nested).ToArray(), token);
@@ -59,6 +74,7 @@ public sealed partial class FigureAnimationEditor
         byte[] changed = candidate.ExportBytes();
         if (_bytes.AsSpan().SequenceEqual(changed)) return;
         CheckLockedPose(_source, await Preview().LoadAsync(name), await candidate.Preview().LoadAsync(name), frame, LockedParts);
+        CheckMotionPins(Preview(), await Preview().LoadAsync(name), await candidate.Preview().LoadAsync(name), frame, frame);
         Accept(changed);
     }
 
@@ -101,6 +117,7 @@ public sealed partial class FigureAnimationEditor
         if (nested is not null) changed = ResArchiveWriter.Rebuild(archive, new Dictionary<int, byte[]> { [nested.Index] = changed });
         var checkedClip = await _source.WithBytes(changed).LoadAsync(name).ConfigureAwait(false);
         CheckLockedPose(_source, clip, checkedClip, frame, LockedParts);
+        CheckMotionPins(Preview(), clip, checkedClip, frame, frame);
         if (_bytes.AsSpan().SequenceEqual(changed)) return;
         Accept(changed);
     }

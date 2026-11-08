@@ -16,9 +16,13 @@ internal static class EquipmentEditorRegression
     internal static int Run(string source, string output)
     {
         var app = new EvilIslands.DatabaseEditor.App.App { ShutdownMode = ShutdownMode.OnExplicitShutdown }; app.InitializeComponent();
+        typeof(Application).GetField("_startupUri", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.SetValue(app, null); app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        // No MainWindow / preference store / map catalog is created in this harness.
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
-        var task = Check(source, output); task.ContinueWith(_ => app.Dispatcher.InvokeShutdown(), TaskScheduler.Default); Dispatcher.Run();
-        try { task.GetAwaiter().GetResult(); Console.WriteLine("PASS equipment draft, live material change, names, seven slot filter, Cancel, Apply/Undo, rendering, input unchanged"); return 0; }
+        var task = Check(source, output); var frame = new DispatcherFrame();
+        _ = task.ContinueWith(_ => frame.Dispatcher.BeginInvoke(new Action(() => frame.Continue = false)), TaskScheduler.Default);
+        if (!task.IsCompleted) Dispatcher.PushFrame(frame);
+        try { task.GetAwaiter().GetResult(); Require(app.Windows.Cast<Window>().All(w => !w.IsVisible), "Headless test opened visible window"); app.Shutdown(); Console.WriteLine("PASS equipment draft, live material change, names, seven slot filter, Cancel, Apply/Undo, rendering, input unchanged"); return 0; }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
     }
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
@@ -34,6 +38,7 @@ internal static class EquipmentEditorRegression
         var records = vm.Databases.SelectMany(g => g.Tables).ToDictionary(t => t.Key, t => (IReadOnlyList<DatabaseRecord>)t.Records.Select(r => r.CoreRecord).ToArray());
         var titles = vm.TextResources.GroupBy(r => r.ResourceName, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Title, StringComparer.OrdinalIgnoreCase);
         var context = new EmbeddedMagicEditorContext(EmbeddedMagicCatalog.Create(records), titles);
+        EquipmentShapeSearchRegression.CheckChoosing(context);
         var luaFolder = LuaDataWorkspace.FindNearby(source);
         Require(luaFolder is not null, "Calculation regression requires nearby Lua");
         var lua = LuaDataWorkspace.Open(luaFolder!);
@@ -57,6 +62,8 @@ internal static class EquipmentEditorRegression
         double firstFrame = preview.AnimationFrame;
         await Task.Delay(120);
         Require(preview.AnimationFrame != firstFrame, "Idle animation did not advance");
+        EquipmentShapeSearchRegression.CheckFiltering(dialog, armor: true);
+        await dialog.EquipmentLoadTask;
         var slots = (ComboBox)dialog.FindName("EquipmentSlotCombo");
         Require(slots.Items.Count == 8, "Seven slots and All missing");
         for (int i = 1; i <= 7; i++)
@@ -140,8 +147,7 @@ internal static class EquipmentEditorRegression
         foreach (int weaponField in new[] { 33, 42 })
         {
             var weaponRow = vm.Databases.SelectMany(g => g.Tables).Single(t => t.Key == "units.prototypes").Records
-                .First(r => !string.IsNullOrWhiteSpace(r.GetCell(weaponField)?.EditorText) &&
-                    (r.GetCell(weaponField)?.EditorText.Contains('.') ?? false));
+                .Single(r => r.CoreRecord.IdentityValue == "ZombieFemaleF14");
             vm.SelectedRecord = weaponRow;
             var cell = weaponRow.GetCell(weaponField)!;
             string originalWeapon = cell.EditorText;
@@ -149,18 +155,57 @@ internal static class EquipmentEditorRegression
                 _ => (true, (string?)null), singleValueMode: true, magicContext: context,
                 allowedElementKinds: [StructuredElementKind.RawValue, StructuredElementKind.Weapon]);
             weaponDialog.ConfigureEquipment(vm, weaponRow, weaponField);
+            weaponDialog.Measure(new Size(1600, 900)); weaponDialog.Arrange(new Rect(0, 0, 1600, 900)); weaponDialog.UpdateLayout();
+            await Task.Delay(50);
+            for (int pass = 0; pass < 12; pass++)
+            {
+                var pending = weaponDialog.EquipmentLoadTask;
+                await pending;
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                if (ReferenceEquals(pending, weaponDialog.EquipmentLoadTask)) break;
+            }
+            EquipmentShapeSearchRegression.CheckFiltering(weaponDialog, armor: false);
+            var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var view = (EvilIslands.DatabaseEditor.App.UnitModelPreviewView)typeof(StructuredStringListEditorDialog).GetField("_equipmentPreview", flags)!.GetValue(weaponDialog)!;
+            UnitModelScene Scene() => (UnitModelScene)typeof(EvilIslands.DatabaseEditor.App.UnitModelPreviewView).GetField("_editingScene", flags)!.GetValue(view)!;
+            Require(Scene() is not null, "Weapon preview failed: " + ((TextBlock)typeof(StructuredStringListEditorDialog).GetField("_equipmentStatus", flags)!.GetValue(weaponDialog)!).Text);
+            Require(Scene().Meshes.Any(m => m.Name == "rh3.daxe01") && Scene().Meshes.Any(m => m.Name == "lh3.daxe01"), "Equipment dialog omitted identical axe instance: " + weaponField);
+            int adjacent = weaponField == 33 ? 42 : 33;
+            string adjacentOriginal = weaponRow.GetCell(adjacent)!.EditorText;
             var choices = (ComboBox)weaponDialog.FindName("MagicMaterialComboBox");
             Require(choices.Items.Count > 1, "No weapon materials");
             choices.SelectedIndex = (choices.SelectedIndex + 1) % choices.Items.Count;
-            await weaponDialog.EquipmentLoadTask;
+            for (int pass = 0; pass < 12; pass++)
+            {
+                var pending = weaponDialog.EquipmentLoadTask;
+                await pending;
+                await Dispatcher.Yield(DispatcherPriority.Background);
+                if (ReferenceEquals(pending, weaponDialog.EquipmentLoadTask)) break;
+            }
             Require(weaponDialog.EquipmentDraft!.Text(weaponField) == weaponDialog.Items[0].Value &&
                 weaponDialog.Items[0].Value != originalWeapon, "Weapon draft did not follow material: " + weaponField);
-            Require(cell.EditorText == originalWeapon, "Weapon preview changed DB");
+            Require(cell.EditorText == originalWeapon && weaponRow.GetCell(adjacent)!.EditorText == adjacentOriginal && weaponDialog.EquipmentDraft!.Text(adjacent) == adjacentOriginal, "Weapon draft changed adjacent/source slot");
+            Require(Scene().Meshes.Any(m => m.Name == "rh3.daxe01") && Scene().Meshes.Any(m => m.Name == "lh3.daxe01"), "Material change lost hand instance");
+            Require(view.ActiveAnimationName is not null, "Equipment animation lost");
+            Require(Scene().Textures[Scene().Meshes.Single(m => m.Name == "rh3.daxe01").TextureSlot].Bgra.Length > 0, "Axe material lost after animation");
             var selectedWeapon = (EmbeddedMagicChoice)((ComboBox)weaponDialog.FindName("MagicShapeComboBox")).SelectedItem;
             Require(selectedWeapon.DisplayText.StartsWith(selectedWeapon.Value + " — ") &&
                 weaponDialog.Items[0].RussianName.Length > 0 && selectedWeapon.DisplayText.Contains(weaponDialog.Items[0].RussianName),
                 "Weapon dropdown missing Russian name");
             weaponDialog.Close();
+            Require(cell.EditorText == originalWeapon && weaponRow.GetCell(adjacent)!.EditorText == adjacentOriginal, "Cancel changed weapon data");
+            var applyDialog = new StructuredStringListEditorDialog("weapon", "Оружие", [originalWeapon], [],
+                updated => { cell.EditorText = updated.Single(); return (true, (string?)null); }, singleValueMode: true, magicContext: context,
+                allowedElementKinds: [StructuredElementKind.RawValue, StructuredElementKind.Weapon]);
+            applyDialog.ConfigureEquipment(vm, weaponRow, weaponField);
+            applyDialog.Items[0].Value = weaponDialog.Items[0].Value;
+            await applyDialog.EquipmentLoadTask;
+            Require(applyDialog.TryCommit() && cell.EditorText == applyDialog.Items[0].Value && cell.EditorText != originalWeapon, "Weapon Apply failed");
+            Require(weaponRow.GetCell(adjacent)!.EditorText == adjacentOriginal, "Weapon Apply changed adjacent slot");
+            vm.UndoCommand.Execute(null);
+            Require(cell.EditorText == originalWeapon && weaponRow.GetCell(adjacent)!.EditorText == adjacentOriginal, "Weapon Apply Undo did not restore exact slots");
+            applyDialog.Close();
+            Console.WriteLine("PASS Zombie equipment slot " + weaponField + ": two axes, material+animation, adjacent preserved, Cancel and real Apply/Undo");
         }
         Require(hash.SequenceEqual(SHA256.HashData(File.ReadAllBytes(source))), "Input RES modified");
         var unit = new ModelRecord("units.prototypes", "test", new Dictionary<int, string> { [1] = "race", [11] = "2", [33] = "sword.iron" }, new Dictionary<int, string[]> { [32] = ["helm.iron"] });

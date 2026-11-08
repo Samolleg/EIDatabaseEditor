@@ -1,0 +1,8 @@
+# Preview181 — исчезновение модели сравнения
+
+2026-09-25. Source feature/structured-list-content-builder at c3809f07ec3bdcb837fea17f5050cad4ca3eff9a plus preserved dirty changes; result commit N/A, not requested.
+Owner video 20260925-0512-43.7068548.mp4 (8.27s) sampled: empty comparison viewport throughout, toolbar present. Exact cause source-confirmed and reproduced: supplied comparison scene uses default database-owned view. Loaded->Attach->QueueLoad and DataContext/visibility events call Cancel/ResetAnimation and clear _visual.Content. Previous offscreen test omitted these lifecycle events.
+Added factory used by real dialog and regression. Before fix, loaded/context test failed: comparison Loaded/DataContext lifecycle cleared supplied scene. Factory now sets existing ExternalScene=true, keeping ownership with comparison and bypassing database loader. No rendering workaround or file format change.
+Final Release build zero warnings/errors, --adb-crud PASS including lifecycle, six switches, synchronized ghost reference bounds, ADB/RES checks and source preservation. Tests run on temporary copies, no active resource writes.
+Editor process absent. Publish-Current installed181; manifest19 and unowned retained19 verified. Kimodo/user files and existing module preserved. Prepared locator workspace work/investigations/database-editor-ghost180/package181-path.txt. No commit/merge/push or game installation.
+Manual remaining: open comparison after generation, verify model is visible, original/variant/ghost playback and scrubbing. No interactive app launched; lifecycle regression is not pixel-level confirmation on user screen. Confidence: deterministic lifecycle defect reproduced then passed; actual modal visual verification remains open. No new toggle.

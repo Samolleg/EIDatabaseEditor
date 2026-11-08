@@ -213,7 +213,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
     {
         if (!ReferenceEquals(Records.LastOrDefault(r => !r.IsTextOnlyBriefing), record))
         {
-            throw new InvalidOperationException("Безопасно удалить можно только последнюю добавленную строку таблицы.");
+            throw new InvalidOperationException("Удалить можно только последнюю строку таблицы, чтобы сохранить номера остальных записей.");
         }
 
         Records.Remove(record);
@@ -344,6 +344,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
             Projection = projection;
             Key = BuildKey(field, projection);
             Title = GetDisplayTitle(field, projection);
+            SourceTitle = field.DisplayName;
             Kind = GetDisplayKind(field.Kind, projection);
             DisplayOrder = projection?.DisplayOrder ?? field.DisplayOrder;
             IsEditable = isEditable;
@@ -357,6 +358,7 @@ internal sealed class DatabaseTableViewModel : ObservableObject
         private string Key { get; }
 
         private string Title { get; }
+        private string SourceTitle { get; }
 
         private string Kind { get; }
 
@@ -392,7 +394,8 @@ internal sealed class DatabaseTableViewModel : ObservableObject
                 isNameField,
                 Projection,
                 DisplayOrder,
-                ShowInReadableView);
+                ShowInReadableView,
+                SourceTitle);
 
         private static string BuildKey(DatabaseField field, DatabaseFieldProjection? projection) =>
             projection is null ? field.Key : $"{field.Key}[{projection.Index}]";
@@ -435,13 +438,14 @@ internal sealed record SpreadsheetColumnViewModel(
     bool IsNameField,
     DatabaseFieldProjection? Projection,
     int DisplayOrder,
-    bool ShowInReadableView)
+    bool ShowInReadableView,
+    string? SourceTitle = null)
 {
     public string Subtitle => Kind == "StructuredListDecoded"
         ? "Варианты реплик · редактор ☷"
         : $"{Key} · {Kind}";
 
-    public string HeaderToolTip => $"{Title}\n{Subtitle}";
+    public string HeaderToolTip => SpreadsheetFieldHelp.Database(this);
 
     public SpreadsheetColumnLayout Layout => SpreadsheetColumnLayout.For(this);
 
@@ -1078,6 +1082,22 @@ internal sealed class RecordRowViewModel : ObservableObject
                 this,
                 new RecordFieldValueCommittedEventArgs(field, eventArgs.BeforeState, eventArgs.AfterState));
         }
+    }
+
+    internal bool MatchesPrototypeContents(string query)
+    {
+        foreach (DatabaseField field in _record.Fields)
+        {
+            // Common, rare and guaranteed loot, spells, armor, and both weapon slots.
+            if (field.Id is (27 or 28 or 29 or 31 or 32 or 33 or 42) &&
+                field.Value is string value &&
+                value.Contains(query, StringComparison.CurrentCultureIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private string BuildSearchText()
@@ -2157,6 +2177,16 @@ internal sealed record ValidationMessageViewModel(
 
     public string CategoryText => Code switch
     {
+        "FIG_WEAPON_TEXTURE_ID" => "Неверный атлас оружия",
+        "FIG_TEXTURE_LAYOUT_UNCHECKED" => "Схема FIG не проверена",
+        "RESOURCE_MISSING" => "Не найден ресурс модели/текстуры",
+        "RESOURCE_DECODE_FAILED" => "Повреждённый ресурс / ошибка декодирования",
+        "RESOURCE_READ_FAILED" => "Ошибка чтения ресурса",
+        "RESOURCE_LAYOUT_UNCHECKED" => "Ресурс не проверен",
+        "RESOURCE_VARIANT_UNCHECKED" => "Вариант не проверен",
+        "RESOURCE_SOURCE_UNCHECKED" => "Источник не проверен",
+        "RESOURCE_PREVIEW_OPTIONAL" => "Пример предпросмотра (не ссылка игры)",
+        "RESOURCE_SCAN_COVERAGE" => "Охват проверки ресурсов",
         "DB_RESOURCE_MISSING" => "Не найден ресурс базы",
         "DB_PARSE_FAILED" => "Ресурс базы повреждён",
         "RES_RESOURCE_OVERLAP_DIRECTORY" => "Ресурс пересекается с каталогом",

@@ -40,15 +40,45 @@ public sealed partial class FigureAnimationEditor
             {
                 var track=clip.Tracks[p.Key];int vertices=track.Morphs.Length>0?track.Morphs[0].Length:0;
                 bytes=EncodeTrack(new FigureAnimationTrack(Enumerable.Repeat(Quaternion.Identity,frames).ToArray(),
-                    _source.Parents.GetValueOrDefault(p.Key)==""?new[]{_source.Bones[p.Key]}:Array.Empty<Vector3>(),
+                    _source.Parents.GetValueOrDefault(p.Key)==""
+                        ? new[]{track.Positions.Length>0?track.Position(0):_source.Bones[p.Key]}
+                        : Array.Empty<Vector3>(),
                     vertices>0?new[]{new Vector3[vertices]}:Array.Empty<Vector3[]>()));
             }
             else bytes=TransformTrack(p.Value,0,clip.FrameCount-1,frames);
-            additions.Add(new(name+"\\"+p.Key,bytes));
+            additions.Add(new(p.Key,bytes));
         }
         var archive=ResArchiveDocument.Parse("animation",_bytes);
-        var result=ResArchiveWriter.Rebuild(archive,new Dictionary<int,byte[]>(),additions);
+        var nested=BuildClipArchive(additions);
+        var result=ResArchiveWriter.Rebuild(archive,new Dictionary<int,byte[]>(),[new(name,nested)]);
         if((await _source.WithBytes(result).LoadAsync(name)).FrameCount!=frames)throw new InvalidDataException("Не совпала длина новой анимации.");
+        Accept(result);
+    }
+
+    private static byte[] BuildClipArchive(IReadOnlyList<AddedResResource> tracks)
+    {
+        var empty=new byte[ResArchiveDocument.HeaderSize];
+        BitConverter.GetBytes(ResArchiveDocument.Signature).CopyTo(empty,0);
+        BitConverter.GetBytes(ResArchiveDocument.HeaderSize).CopyTo(empty,8);
+        return ResArchiveWriter.Rebuild(ResArchiveDocument.Parse("empty clip",empty),new Dictionary<int,byte[]>(),tracks);
+    }
+
+    // Old editor versions wrote clip\part at the ANM root. Keep reading those
+    // files, but convert only the selected clip when it is explicitly saved.
+    public void NestFlatClip(string name)
+    {
+        var outer=ResArchiveDocument.Parse("animation",_bytes);
+        if(outer.Entries.Any(e=>e.Name.Equals(name,StringComparison.OrdinalIgnoreCase)))return;
+        string prefix=name+"\\";
+        var flat=outer.Entries.Where(e=>e.Name.Replace('/','\\').StartsWith(prefix,StringComparison.OrdinalIgnoreCase)).ToArray();
+        if(flat.Length==0)throw new InvalidDataException("Клип не найден: "+name);
+        var tracks=flat.Select(e=>new AddedResResource(e.Name.Replace('/','\\')[prefix.Length..],outer.GetResourceBytes(e).ToArray())).ToArray();
+        foreach(var track in tracks)_=FigureAnimationTrack.Decode(track.Data);
+        byte[] nested=BuildClipArchive(tracks);
+        byte[] result=ResArchiveWriter.Rebuild(outer,new Dictionary<int,byte[]>(),[new(name,nested)],flat.Select(e=>e.Index).ToHashSet());
+        var checkedOuter=ResArchiveDocument.Parse("animation",result);
+        var checkedNested=ResArchiveDocument.Parse(name,checkedOuter.GetResourceBytes(name).ToArray());
+        if(checkedNested.Entries.Count!=flat.Length)throw new InvalidDataException("Не все дорожки перенесены в клип.");
         Accept(result);
     }
 }

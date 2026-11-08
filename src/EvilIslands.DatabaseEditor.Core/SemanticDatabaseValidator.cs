@@ -99,6 +99,7 @@ internal static class SemanticDatabaseValidator
         ValidateSpellReferences(tables, diagnostics, cancellationToken);
         ValidateStringListElementBoundaries(tables, diagnostics, cancellationToken);
         ValidateEmbeddedItemMagic(tables, diagnostics, cancellationToken);
+        ValidateQuickItemMaterialGraphics(tables, diagnostics, cancellationToken);
         ValidateNumericRanges(tables, diagnostics, cancellationToken);
         ValidateNumericProjectionRanges(tables, diagnostics, cancellationToken);
         ValidateMaterialIndices(tables, diagnostics, cancellationToken);
@@ -1215,6 +1216,33 @@ internal static class SemanticDatabaseValidator
                 {
                     AddMissingReference(diagnostics, source, record, field, normalized, target);
                 }
+            }
+        }
+    }
+
+    private static void ValidateQuickItemMaterialGraphics(
+        IReadOnlyDictionary<string, DatabaseTable> tables,
+        ICollection<ValidationDiagnostic> diagnostics,
+        CancellationToken cancellationToken)
+    {
+        if (!tables.TryGetValue("items.quick_items", out var quick)) return;
+        var codes = tables.TryGetValue("items.materials", out var materials)
+            ? materials.Records.Select(r => GetText(FindField(r, 2))).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var record in quick.Records)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var field = FindField(record, 28);
+            if (field is null || GetText(field).Length == 0) continue;
+            try
+            {
+                var choices = QuickItemMaterialGraphics.Parse(GetText(field), record.Name);
+                foreach (string code in choices.Keys)
+                    if (!codes.Contains(code)) throw new InvalidDataException($"В привязке модели «{record.Name}» указан неизвестный код материала «{code}».");
+            }
+            catch (InvalidDataException error)
+            {
+                AddBlockingSemanticError(diagnostics, "SEM_QUICK_MATERIAL_GRAPHICS", error.Message, quick, record, field);
             }
         }
     }

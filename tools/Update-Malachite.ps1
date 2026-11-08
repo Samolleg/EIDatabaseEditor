@@ -1,10 +1,10 @@
 param([Parameter(Mandatory=$true)][string]$PackagePath)
 $ErrorActionPreference = 'Stop'
 $hostRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\handoff\current'))
-$moduleRelative = 'Modules\malachite\0.4.0\'
+$moduleRelative = 'Modules\malachite\current\'
 $target = Join-Path $hostRoot $moduleRelative
 $source = (Resolve-Path -LiteralPath $PackagePath).Path
-$allowed = @('Malachite.Core.dll','Malachite.UI.Wpf.dll','Malachite.Module.dll','Malachite.Module.deps.json','module.json','README.md')
+$allowed = @('Malachite.Core.dll','Malachite.UI.Wpf.dll','Malachite.Module.dll','Malachite.Module.deps.json','module.json','README.md','tools/ScriptCheck/ScriptCheck.exe','tools/ScriptCheck/README.md')
 $sdkNames = @('ModuleContracts.V1.dll','ModuleContracts.Wpf.V1.dll')
 $capabilities = @('workspace.read.v1','navigation.record.v1','files.export-copy.v1','documents.session.v1','documents.blobs.v1','transactions.v1','files.browse-folder.v1','saves.artifact-kind.v1')
 function Assert-Closed {
@@ -28,8 +28,14 @@ $lockPath = Join-Path (Split-Path -Parent $hostRoot) '.current-update.lock'
 Assert-NoLinks $lockPath
 $updateLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
+if (Test-Path -LiteralPath (Join-Path $hostRoot 'Modules\malachite\0.4.0\module.json')) {
+    throw 'Legacy Malachite folder detected. Migrate it to Modules\malachite\current with Publish-Current before updating; two copies must not be loaded.'
+}
 if ($source.Equals($target, [StringComparison]::OrdinalIgnoreCase)) { throw 'Source and destination must differ.' }
 $manifest = Get-Content -LiteralPath (Join-Path $source 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($manifest.scriptCheck.commit -notmatch '^[0-9a-f]{40}$' -or $manifest.scriptCheck.runtime -ne 'static CRT/MFC, x86' -or
+    $manifest.scriptCheck.path -ne 'tools/ScriptCheck/ScriptCheck.exe' -or
+    $manifest.scriptCheck.sha256 -ne (Get-FileHash -LiteralPath (Join-Path $source 'tools/ScriptCheck/ScriptCheck.exe')).Hash) { throw 'Invalid ScriptCheck identity.' }
 if (@($manifest.files).Count -ne $allowed.Count -or @($manifest.files.name | Sort-Object -Unique).Count -ne $allowed.Count) { throw 'Unexpected module file list.' }
 foreach ($file in $manifest.files) {
     if ($file.name -notin $allowed) { throw "Disallowed module file: $($file.name)" }
@@ -55,7 +61,7 @@ foreach ($name in @($allowed) + 'manifest.json') {
     $path = Join-Path $target $name
     Assert-NoLinks $path
     if (Test-Path -LiteralPath $path) {
-        $tracked = @($hostManifest | Where-Object { $_.Path.Replace('/','\') -eq ($moduleRelative + $name) })
+        $tracked = @($hostManifest | Where-Object { $_.Path.Replace('/','\') -eq ($moduleRelative + $name.Replace('/','\')) })
         if ($tracked.Count -ne 1 -or (Get-FileHash -LiteralPath $path).Hash -ne $tracked[0].SHA256) { throw "Current module file changed outside updater: $name" }
     }
 }
@@ -68,13 +74,14 @@ Assert-Closed
 try {
     New-Item -ItemType Directory -Path $target -Force | Out-Null
     foreach ($name in @($allowed) + 'manifest.json') {
+        New-Item -ItemType Directory -Path (Split-Path -Parent (Join-Path $target $name)) -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $source $name) -Destination (Join-Path $target $name) -Force
         if ((Get-FileHash -LiteralPath (Join-Path $source $name)).Hash -ne (Get-FileHash -LiteralPath (Join-Path $target $name)).Hash) { throw "Copy verification failed: $name" }
     }
-    $next = @($hostManifest | Where-Object { $_.Path.Replace('/','\') -notin @($backup.Keys | ForEach-Object { $moduleRelative + $_ }) })
+    $next = @($hostManifest | Where-Object { $_.Path.Replace('/','\') -notin @($backup.Keys | ForEach-Object { $moduleRelative + $_.Replace('/','\') }) })
     foreach ($name in @($allowed) + 'manifest.json') {
         $file = Get-Item -LiteralPath (Join-Path $target $name)
-        $next += [pscustomobject]@{ Path=$moduleRelative+$name; Length=$file.Length; SHA256=(Get-FileHash -LiteralPath $file.FullName).Hash }
+        $next += [pscustomobject]@{ Path=$moduleRelative+$name.Replace('/','\'); Length=$file.Length; SHA256=(Get-FileHash -LiteralPath $file.FullName).Hash }
     }
     foreach ($path in $binaryHashes.Keys) { if ((Get-FileHash -LiteralPath $path).Hash -ne $binaryHashes[$path]) { throw "Host binary changed concurrently: $path" } }
     if ((Get-FileHash -LiteralPath $hostManifestPath).Hash -ne $oldManifestHash) { throw 'Host manifest changed concurrently.' }

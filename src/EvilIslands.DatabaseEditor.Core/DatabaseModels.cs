@@ -661,6 +661,12 @@ public sealed class DatabaseField
                 return false;
             }
 
+            if (_schema.Kind == DatabaseValueKind.String && Chunk.HeaderOffset < 0 && value.Length == 0)
+            {
+                _editedPayload = null;
+                return true;
+            }
+
             if (!DatabaseValueCodec.TryEncode(_schema, value, OriginalPayload, out var encoded, out error))
             {
                 return false;

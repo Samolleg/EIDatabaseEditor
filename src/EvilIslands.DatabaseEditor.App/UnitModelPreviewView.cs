@@ -113,6 +113,24 @@ public sealed partial class UnitModelPreviewView : UserControl
         };
     }
 
+    internal void UseCompactDetailsLayout()
+    {
+        if (Content is not Grid layout || _information.Parent != layout) return;
+        PreviewChrome.Compact((FrameworkElement)layout.Children[0]);
+        _clips.Width = 300;
+        _frame.Width = 120;
+        _status.TextWrapping = TextWrapping.NoWrap;
+        _status.TextTrimming = TextTrimming.CharacterEllipsis;
+        _status.SetBinding(ToolTipProperty, new System.Windows.Data.Binding(nameof(TextBlock.Text)) { Source = _status });
+        layout.Children.Remove(_information);
+        _information.Height = 80;
+        _information.MinHeight = 0;
+        _information.Padding = new Thickness(6, 2, 6, 2);
+        var details = new Expander { Header = "Сведения о модели и ресурсах", Content = _information, Margin = new Thickness(4, 2, 4, 2) };
+        Grid.SetRow(details, 2); layout.Children.Add(details);
+        layout.RowDefinitions[2].Height = GridLength.Auto;
+    }
+
     private void Attach()
     {
         Detach();
@@ -259,8 +277,9 @@ public sealed partial class UnitModelPreviewView : UserControl
         await PlayAnimationAsync();
     }
 
-    internal void ShowScene(UnitModelScene scene, bool item = false)
+    internal void ShowScene(UnitModelScene scene, bool item = false, bool preserveCamera = false)
     {
+        bool retainCamera = preserveCamera && _visual.Content is not null;
         _editingScene = scene;
         ResetAnimation();
         if (_itemScene != item)
@@ -296,8 +315,8 @@ public sealed partial class UnitModelPreviewView : UserControl
         _visual.Content = group;
         UpdateGround(scene);
         SetAnimations(item ? null : scene.Animations);
-        SetCameraBounds(group.Bounds);
-        Fit();
+        if (retainCamera) UpdateCamera();
+        else { SetCameraBounds(group.Bounds); Fit(); }
     }
     private void SetCameraBounds(Rect3D bounds)
     {

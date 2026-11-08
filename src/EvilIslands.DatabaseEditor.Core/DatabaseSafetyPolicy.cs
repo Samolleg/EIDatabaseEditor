@@ -38,7 +38,9 @@ public static class DatabaseSafetyPolicy
         for (var depth = 0; directory is not null && depth < 10; depth++, directory = directory.Parent)
         {
             if (File.Exists(Path.Combine(directory.FullName, "game.exe")) ||
-                File.Exists(Path.Combine(directory.FullName, "Game.exe")))
+                File.Exists(Path.Combine(directory.FullName, "Game.exe")) ||
+                (File.Exists(Path.Combine(directory.FullName, "portable-defaults.xml")) &&
+                 Directory.Exists(Path.Combine(directory.FullName, "Base", "Res"))))
             {
                 return true;
             }

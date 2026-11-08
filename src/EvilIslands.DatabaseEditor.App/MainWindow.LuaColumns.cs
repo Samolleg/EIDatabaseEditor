@@ -78,13 +78,30 @@ public partial class MainWindow
                     label = MaterialLabels[slot - 2];
                 if (spec.Name == "ForbiddenItems" && path.SequenceEqual(new[] { "#2" })) label = "ID магазина";
                 var descriptor = new LuaColumn(spec, path, label, kinds.GetValueOrDefault(string.Join("/", path), LuaLiteralKind.Number));
-                var header = new TextBlock { Text = "Lua · " + spec.Title + "\n" + label, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center,
-                    ToolTip = spec.Name + " / " + string.Join(".", path) + "\n" + spec.Hint };
+                string help = SpreadsheetFieldHelp.Lua(spec, path, label, path.Length == 0 ? label : workspace.FieldName(spec, path[^1]));
+                var header = new TextBlock { Text = "Lua · " + spec.Title + "\n" + label, ToolTip = help };
                 if (spec.Name == "ForbiddenItems") header.Text = "Lua · Запрет размножения\n" + label;
                 var headerStyle = new Style(typeof(System.Windows.Controls.Primitives.DataGridColumnHeader), (Style)FindResource(typeof(System.Windows.Controls.Primitives.DataGridColumnHeader)));
                 headerStyle.Setters.Add(new Setter(ToolTipProperty, header.ToolTip));
-                var column = new DataGridTextColumn { Header = header.Text, HeaderTemplate = (DataTemplate)FindResource("LuaColumnHeaderTemplate"), HeaderStyle = headerStyle, Binding = new Binding(".") { Converter = new LuaColumnConverter(this, descriptor), Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.Explicit },
-                    ElementStyle = (Style)FindResource("CenteredGridText"), EditingElementStyle = (Style)FindResource("CenteredGridEditor"), IsReadOnly = source is null, CanUserSort = false, Width = 190, MinWidth = 120 };
+                headerStyle.Setters.Add(new Setter(ToolTipService.ShowDurationProperty, 30000));
+                headerStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(4, 0, 4, 0)));
+                var textStyle = new Style(typeof(TextBlock), (Style)FindResource("CenteredGridText"));
+                textStyle.Setters.Add(new Setter(ToolTipProperty, help));
+                textStyle.Setters.Add(new Setter(ToolTipService.ShowDurationProperty, 30000));
+                textStyle.Setters.Add(new Setter(TextBlock.FontSizeProperty, 13d));
+                textStyle.Setters.Add(new Setter(TextBlock.PaddingProperty, new Thickness(2, 0, 2, 0)));
+                var cellStyle = new Style(typeof(DataGridCell), (Style)FindResource(typeof(DataGridCell)));
+                cellStyle.Setters.Add(new Setter(ToolTipProperty, help));
+                cellStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(3, 0, 3, 0)));
+                var headerText = new FrameworkElementFactory(typeof(TextBlock));
+                headerText.SetValue(TextBlock.TextProperty, "Lua · " + SpreadsheetFieldHelp.LuaCaption(label));
+                headerText.SetValue(TextBlock.TextWrappingProperty, TextWrapping.Wrap);
+                headerText.SetValue(TextBlock.TextTrimmingProperty, TextTrimming.CharacterEllipsis);
+                headerText.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
+                headerText.SetValue(TextBlock.FontSizeProperty, 12d);
+                headerText.SetValue(FrameworkElement.MaxHeightProperty, 40d);
+                var column = new DataGridTextColumn { Header = header.Text, HeaderTemplate = new DataTemplate { VisualTree = headerText }, HeaderStyle = headerStyle, Binding = new Binding(".") { Converter = new LuaColumnConverter(this, descriptor), Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.Explicit },
+                    CellStyle = cellStyle, ElementStyle = textStyle, EditingElementStyle = (Style)FindResource("CenteredGridEditor"), IsReadOnly = source is null, CanUserSort = false, Width = 112, MinWidth = 64 };
                 RecordsGrid.Columns.Add(column); _luaColumns[column] = descriptor;
             }
         }

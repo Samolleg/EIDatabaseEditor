@@ -25,8 +25,9 @@ internal sealed partial class AnimationEditorDialog
     internal async Task SaveToSourceAsync(bool backup, bool checkIssues = true)
     {
         var target = _scene.Animations?.SaveTarget ?? throw new InvalidOperationException("Источник ANM не определён.");
-        if (_saveBaseline is null) throw new InvalidOperationException("Контрольная копия ANM не определена.");
+        if (_saveBaseline is null) throw new InvalidOperationException("Проект восстановлен, но исходный ANM изменён вне него. Сохраните отдельный ANM через экспорт; текущий источник защищён от перезаписи.");
         if (checkIssues && !await CheckBeforeExport()) return;
+        _editor.NestFlatClip(_name);
         byte[] bytes = _editor.ExportBytes();
         var savedBackup = await target.SaveAsync(_saveBaseline, bytes, backup);
         _saveBaseline = bytes.ToArray(); _exported = bytes;

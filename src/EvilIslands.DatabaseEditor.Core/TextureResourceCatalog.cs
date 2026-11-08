@@ -52,8 +52,13 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
             }
             if (!ownsDatabase) continue;
             for (DirectoryInfo? game = new(Path.GetDirectoryName(config)!); game is not null; game = game.Parent)
+            {
+                if (File.Exists(Path.Combine(game.FullName, "portable-defaults.xml")) &&
+                    Directory.Exists(Path.Combine(game.FullName, "Base", "Res")))
+                    return FromGame(game.FullName, config) with { NearbyDatabasePath = fullPath };
                 if (File.Exists(Path.Combine(game.FullName, "game.exe")) && Directory.Exists(Path.Combine(game.FullName, "Res")))
                     return FromGame(game.FullName, config) with { NearbyDatabasePath = fullPath };
+            }
         }
         var archives = new List<string>();
         var notes = new List<string> { "Ресурсы рядом с БД. Приоритеты игры не подтверждены; набор считается неполным." };
@@ -80,6 +85,11 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
     public static TextureSources FromGame(string gameFolder, string? configPath = null, IReadOnlyList<string>? resourceGroups = null)
     {
         gameFolder = Path.GetFullPath(gameFolder);
+        // Standalone packages keep shared data in Base, separately from Engine.
+        // Keep all resource consumers (including figure fallback) on this data root.
+        if (File.Exists(Path.Combine(gameFolder, "portable-defaults.xml")) &&
+            Directory.Exists(Path.Combine(gameFolder, "Base", "Res")))
+            gameFolder = Path.Combine(gameFolder, "Base");
         var overrides = new List<(string Key, string Path)>();
         var notes = new List<string>();
         string? configurationHash = null;
@@ -150,6 +160,7 @@ public sealed class TextureResourceCatalog
     public TextureSources Sources { get; }
     public IReadOnlyList<string> Problems => _problems;
     public int ResourceCount => _byName.Count;
+    public IReadOnlyList<string> ResourceNames => _byName.Keys.Order(StringComparer.OrdinalIgnoreCase).ToArray();
     public bool Complete => Sources.Complete && _problems.Count == 0;
 
     private TextureResourceCatalog(TextureSources sources) => Sources = sources;

@@ -15,12 +15,26 @@ internal static class AnimationEditRegression
     public static int Run(string database, string output)
     {
         Directory.CreateDirectory(output);
-        var app = new EvilIslands.DatabaseEditor.App.App { ShutdownMode = ShutdownMode.OnExplicitShutdown }; app.InitializeComponent();
+        var app = new EvilIslands.DatabaseEditor.App.App(); app.InitializeComponent();
+        // Application queues startup before its first Dispatcher pump. Disable
+        // XAML StartupUri explicitly so a headless test never opens MainWindow.
+        typeof(Application).GetField("_startupUri",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.SetValue(app,null); app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
         SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
         var task = Verify(database, output); var frame = new DispatcherFrame();
-        _ = task.ContinueWith(_ => frame.Dispatcher.BeginInvoke(new Action(() => frame.Continue = false)));
+        _ = task.ContinueWith(_ => frame.Dispatcher.BeginInvoke(new Action(() => frame.Continue = false)), TaskScheduler.Default);
         if (!task.IsCompleted) Dispatcher.PushFrame(frame);
-        task.GetAwaiter().GetResult(); app.Shutdown(); return 0;
+        task.GetAwaiter().GetResult();
+        Check(app.Windows.Cast<Window>().All(window => !window.IsVisible), "Headless test opened a visible window");
+        // Dispose verified temporary editor fixtures. Their unsaved in-memory
+        // states must not invoke the product's legitimate close confirmation.
+        foreach (var dialog in app.Windows.OfType<AnimationEditorDialog>().ToArray())
+        {
+            var type = typeof(AnimationEditorDialog); var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            var snapshot = (byte[])type.GetMethod("ProjectBytes",flags)!.Invoke(dialog,null)!;
+            type.GetField("_savedProject",flags)!.SetValue(dialog,snapshot);
+            dialog.Close();
+        }
+        app.Shutdown(); Console.WriteLine("HEADLESS ANIMATION PASS: no visible windows, verified fixture cleanup and normal WPF shutdown"); return 0;
     }
     static async Task Verify(string database, string output)
     {

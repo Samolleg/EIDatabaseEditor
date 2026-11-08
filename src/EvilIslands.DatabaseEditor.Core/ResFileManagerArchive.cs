@@ -63,7 +63,7 @@ public sealed class ResFileManagerArchive
     public IReadOnlyList<ResEntry> Entries { get; }
 
     // Read-only discovery: reuse structural validation without hashing/loading payloads.
-    internal static IReadOnlyList<ResEntry> ReadCatalog(string path, CancellationToken cancellationToken) =>
+    public static IReadOnlyList<ResEntry> ReadCatalog(string path, CancellationToken cancellationToken = default) =>
         OpenArchiveIndex(Path.GetFullPath(path), cancellationToken, readOnlyCatalog: true).Entries;
 
     public static Task<ResFileManagerArchive> OpenAsync(

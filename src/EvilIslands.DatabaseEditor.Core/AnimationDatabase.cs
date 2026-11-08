@@ -15,6 +15,9 @@ public sealed class AnimationDatabase
 
     public string Model { get; }
     public int Count => _entries.Count;
+    public float MinimumHeight => BinaryPrimitives.ReadSingleLittleEndian(_header.AsSpan(32));
+    public float MiddleHeight => BinaryPrimitives.ReadSingleLittleEndian(_header.AsSpan(36));
+    public float MaximumHeight => BinaryPrimitives.ReadSingleLittleEndian(_header.AsSpan(40));
     public IReadOnlyList<AnimationDatabaseEntry> Entries => _entries.Select((entry, index) => new AnimationDatabaseEntry(index, entry)).ToArray();
 
     private AnimationDatabase(string model, byte[] header, List<byte[]> entries)
@@ -79,13 +82,30 @@ public sealed class AnimationDatabase
         return index;
     }
 
-    public int AppendConfigured(int templateIndex, string name, uint flags, uint flags2, uint probability, uint length,
+    public int AppendConfigured(int? templateIndex, string name, uint flags, uint flags2, uint probability, uint length,
         float speed, uint[] hides, uint[] steps, uint hit, uint sfxFrame, uint[] sfxIndices)
     {
-        int index = AppendFrom(templateIndex, name, length);
+        int index;
+        if (templateIndex is int template) index = AppendFrom(template, name, length);
+        else
+        {
+            ValidateName(name, null);
+            index = _entries.Count;
+            var entry = new byte[EntrySize];
+            BinaryPrimitives.WriteUInt32LittleEndian(entry.AsSpan(16), (uint)index);
+            _entries.Add(entry);
+        }
         try { Update(index, name, flags, flags2, probability, length, speed, hides, steps, hit, sfxFrame, sfxIndices); }
         catch { _entries.RemoveAt(index); throw; }
         return index;
+    }
+
+    public void RemoveAt(int index)
+    {
+        if ((uint)index >= _entries.Count) throw new ArgumentOutOfRangeException(nameof(index));
+        if (index != _entries.Count - 1)
+            throw new InvalidOperationException("Удалять можно только последнюю запись ADB: удаление из середины изменит номера остальных анимаций. Для сохранения номера замените ID клипа в этой записи.");
+        _entries.RemoveAt(index);
     }
 
     private void ValidateName(string name, int? ownIndex)

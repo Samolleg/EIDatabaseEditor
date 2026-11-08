@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$PackagePath,
     [string]$ModulePath
 )
@@ -23,9 +23,9 @@ function Resolve-ContainedFile([string]$Root, [string]$Relative) {
     return $full
 }
 function Assert-Closed {
-    foreach ($process in @(Get-Process -Name EvilIslands.DatabaseEditor -ErrorAction SilentlyContinue)) {
+    foreach ($process in @(Get-Process -Name EvilIslands.DatabaseEditor,kmd-generate -ErrorAction SilentlyContinue)) {
         if (-not $process.Path -or $process.Path.StartsWith($destination + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Закройте редактор из handoff\current перед обновлением.'
+            throw 'Закройте редактор и генератор Kimodo из handoff\current перед обновлением.'
         }
     }
 }
@@ -42,7 +42,7 @@ try {
         & dotnet publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -p:DebugType=none -p:DebugSymbols=false -o $temporary
         if ($LASTEXITCODE -ne 0) { throw "Сборка не завершена: $LASTEXITCODE" }
         if ($ModulePath) {
-            $moduleTarget = Join-Path $temporary 'Modules\malachite\0.4.0'
+            $moduleTarget = Join-Path $temporary 'Modules\malachite\current'
             New-Item -ItemType Directory -Path $moduleTarget -Force | Out-Null
             Copy-Item -Path (Join-Path $ModulePath '*') -Destination $moduleTarget -Recurse
         } elseif (Test-Path -LiteralPath (Join-Path $destination 'Modules')) {
@@ -64,10 +64,48 @@ try {
     if (Test-Path -LiteralPath (Join-Path $destination $manifestName)) {
         $old = Get-Content -LiteralPath (Join-Path $destination $manifestName) -Raw -Encoding UTF8 | ConvertFrom-Json
     }
+    # Canonical separators prevent unchanged Windows paths being deleted as obsolete.
+    foreach ($entry in @($entries) + @($old)) { $entry.Path = $entry.Path.Replace('/', '\') }
+    # Kimodo has its own manifest. Keep it separate so host-only updates never
+    # remove the installed generator, weights or user files.
+    $hostEntries = @($entries)
+    $nativeManifest = 'Kimodo\install-manifest.json'
+    $nativeSource = Resolve-ContainedFile $source $nativeManifest
+    $nativeTarget = Resolve-ContainedFile $destination $nativeManifest
+    $nativeManifestHash = $null
+    if (Test-Path -LiteralPath $nativeSource) {
+        $native = Get-Content -LiteralPath $nativeSource -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($native.format -ne 'kimodo-editor-install-v1' -or -not $native.files -or
+            -not ($native.files.path -contains 'bin/kmd-generate.exe')) { throw 'Неполный манифест Kimodo.' }
+        $nativeOld = @()
+        if (Test-Path -LiteralPath $nativeTarget) {
+            $previousNative = Get-Content -LiteralPath $nativeTarget -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($previousNative.format -ne 'kimodo-editor-install-v1') { throw 'Неизвестный установленный манифест Kimodo.' }
+            $nativeOld = @($previousNative.files)
+            $nativeManifestHash = (Get-FileHash -LiteralPath $nativeTarget).Hash
+        }
+        foreach ($file in $native.files) {
+            # Validate containment inside Kimodo itself, not just the package.
+            $null = Resolve-ContainedFile (Join-Path $source 'Kimodo') $file.path
+            $entries += [pscustomobject]@{ Path = 'Kimodo\' + $file.path.Replace('/', '\'); Length = $file.bytes; SHA256 = $file.sha256 }
+        }
+        foreach ($file in $nativeOld) {
+            $null = Resolve-ContainedFile (Join-Path $destination 'Kimodo') $file.path
+            $old += [pscustomobject]@{ Path = 'Kimodo\' + $file.path.Replace('/', '\'); Length = $file.bytes; SHA256 = $file.sha256 }
+        }
+        $entries += [pscustomobject]@{ Path = $nativeManifest; Length = (Get-Item -LiteralPath $nativeSource).Length; SHA256 = (Get-FileHash -LiteralPath $nativeSource).Hash }
+        if ($nativeManifestHash) { $old += [pscustomobject]@{ Path = $nativeManifest; SHA256 = $nativeManifestHash } }
+    }
+    $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $snapshots = @{}
+    $changes = @()
     foreach ($entry in $entries) {
+        if (-not $paths.Add($entry.Path.Replace('/', '\')) -or $entry.Path -eq $manifestName) { throw "Повторный путь манифеста: $($entry.Path)" }
         $file = Resolve-ContainedFile $source $entry.Path
         $target = Resolve-ContainedFile $destination $entry.Path
-        if ((Get-FileHash -LiteralPath $file).Hash -ne $entry.SHA256) { throw "Хэш исходника не совпал: $file" }
+        if ($entry.SHA256 -notmatch '^[0-9A-Fa-f]{64}$' -or (Get-Item -LiteralPath $file).Length -ne $entry.Length -or
+            (Get-FileHash -LiteralPath $file).Hash -ne $entry.SHA256) { throw "Хэш или размер исходника не совпал: $file" }
+        $hash = $null
         if (Test-Path -LiteralPath $target) {
             $previous = @($old | Where-Object Path -eq $entry.Path)
             $hash = (Get-FileHash -LiteralPath $target).Hash
@@ -75,24 +113,67 @@ try {
                 throw "Файл изменён вне сборки, сохранён без перезаписи: $target"
             }
         }
+        $snapshots[$entry.Path] = $hash
+        if ($hash -ne $entry.SHA256) { $changes += $entry }
     }
-    $obsolete = @($old | Where-Object { $_.Path -notin $entries.Path })
+    $obsolete = @($old | Where-Object { $_.Path -notlike 'Kimodo\*' -and $_.Path -notin $hostEntries.Path })
     foreach ($entry in $obsolete) {
         $file = Resolve-ContainedFile $destination $entry.Path
         if ((Test-Path -LiteralPath $file) -and (Get-FileHash -LiteralPath $file).Hash -ne $entry.SHA256) { throw "Старый файл изменён: $file" }
+        $snapshots[$entry.Path] = if (Test-Path -LiteralPath $file) { $entry.SHA256 } else { $null }
+    }
+    $hostManifestSource = Resolve-ContainedFile $source $manifestName
+    $hostManifestTarget = Resolve-ContainedFile $destination $manifestName
+    $snapshots[$manifestName] = if (Test-Path -LiteralPath $hostManifestTarget) { (Get-FileHash -LiteralPath $hostManifestTarget).Hash } else { $null }
+    $changes += [pscustomobject]@{ Path = $manifestName; SHA256 = (Get-FileHash -LiteralPath $hostManifestSource).Hash }
+    # Only replaced files need rollback copies; unchanged large model weights
+    # are verified above but never recopied.
+    $rollback = Join-Path ([IO.Path]::GetTempPath()) ('database-editor-rollback-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $rollback | Out-Null
+    foreach ($entry in @($changes) + @($obsolete)) {
+        if ($snapshots[$entry.Path]) {
+            $backup = Resolve-ContainedFile $rollback $entry.Path
+            New-Item -ItemType Directory -Path (Split-Path -Parent $backup) -Force | Out-Null
+            Copy-Item -LiteralPath (Resolve-ContainedFile $destination $entry.Path) -Destination $backup
+            if ((Get-FileHash -LiteralPath $backup).Hash -ne $snapshots[$entry.Path]) { throw 'Файл изменился при подготовке отката.' }
+        }
     }
     Assert-Closed
-    foreach ($entry in $entries) {
+    foreach ($path in $snapshots.Keys) {
+        $target = Resolve-ContainedFile $destination $path
+        $now = if (Test-Path -LiteralPath $target) { (Get-FileHash -LiteralPath $target).Hash } else { $null }
+        if ($now -ne $snapshots[$path]) { throw "Файл изменился перед обновлением: $path" }
+    }
+    $written = [Collections.Generic.List[string]]::new()
+    try {
+    foreach ($entry in $changes) {
         $target = Resolve-ContainedFile $destination $entry.Path
         New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        $written.Add($entry.Path)
         Copy-Item -LiteralPath (Resolve-ContainedFile $source $entry.Path) -Destination $target -Force
         if ((Get-FileHash -LiteralPath $target).Hash -ne $entry.SHA256) { throw "Ошибка проверки копии: $target" }
     }
     foreach ($entry in $obsolete) {
         $file = Resolve-ContainedFile $destination $entry.Path
+        $written.Add($entry.Path)
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file }
     }
-    Copy-Item -LiteralPath (Join-Path $source $manifestName) -Destination (Join-Path $destination $manifestName) -Force
+    } catch {
+        $failure = $_
+        $rollbackErrors = @()
+        for ($index = $written.Count - 1; $index -ge 0; $index--) {
+            $path = $written[$index]
+            try {
+                $target = Resolve-ContainedFile $destination $path
+                if ($snapshots[$path]) {
+                    Copy-Item -LiteralPath (Resolve-ContainedFile $rollback $path) -Destination $target -Force
+                    if ((Get-FileHash -LiteralPath $target).Hash -ne $snapshots[$path]) { throw "Откат не совпал: $path" }
+                } elseif (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target }
+            } catch { $rollbackErrors += $_.Exception.Message }
+        }
+        throw "Обновление не завершено: $failure. Копия для отката: $rollback. Ошибки отката: $($rollbackErrors -join '; ')"
+    }
+    Write-Output "Копия заменённых файлов: $rollback"
     Write-Output "Готовый редактор: $destination\EvilIslands.DatabaseEditor.exe"
 } finally {
     $updateLock.Dispose()

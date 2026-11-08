@@ -1,7 +1,9 @@
+using System.IO;
 using System.Numerics;
 using System.Text;
 using EvilIslands.DatabaseEditor.Core;
 using EvilIslands.DatabaseEditor.App;
+using EvilIslands.DatabaseEditor.App.Dialogs;
 
 namespace EvilIslands.DatabaseEditor.UiSmoke;
 
@@ -53,6 +55,68 @@ internal static class AnimationAuthoringRegression
         var loadedSettings = await reopened.LoadProjectAsync(project, scene.Model, name);
         Check(loadedSettings.Frame == frame && loadedSettings.Ghost && loadedSettings.Ground == false && loadedSettings.Fps == 15 && !loadedSettings.Loop && loadedSettings.SmoothRadius == 1 && reopened.ExportBytes().SequenceEqual(editor.ExportBytes()), "project roundtrip");
         reopened.Undo(); Check(reopened.ExportBytes().SequenceEqual(original), "project undo history"); reopened.Redo();
+        var ownSaved = new FigureAnimationEditor(source.WithSavedBytes(editor.ExportBytes()));
+        var ownSettings = await ownSaved.LoadProjectAsync(project, scene.Model, name);
+        Check(ownSaved.ProjectMayWriteSource && ownSettings.Fps == 15 && ownSaved.CanUndo, "own saved ANM project recovery");
+        ownSaved.Undo(); ownSaved.Redo();
+        Check(ownSaved.ExportBytes().SequenceEqual(editor.ExportBytes()), "own saved ANM history recovery");
+        var projectAfterAnmSave = ownSaved.SaveProject(scene.Model, name, settings);
+        var reopenedAfterAnmSave = new FigureAnimationEditor(source.WithSavedBytes(editor.ExportBytes()));
+        await reopenedAfterAnmSave.LoadProjectAsync(projectAfterAnmSave, scene.Model, name);
+        Check(reopenedAfterAnmSave.ProjectMayWriteSource && reopenedAfterAnmSave.ExportBytes().SequenceEqual(editor.ExportBytes()),
+            "project saved after ANM save cannot reopen");
+        var external = new FigureAnimationEditor(source);
+        string projectPart = clip.Tracks.ContainsKey("hp") ? "hp" : clip.Tracks.Keys.First();
+        await external.SetPoseAsync(name, projectPart, 0,
+            Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, .07f) * clip.Tracks[projectPart].Rotation(0)));
+        var externalOpen = new FigureAnimationEditor(source.WithSavedBytes(external.ExportBytes()));
+        await externalOpen.LoadProjectAsync(project, scene.Model, name);
+        Check(!externalOpen.ProjectMayWriteSource && externalOpen.ExportBytes().SequenceEqual(editor.ExportBytes()), "external ANM may be recovered but not overwritten");
+        var resavedRecovery = externalOpen.SaveProject(scene.Model, name, settings);
+        var stillBlocked = new FigureAnimationEditor(source.WithSavedBytes(external.ExportBytes()));
+        await stillBlocked.LoadProjectAsync(resavedRecovery, scene.Model, name);
+        Check(!stillBlocked.ProjectMayWriteSource, "resaving project must not authorize conflicting ANM");
+        var newEditor = new FigureAnimationEditor(source);
+        await newEditor.CreateAnimationAsync(name, "project_draft", 12, true);
+        var newChild = new FigureAnimationEditor(newEditor.Preview());
+        var draftTrack = (await newChild.Preview().LoadAsync("project_draft")).Tracks[projectPart];
+        await newChild.SetPoseAsync("project_draft", projectPart, 0,
+            Quaternion.Normalize(Quaternion.CreateFromAxisAngle(Vector3.UnitZ, .02f) * draftTrack.Rotation(0)));
+        var draftSettings = settings with { Frame = 0, First = 0, Last = 1, Part = projectPart };
+        var draftProject = newChild.SaveProject(scene.Model, "project_draft", draftSettings);
+        var draftOpen = new FigureAnimationEditor(source);
+        await draftOpen.LoadProjectAsync(draftProject, scene.Model, "project_draft");
+        Check(draftOpen.ProjectMayWriteSource && draftOpen.CanUndo && draftOpen.Preview().Names.Contains("project_draft") &&
+              draftOpen.ExportBytes().SequenceEqual(newChild.ExportBytes()), "project-only generated/new clip recovery");
+        draftOpen.Undo(); draftOpen.Redo();
+        Check(draftOpen.ExportBytes().SequenceEqual(newChild.ExportBytes()), "new clip history recovery");
+        if (scene.Model.Equals("unhufe", StringComparison.OrdinalIgnoreCase))
+        {
+            var projectDialog = new AnimationEditorDialog(scene, name);
+            await projectDialog.Refresh();
+            await projectDialog.RestoreProjectAsync(draftProject);
+            Check(projectDialog.Title.Contains("project_draft", StringComparison.Ordinal), "UI project-only clip selection");
+            await projectDialog.Refresh();
+            var savedDialog = new AnimationEditorDialog(scene with { Animations = source.WithSavedBytes(editor.ExportBytes()) }, name);
+            await savedDialog.Refresh();
+            await savedDialog.RestoreProjectAsync(project);
+            Check(savedDialog.Title.Contains(name, StringComparison.Ordinal), "UI reopen after own ANM save");
+            Console.WriteLine("PROJECT UI PASS: new clip and own saved ANM reopen without picker");
+        }
+        var foreignBones = source.Bones.ToDictionary(p => p.Key, p => p.Value);
+        if (foreignBones.Count > 0) foreignBones[foreignBones.Keys.First()] += Vector3.One;
+        else foreignBones["audit_foreign"] = Vector3.One;
+        var foreignRig = new FigureAnimationSet("foreign", source.ExportBytes(), source.Parents,
+            foreignBones, source.BindPositions);
+        try { await new FigureAnimationEditor(foreignRig).LoadProjectAsync(project, scene.Model, name); throw new Exception("foreign rig accepted"); }
+        catch (InvalidDataException) { }
+        var legacy = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            System.Text.Json.JsonSerializer.Deserialize<AnimationProjectDocument>(project, new System.Text.Json.JsonSerializerOptions { IncludeFields = true })! with
+            { Version = 1, SourceAnimation = null, SkeletonHash = null, WriteBaselineHash = null },
+            new System.Text.Json.JsonSerializerOptions { IncludeFields = true });
+        await new FigureAnimationEditor(source).LoadProjectAsync(legacy, scene.Model, name);
+        try { await new FigureAnimationEditor(source.WithSavedBytes(editor.ExportBytes())).LoadProjectAsync(legacy, scene.Model, name); throw new Exception("legacy mismatch accepted"); }
+        catch (InvalidDataException e) { Check(e.Message.Contains("не хватает снимка"), "legacy recovery explanation"); }
         byte[] stable = reopened.ExportBytes();
         try { await reopened.LoadProjectAsync(project, "wrong-model", name); throw new Exception("wrong project accepted"); } catch (System.IO.InvalidDataException) { }
         Check(stable.SequenceEqual(reopened.ExportBytes()), "bad project partially applied");

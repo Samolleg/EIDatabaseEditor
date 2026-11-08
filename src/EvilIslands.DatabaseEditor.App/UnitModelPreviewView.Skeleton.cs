@@ -13,6 +13,13 @@ namespace EvilIslands.DatabaseEditor.App;
 public sealed partial class UnitModelPreviewView
 {
     private readonly Canvas _skeletonCanvas = new() { ClipToBounds = true };
+    internal int SkeletonOverlayVisualCount => _skeletonCanvas.Children.Count;
+    private bool _showSkeletonOverlay = true;
+    internal bool ShowSkeletonOverlay
+    {
+        get => _showSkeletonOverlay;
+        set { _showSkeletonOverlay = value; DrawSkeleton(); }
+    }
     private string[] _skeletonParts = [];
     private string? _selectedJoint, _gizmoPart;
     private Q? _gizmoRotation;
@@ -53,7 +60,7 @@ public sealed partial class UnitModelPreviewView
     {
         _skeletonCanvas.Children.Clear();
         DrawTrajectory();
-        if (_showOriginal || _skeletonParts.Length == 0 || _animations is null || _clip is null) return;
+        if (!_showSkeletonOverlay || _showOriginal || _skeletonParts.Length == 0 || _animations is null || _clip is null) return;
         var pose = _animations.Pose(_clip, (float)AnimationFrame, _gizmoPart, _gizmoRotation, _gizmoPosition, _ikRotations);
         var visible = _skeletonParts.ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (string name in _skeletonParts)
@@ -123,10 +130,15 @@ public sealed partial class UnitModelPreviewView
     {
         if (_clip is null || _animations is null || axis < 0 || axis > 2 || !_skeletonParts.Contains(part) || !_clip.Tracks.TryGetValue(part, out var track)) return false;
         if (translate && _animations.Parents.GetValueOrDefault(part) != "") return false;
+        if (translate)
+        {
+            try { _ = _animations.RootSpace.ToRaw(V3.Zero); }
+            catch (System.IO.InvalidDataException ex) { PoseRejected?.Invoke(ex.Message); return false; }
+        }
         PauseAnimation(); _gizmoFrame = (int)AnimationFrame; SetAnimationFrame(_gizmoFrame);
         _gizmoPart = part; _gizmoAxis = axis; _gizmoTranslate = translate;
         _originalRotation = track.Rotation(_gizmoFrame);
-        _originalPosition = track.Positions.Length > 0 ? track.Position(_gizmoFrame) : _animations.Bones.GetValueOrDefault(part);
+        _originalPosition = _animations.Pose(_clip, _gizmoFrame)[part].Position;
         _gizmoStart = start;
         _animationTools.IsEnabled = false;
         return true;
@@ -214,7 +226,12 @@ public sealed partial class UnitModelPreviewView
                 var offset = (right * movement.X - up * movement.Y) * scale;
                 var target = _originalPosition + new V3((float)offset.X, (float)-offset.Z, (float)offset.Y);
                 if (!_ikPoleGesture) target = ClampToGround(_gizmoPart!, _gizmoFrame, target);
-                if (_pointRootGesture) { _gizmoPosition = target; AcceptPreview(); return; }
+                if (_pointRootGesture)
+                {
+                    try { _gizmoPosition = _animations!.RootSpace.ToRaw(target); }
+                    catch (System.IO.InvalidDataException ex) { PoseRejected?.Invoke(ex.Message); return; }
+                    AcceptPreview(); return;
+                }
                 try { _ikRotations = _pointJointGesture
                     ? FigureLimbIk.SolveJoint(_animations, _clip, _gizmoFrame, _gizmoPart!, target)
                     : FigureLimbIk.Solve(_animations, _clip, _gizmoFrame, _gizmoPart!, _ikPoleGesture ? _ikFixedEndpoint : target, _ikPoleGesture ? target : null); }
@@ -229,7 +246,8 @@ public sealed partial class UnitModelPreviewView
                 var screenAxis = b.Value - a.Value;
                 if (screenAxis.LengthSquared < 1) return;
                 float amount = (float)(Vector.Multiply(movement, screenAxis) / screenAxis.LengthSquared);
-                _gizmoPosition = ClampToGround(_gizmoPart!, _gizmoFrame, _originalPosition + Axes[_gizmoAxis] * amount);
+                try { _gizmoPosition = _animations!.RootSpace.ToRaw(ClampToGround(_gizmoPart!, _gizmoFrame, _originalPosition + Axes[_gizmoAxis] * amount)); }
+                catch (System.IO.InvalidDataException ex) { PoseRejected?.Invoke(ex.Message); return; }
             }
             else _gizmoRotation = Q.Normalize(_originalRotation * Q.CreateFromAxisAngle(Axes[_gizmoAxis], (float)(movement.X * Math.PI / 180)));
             AcceptPreview();

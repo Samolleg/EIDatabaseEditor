@@ -14,7 +14,8 @@ $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDirectory '..'))
 $propsPath = Join-Path $projectRoot 'Directory.Build.props'
 [xml]$props = Get-Content -LiteralPath $propsPath -Raw
-$versionPrefix = [string]$props.Project.PropertyGroup.VersionPrefix
+$revision = [string]$props.Project.PropertyGroup.EditorRevision
+$versionPrefix = if ($revision) { "$revision.0.0" } else { [string]$props.Project.PropertyGroup.VersionPrefix }
 $versionSuffix = [string]$props.Project.PropertyGroup.VersionSuffix
 if ([string]::IsNullOrWhiteSpace($versionPrefix)) {
     throw "В $propsPath не задан VersionPrefix."

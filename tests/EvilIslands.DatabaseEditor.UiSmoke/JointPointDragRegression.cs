@@ -24,6 +24,7 @@ internal static class JointPointDragRegression
             var below = before[root].Position - Vector3.UnitZ * 100;
             view.GroundEnabled = true;
             var floor = view.GroundLevel;
+            if (floor != 0) throw new Exception("Ground must expose absolute ANM zero, not follow the bind mesh.");
             var viewport = (System.Windows.Controls.Viewport3D)typeof(UnitModelPreviewView)
                 .GetField("_viewport", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(view)!;
             Check(viewport.Children.Count == 3, "visible ground was not added to preview");

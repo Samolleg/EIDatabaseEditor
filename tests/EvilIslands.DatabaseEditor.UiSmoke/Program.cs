@@ -28,6 +28,14 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--grid-help") return GridHelpRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--home-page") return HomePageRegression.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--portable-resources") return PortableResourcesRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--global-resources-live") return GlobalResourceValidationRegression.RunLive(args[1], args[2]);
+        if (args.Length == 4 && args[0] == "--global-resources") return GlobalResourceValidationRegression.Run(args[1], args[2], args[3]);
+        if (args.Length == 3 && args[0] is "--weapon-atlas-render" or "--weapon-atlas-check") return WeaponAtlasRegression.Run(args[1], args[2], args[0] == "--weapon-atlas-check");
+        if (args.Length == 3 && args[0] == "--prototype-weapons") return PrototypeWeaponsRegression.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--map-object-catalog") return MapObjectCatalogRegression.Run(args[1]);
         if (args.Length == 3 && args[0] == "--briefing-actions") return BriefingActionsRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--briefing-list") return BriefingListRegression.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--lua-row-format") return LuaRowFormatRegression.Run(args[1]);
@@ -43,7 +51,22 @@ internal static class Program
         if (args.Length == 1 && args[0] == "--module-save") return ModuleSaveRegression.Run();
         if (args.Length == 3 && args[0] == "--module-integration") return ModuleIntegrationRegression.Run(args[1], args[2]);
         if (args.Length == 2 && args[0] == "--module-transactions") return ModuleTransactionRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--animation-root-space") return AnimationRootSpaceRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--animation-edit") return AnimationEditRegression.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--animation-pin-audit") return AnimationPinAuditRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--animation-root-height") return AnimationRootHeightRegression.Run(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--kimodo-loop") return KimodoLoopRegression.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--anm-layout") return AnimationNestedLayoutRegression.Run(args[1]);
+        if (args.Length == 2 && args[0] == "--animation-search") return AnimationClipSearchRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--kimodo-ground") return KimodoGroundRegression.Run(args[1], args[2]);
+        if (args.Length == 2 && args[0] == "--kimodo-constraints") return KinematicConstraintsRegression.Run(args[1]);
+        if (args.Length == 3 && args[0] == "--kimodo-constraints") return KinematicConstraintsRegression.Run(args[1], args[2]);
+        if (args.Length == 4 && args[0] == "--kimodo-constraints") return KinematicConstraintsRegression.Run(args[1], args[2], args[3]);
+        if (args.Length == 3 && args[0] == "--kimodo-constraints-hand") return KinematicConstraintsRegression.RunHand(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--kimodo-generator-capabilities") return KinematicConstraintsRegression.RunCapabilities(args[1], args[2]);
+        if (args.Length == 3 && args[0] == "--kimodo-constraints-overlap") return KinematicConstraintsRegression.RunOverlap(args[1], args[2]);
+        if (args.Length == 4 && args[0] == "--kimodo-history") return KimodoHistoryRegression.Run(args[1], args[2], args[3]);
+        if (args.Length == 3 && args[0] == "--adb-crud") return AnimationDatabaseCrudRegression.Run(args[1], args[2]);
         if (args.Length == 4 && args[0] == "--adb-source") return AnimationDatabaseRegression.VerifyActive(args[1], args[2], args[3]);
         if (args.Length == 4 && args[0] == "--mob-equipment") return MobEquipmentRegression.Run(args[1], args[2], args[3]);
         if (args.Length == 3 && args[0] == "--res-tiles") return ResTilesRegression.Run(args[1], args[2]);
@@ -3925,12 +3948,12 @@ internal static class Program
 
         double tableGap = recordsTable.TranslatePoint(new Point(0, 0), window).Y -
                           formulaBar.TranslatePoint(new Point(0, formulaBar.ActualHeight), window).Y;
-        if (recordsGrid.FontSize < 14 ||
-            recordsGrid.RowHeight < 36 ||
-            recordsGrid.ColumnHeaderHeight < 58 ||
-            localizationGrid.FontSize < 14 ||
-            localizationGrid.RowHeight < 38 ||
-            localizationGrid.ColumnHeaderHeight < 40 ||
+        if (recordsGrid.FontSize < 13 ||
+            recordsGrid.RowHeight < 28 || recordsGrid.RowHeight > 32 ||
+            recordsGrid.ColumnHeaderHeight < 48 ||
+            localizationGrid.FontSize < 13 ||
+            localizationGrid.RowHeight < 28 || localizationGrid.RowHeight > 32 ||
+            localizationGrid.ColumnHeaderHeight < 30 || localizationGrid.ColumnHeaderHeight > 34 ||
             tableGap < 0 || tableGap > 8)
         {
             throw new InvalidOperationException(
@@ -3974,7 +3997,7 @@ internal static class Program
         recordsGrid.UpdateLayout();
         TextBlock cellText = FindVisualChild<TextBlock>(nameColumn.GetCellContent(firstRecord))
             ?? throw new InvalidOperationException("Не найден текст отображаемой Excel-клетки.");
-        if (cellText.FontSize < 14 || cellText.VerticalAlignment != VerticalAlignment.Center)
+        if (cellText.FontSize < 13 || cellText.VerticalAlignment != VerticalAlignment.Center)
         {
             throw new InvalidOperationException(
                 "Текст основной Excel-клетки должен быть читаемым и располагаться по вертикальному центру.");

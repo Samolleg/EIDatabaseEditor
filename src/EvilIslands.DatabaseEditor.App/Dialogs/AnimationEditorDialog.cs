@@ -11,13 +11,14 @@ namespace EvilIslands.DatabaseEditor.App.Dialogs;
 
 internal sealed partial class AnimationEditorDialog : LuaToolWindow
 {
-    private readonly FigureAnimationEditor _editor;
+    private FigureAnimationEditor _editor;
     internal FigureAnimationEditor WorkingEditor => _editor;
-    private readonly UnitModelScene _scene;
-    private readonly string _name;
+    private UnitModelScene _scene;
+    private string _name;
     private readonly UnitModelPreviewView _preview = new() { AllowAnimationEditing = false };
     private readonly TextBox _first = Number(), _last = Number(), _length = Number();
     private readonly TextBlock _message = Paragraph("");
+    private readonly TextBlock _generationSummary = Paragraph("");
     private readonly WrapPanel _actions = new();
     private byte[] _exported;
     private bool _busy;
@@ -70,14 +71,15 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
             await _editor.TransformAsync(_name, first, last, frames); await Refresh();
             _message.Text = "Изменение применено к копии. Другие клипы не изменены.";
         });
-        Action("Отменить", async () => { await _editor.NavigateHistoryAsync(_name,false); await Refresh(); });
-        Action("Повторить", async () => { await _editor.NavigateHistoryAsync(_name,true); await Refresh(); });
+        Action("Отменить", async () => { await _editor.NavigateHistoryAsync(_name,false); await RefreshAfterHistory(); });
+        Action("Повторить", async () => { await _editor.NavigateHistoryAsync(_name,true); await RefreshAfterHistory(); });
         Action("Экспорт ANM…", async () =>
         {
             if (!await CheckBeforeExport()) return;
             var picker = new SaveFileDialog { Filter = "Архив анимаций (*.anm)|*.anm", FileName = scene.Model + ".anm", OverwritePrompt = true };
             if (picker.ShowDialog(this) != true) return;
             if (File.Exists(picker.FileName)) throw new IOException("Выберите новое имя файла. Исходный ANM этим экспортом не перезаписывается.");
+            _editor.NestFlatClip(_name);
             byte[] bytes = _editor.ExportBytes();
             using (var file = new FileStream(picker.FileName, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { file.Write(bytes); file.Flush(true); }
             if (!File.ReadAllBytes(picker.FileName).AsSpan().SequenceEqual(bytes)) throw new IOException("Не прошла проверка записанного ANM.");
@@ -95,7 +97,8 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         var readPose = ActionButton("Взять кадр из просмотра", () => { _frame.Text = ((int)_preview.AnimationFrame).ToString(); ReadPose(); });
         _poseActions.Children.Add(readPose);
         PoseField("Доворот X°", _rx); PoseField("Y°", _ry); PoseField("Z°", _rz);
-        PoseField("Положение X", _px); PoseField("Y", _py); PoseField("Z", _pz);
+        PoseField("ANM X", _px); PoseField("ANM Y", _py); PoseField("ANM Z", _pz);
+        foreach (var box in new[] { _px, _py, _pz }) box.ToolTip = "Сырые координаты корня ANM. В просмотре отдельно применяется ростовая поправка ADB; перемещение мышью переводится обратно перед записью.";
         var applyPose = ActionButton("Применить к кадру", () => { });
         applyPose.Click += async (_, _) => await Run(async () =>
         {
@@ -122,7 +125,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         var adb = ActionButton("Игровой список ADB…", () => { });
         adb.IsEnabled = scene.AnimationDatabase is not null;
         adb.ToolTip = adb.IsEnabled ? "Все клипы ANM и записи ADB этой модели: параметры выбора, события и сохранение игрового списка." : "Ресурс ADB этой модели не найден.";
-        adb.Click += (_, _) => new AnimationDatabaseDialog(_scene, _editor.Preview()) { Owner = this }.ShowDialog();
+        adb.Click += async (_, _) => { new AnimationDatabaseDialog(_scene, _editor.Preview()) { Owner = this }.ShowDialog(); await Run(Refresh); };
         sidebar.Children.Add(adb);
         sidebar.Children.Add(Paragraph("ПОЗА КАДРА")); sidebar.Children.Add(_poseActions);
 
@@ -138,6 +141,7 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         InitializeCatalog(sidebar);
         InitializeStoryboard(sidebar);
         InitializeKimodo(sidebar);
+        sidebar.Children.Add(_generationSummary);
         Compact(sidebar); Compact(_playback); _mapping.Height=90;
         Loaded += async (_, _) => await Run(Refresh);
         Closing += (_, e) =>
@@ -158,10 +162,19 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         if (element is TextBlock text) { text.FontSize = 12; text.Margin = new Thickness(3, 5, 3, 3); }
         foreach (var child in LogicalTreeHelper.GetChildren(element).OfType<DependencyObject>()) Compact(child);
     }
+    private int _coordinateRevision;
     internal async Task Refresh()
     {
         int previousFrame = CurrentFrame;
         var set = _editor.Preview(); var clip = await set.LoadAsync(_name);
+        if (_coordinateRevision != _editor.CoordinateRevision)
+        {
+            _coordinateRevision = _editor.CoordinateRevision;
+            _loadingSettings = true;
+            try { _pins.Clear(); _leftFoot.IsChecked = _rightFoot.IsChecked = false; }
+            finally { _loadingSettings = false; }
+            if (_editor.ProjectCoordinateWarning is { } warning) _message.Text = warning;
+        }
         if(_loadedClip is null)
         { _preview.ShowScene(_scene with { Animations = set }); await _preview.SelectAnimationAsync(_name); }
         else await _preview.ReplaceEditedAnimationAsync(set,clip,previousFrame);
@@ -177,6 +190,16 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         await RefreshAuthoring();
         await RefreshMotion();
         RefreshStoryboard();
+    }
+    internal async Task RefreshAfterHistory()
+    {
+        if (!_editor.Preview().Names.Contains(_name, StringComparer.OrdinalIgnoreCase))
+        {
+            string fallback = _workingClips.FirstOrDefault(name => _editor.Preview().Names.Contains(name, StringComparer.OrdinalIgnoreCase))
+                ?? throw new InvalidDataException("История не содержит доступного клипа для просмотра.");
+            await SwitchWorkingClip(fallback);
+        }
+        else await Refresh();
     }
     internal static string[] EditableParts(UnitModelScene scene, FigureAnimationClip clip)
     {
@@ -232,9 +255,9 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
     {
         if (_busy) return;
         _editor.MotionLimits = _limits.IsChecked == true; _editor.MotionPins = _pins;
-        _busy = true; _actions.IsEnabled = _poseActions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = false;
+        _busy = true; _workingClipPicker.IsEnabled = false; _actions.IsEnabled = _poseActions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = false;
         try { if (_storySidebar is not null) _storySidebar.IsEnabled = false; _storyTools.IsEnabled = false; _story.IsEnabled = false; _preview.PauseAnimation(); await action(); }
         catch (Exception ex) { _message.Text = ex.Message; }
-        finally { if (_storySidebar is not null) _storySidebar.IsEnabled = true; _storyTools.IsEnabled = _story.IsEnabled = true; _busy = false; _actions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = true; _poseActions.IsEnabled = !_preview.ShowingOriginal; }
+        finally { if (_storySidebar is not null) _storySidebar.IsEnabled = true; _storyTools.IsEnabled = _story.IsEnabled = true; _busy = false; _workingClipPicker.IsEnabled = true; _actions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = true; _poseActions.IsEnabled = !_preview.ShowingOriginal; }
     }
 }

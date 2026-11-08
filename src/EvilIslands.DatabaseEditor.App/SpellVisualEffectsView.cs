@@ -15,9 +15,9 @@ public sealed class SpellVisualEffectsView : UserControl
     private readonly Button _bind = new() { Content = "Отдельная текстура…", Margin = new(4), IsEnabled = false };
     internal sealed record ResourceRow(string Stage, string Name, string Status, string Source, string Versions);
     private readonly TextBlock _status = new() { TextWrapping = TextWrapping.Wrap, Margin = new(6) };
-    private readonly TextBox _search = new() { MinWidth = 180, Margin = new(4), ToolTip = "Поиск по имени текстуры, эффекту и архиву" };
+    private readonly TextBox _search = new() { Width = 320, Margin = new(4), ToolTip = "Поиск по имени текстуры, эффекту и архиву" };
     private readonly CheckBox _library = new() { Content = "Известные атласы эффектов", Margin = new(8), VerticalAlignment = VerticalAlignment.Center };
-    private readonly DataGrid _list = new() { AutoGenerateColumns = false, IsReadOnly = true, SelectionMode = DataGridSelectionMode.Single, CanUserAddRows = false };
+    private readonly DataGrid _list = new() { AutoGenerateColumns = false, IsReadOnly = true, SelectionMode = DataGridSelectionMode.Single, CanUserAddRows = false, RowHeight = 28, ColumnHeaderHeight = 30, FontSize = 13 };
     private readonly TextureImageView _image = new() { Height = 240 };
     private readonly TextBox _details = new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap, BorderThickness = new(0), Background = Brushes.Transparent };
     private readonly Button _open = new() { Content = "Открыть / заменить в RES…", Margin = new(4), IsEnabled = false };
@@ -34,18 +34,25 @@ public sealed class SpellVisualEffectsView : UserControl
 
     public SpellVisualEffectsView()
     {
-        var layout = new DockPanel { Margin = new(8) };
-        DockPanel.SetDock(_status, Dock.Top); layout.Children.Add(_status);
-        var tools = new DockPanel();
+        var layout = new DockPanel { Margin = new(8, 4, 8, 4) };
+        var tools = new WrapPanel();
         var refresh = new Button { Content = "Обновить", Margin = new(4) };
         refresh.Click += (_, _) => { _catalog = null; QueueLoad(); };
-        DockPanel.SetDock(refresh, Dock.Right); tools.Children.Add(refresh);
-        DockPanel.SetDock(_library, Dock.Right); tools.Children.Add(_library); tools.Children.Add(_search);
+        tools.Children.Add(new TextBlock { Text = "Поиск", VerticalAlignment = VerticalAlignment.Center });
+        tools.Children.Add(_search); tools.Children.Add(_library); tools.Children.Add(refresh);
+        PreviewChrome.Compact(tools);
         DockPanel.SetDock(tools, Dock.Top); layout.Children.Add(tools);
         var limitation = new TextBlock { Margin = new(6), TextWrapping = TextWrapping.Wrap,
             Text = "Имена атласов и движение частиц заданы кодом игры/JMV. Замена общего MMP затрагивает все его эффекты. " +
                 "При замене сохраняйте раскладку кадров и прозрачность. Для привязки копии к одному заклинанию используйте «Отдельная текстура…» и addon с поддержкой пакета привязок." };
-        DockPanel.SetDock(limitation, Dock.Bottom); layout.Children.Add(limitation);
+        var help = new StackPanel(); help.Children.Add(_status); help.Children.Add(limitation);
+        var explanation = new Expander { Header = "О связях эффектов и замене текстур", Content = new ScrollViewer { Content = help, MaxHeight = 130, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }, Margin = new(4, 2, 4, 2) };
+        DockPanel.SetDock(explanation, Dock.Bottom); layout.Children.Add(explanation);
+        // Keep load/errors visible even while the detailed explanation is collapsed.
+        var summary = new TextBlock { TextTrimming = TextTrimming.CharacterEllipsis, MaxHeight = 18, Margin = new(4, 2, 4, 4) };
+        summary.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(TextBlock.Text)) { Source = _status });
+        summary.SetBinding(ToolTipProperty, new System.Windows.Data.Binding(nameof(TextBlock.Text)) { Source = _status });
+        DockPanel.SetDock(summary, Dock.Top); layout.Children.Add(summary);
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new() { Width = new GridLength(6) });
@@ -56,7 +63,8 @@ public sealed class SpellVisualEffectsView : UserControl
         var split = new GridSplitter { Width = 6, HorizontalAlignment = HorizontalAlignment.Stretch };
         Grid.SetColumn(split, 1); grid.Children.Add(split);
         var card = new StackPanel { Margin = new(8, 0, 0, 0) };
-        card.Children.Add(_open); card.Children.Add(_bind); card.Children.Add(_image); card.Children.Add(_details);
+        var actions = new WrapPanel(); actions.Children.Add(_open); actions.Children.Add(_bind); PreviewChrome.Compact(actions);
+        card.Children.Add(actions); card.Children.Add(_image); card.Children.Add(_details);
         var scroll = new ScrollViewer { Content = card, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
         Grid.SetColumn(scroll, 2); grid.Children.Add(scroll); layout.Children.Add(grid); Content = layout;
         _search.TextChanged += (_, _) => Filter();

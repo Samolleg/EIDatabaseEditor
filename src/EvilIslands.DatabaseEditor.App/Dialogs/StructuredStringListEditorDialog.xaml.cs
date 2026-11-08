@@ -533,8 +533,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
                 shapeChoice = new EmbeddedMagicChoice(shapeValue, $"Не найдена форма: {shapeValue}");
                 shapes = [shapeChoice, .. shapes];
             }
-            MagicShapeComboBox.ItemsSource = shapes;
-            MagicShapeComboBox.SelectedItem = shapeChoice ?? shapes.FirstOrDefault();
+            SetShapeChoices(shapes, shapeChoice ?? shapes.FirstOrDefault());
             RefreshMaterialChoices(materialValue);
             EmbedSpellCheckBox.IsChecked = hasEmbeddedSpell;
         }
@@ -717,7 +716,7 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
             return;
         }
 
-        var existingShapes = MagicShapeComboBox.Items.Cast<EmbeddedMagicChoice>().ToArray();
+        var existingShapes = _shapeChoices;
         string? selectedMaterial = (MagicMaterialComboBox.SelectedItem as EmbeddedMagicChoice)?.Value;
         var localizedShapes = existingShapes.Select(s => _magicContext.LocalizeShapeChoice(s, selectedMaterial)).ToArray();
         if (!existingShapes.SequenceEqual(localizedShapes))
@@ -727,10 +726,13 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
             _syncingMagicConstructor = true;
             try
             {
-                MagicShapeComboBox.ItemsSource = localizedShapes;
-                MagicShapeComboBox.SelectedItem = FindChoice(localizedShapes, selectedShape);
+                SetShapeChoices(localizedShapes, FindChoice(localizedShapes, selectedShape));
             }
             finally { _syncingMagicConstructor = wasSyncing; }
+        }
+        else
+        {
+            RefreshShapeSearch(MagicShapeComboBox.SelectedItem as EmbeddedMagicChoice);
         }
         MagicItemRussianNameText.Text = _magicContext.GetItemRussianName(
             (MagicShapeComboBox.SelectedItem as EmbeddedMagicChoice)?.Value,
@@ -1080,6 +1082,8 @@ public partial class StructuredStringListEditorDialog : Window, INotifyPropertyC
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // The popup owns Escape/Enter while searching or choosing a form.
+        if (MagicShapeComboBox.IsDropDownOpen) return;
         if (e.Key == Key.Escape)
         {
             DialogResult = false;

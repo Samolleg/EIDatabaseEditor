@@ -112,7 +112,7 @@ internal sealed partial class AnimationEditorDialog
         });
         Button("Дублировать после", async () => { EnsurePoseEditable(); var r = SelectedRange(); await _editor.DuplicateFramesAsync(_name, r.First, r.Last); _frame.Text = _first.Text = _last.Text = (r.Last + 1).ToString(); await Refresh(); _message.Text = "Копия добавлена после выделения."; });
         Button("Удалить · Del", DeleteSelectedFrames);
-        Button("Отменить · Ctrl+Z", async () => { await _editor.NavigateHistoryAsync(_name, false); await Refresh(); _message.Text = "Операция отменена."; });
+        Button("Отменить · Ctrl+Z", async () => { await _editor.NavigateHistoryAsync(_name, false); await RefreshAfterHistory(); _message.Text = "Операция отменена."; });
         var reset = new ComboBox { Width = 145, ItemsSource = new[] { "Сброс позы…", "В исходную позу кадра", "В Т-позу" }, SelectedIndex = 0, Margin = new(3) };
         reset.SelectionChanged += async (_, _) => { int mode = reset.SelectedIndex; if (mode == 0) return; reset.SelectedIndex = 0; await Run(async () => { EnsurePoseEditable(); await _editor.ResetFrameAsync(_name, CurrentFrame, mode == 2); await Refresh(); _message.Text = "Поза кадра сброшена. Ctrl+Z — отменить."; }); }; _storyTools.Children.Add(reset);
 
@@ -170,7 +170,7 @@ internal sealed partial class AnimationEditorDialog
         if (comboFocused) return null;
         if (ctrl && key == Key.C) return CopySelectedFrames;
         if (ctrl && key == Key.V) return ReplaceSelectedFrames;
-        if (ctrl && key is Key.Z or Key.Y) return async () => { await _editor.NavigateHistoryAsync(_name, key == Key.Y); await Refresh(); };
+        if (ctrl && key is Key.Z or Key.Y) return async () => { await _editor.NavigateHistoryAsync(_name, key == Key.Y); await RefreshAfterHistory(); };
         if (key == Key.Delete) return DeleteSelectedFrames;
         return null;
     }

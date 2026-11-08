@@ -15,8 +15,11 @@ public static class FigurePreviewDecoder
 {
     public static FigureMesh Decode(string name, byte[] bytes, Vector3 morph)
     {
+        if (bytes.Length < 40) throw new InvalidDataException($"{name}: заголовок FIG обрезан.");
         using var r = new BinaryReader(new MemoryStream(bytes), Encoding.ASCII);
         string signature = Encoding.ASCII.GetString(r.ReadBytes(4));
+        if (!signature.StartsWith("FIG", StringComparison.Ordinal) || !char.IsAsciiDigit(signature[3]))
+            throw new InvalidDataException($"{name}: неверная сигнатура FIG.");
         int samples = signature switch { "FIG1" => 1, "FIG8" => 8, _ => throw new NotSupportedException($"{name}: формат {signature} пока не поддержан.") };
         int Count(int limit)
         {

@@ -47,17 +47,27 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     private int? _pendingBriefingPhraseNumber;
     private int? _pendingBriefingEventOrdinal;
     private string _searchText = string.Empty;
+    private bool _searchPrototypeContents;
     private string _resourceSearchText = string.Empty;
     private string _textsSearchText = string.Empty;
     private string _diagnosticSearchText = string.Empty;
     private string _selectedDiagnosticSeverityFilter = "Все уровни";
     private string _selectedDiagnosticDomainFilter = "Все области";
     private bool _showOnlyBlockingDiagnostics;
+    private string _resourceValidationStatus = "Ресурсы ещё не проверены. Нажмите F5. " + LinkedResourceValidation.Scope;
+    private bool _isResourceValidationRunning;
+    public string ResourceValidationStatus { get => _resourceValidationStatus; private set => SetProperty(ref _resourceValidationStatus, value); }
+    public bool IsResourceValidationRunning
+    {
+        get => _isResourceValidationRunning;
+        private set { if (SetProperty(ref _isResourceValidationRunning, value)) ((RelayCommand)CancelResourceValidationCommand).RaiseCanExecuteChanged(); }
+    }
+    public ICommand CancelResourceValidationCommand { get; }
     private DiagnosticCategoryViewModel? _selectedDiagnosticCategory;
     private bool _isUpdatingDiagnosticCategories;
     private ValidationMessageViewModel? _selectedDiagnostic;
     private int _filteredDiagnosticCount;
-    private string _statusText = "Готово. Откройте database.res для редактирования.";
+    private string _statusText = "Готово. Выберите базу для работы.";
     private string? _notificationMessage;
     private bool _notificationIsError;
     private bool _isBusy;
@@ -132,6 +142,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             () => IsEditMode && IsRecordsSection &&
                   SelectedRecord?.MissingLocalizationCount > 0 && HasTextsDocument && !IsBusy);
         RefreshValidationCommand = new RelayCommand(RefreshValidation, () => HasDocument && !IsBusy);
+        CancelResourceValidationCommand = new RelayCommand(() => CancelValidation(), () => IsResourceValidationRunning);
         ClearSearchCommand = new RelayCommand(() => SearchText = string.Empty, () => !string.IsNullOrEmpty(SearchText));
         ClearResourceSearchCommand = new RelayCommand(() => ResourceSearchText = string.Empty, () => !string.IsNullOrEmpty(ResourceSearchText));
         ClearTextsSearchCommand = new RelayCommand(() => TextsSearchText = string.Empty, () => !string.IsNullOrEmpty(TextsSearchText));
@@ -398,7 +409,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public string PageTitle => CurrentSection switch
     {
-        WorkspaceSection.Overview => "Обзор базы",
+        WorkspaceSection.Overview => HasDocument ? "Обзор базы" : "Главная",
         WorkspaceSection.Modules => "Квесты и скрипты",
         WorkspaceSection.Resources => "Ресурсы контейнера",
         WorkspaceSection.Records => SelectedTable?.Title ?? "Таблица базы",
@@ -410,13 +421,13 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public string PageSubtitle => CurrentSection switch
     {
-        WorkspaceSection.Overview => "Редактирование включено; Ctrl+S сохраняет текущий файл с автоматической .bak-копией.",
+        WorkspaceSection.Overview => HasDocument ? "Состав базы, связанные ресурсы и последние изменения." : "Последняя база и инструменты редактора.",
         WorkspaceSection.Resources => "Содержимое RES-контейнера, смещения и размеры внутренних ресурсов.",
         WorkspaceSection.Records when SelectedTable is not null =>
             $"{SelectedTable.GroupTitle} · {SelectedTable.ResourceName} · строки — записи, столбцы — поля · {SelectedTable.StatusText.ToLowerInvariant()}.",
         WorkspaceSection.Texts => "Полное содержимое подключённого texts.res: ключи, русские названия и описания.",
         WorkspaceSection.Changes => "Только отличия от открытого исходного файла.",
-        WorkspaceSection.Validation => "Ошибки структуры и предупреждения по ссылочной целостности.",
+        WorkspaceSection.Validation => "Структура, ссылки БД и проверка связанных ресурсов по F5.",
         _ => string.Empty,
     };
 
@@ -458,7 +469,10 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             OnPropertyChanged(nameof(IsCurrentTableReadOnly));
             OnPropertyChanged(nameof(IsCurrentTableEditable));
             OnPropertyChanged(nameof(IsCurrentTableAddable));
+            OnPropertyChanged(nameof(CurrentTableSupportsLocalization));
             OnPropertyChanged(nameof(CurrentTableSupportsSounds));
+            OnPropertyChanged(nameof(CanSearchPrototypeContents));
+            OnPropertyChanged(nameof(RecordSearchPlaceholder));
             OnPropertyChanged(nameof(IsBriefingsTable));
             OnPropertyChanged(nameof(CanEditBriefingTitle));
             OnPropertyChanged(nameof(VisibleSpreadsheetColumns));
@@ -472,6 +486,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public string BreadcrumbText => CurrentSection switch
     {
+        WorkspaceSection.Overview when !HasDocument => "Рабочее пространство",
         WorkspaceSection.Records when SelectedTable is not null =>
             $"database.res  ›  {SelectedTable.ResourceName}  ›  {SelectedTable.Title}",
         WorkspaceSection.Texts => $"{TextsFileName}  ›  Все русские тексты",
@@ -540,6 +555,9 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     public int SelectedRecordSoundCount => SelectedRecord?.ResolvedSoundCount ?? 0;
 
     public bool IsCurrentTableAddable => SelectedTable?.CanAppendRecords is true;
+
+    public bool CurrentTableSupportsLocalization =>
+        SelectedTable?.Records.Any(record => record.HasLocalizationReferences) is true;
 
     public bool CurrentTableSupportsSounds => SelectedTable?.Key is
         "acks.answers" or "acks.cries" or "acks.others" or "quests.briefings";
@@ -752,11 +770,30 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         : (SelectedColumnMode == AllColumnMode
             ? $"Все {SelectedTable.Columns.Count:N0} полей"
             : $"{VisibleSpreadsheetColumns.Count:N0} из {SelectedTable.Columns.Count:N0} полей") +
-          (HasTextsDocument ? " · +3 RU" : string.Empty) +
+          (HasTextsDocument && CurrentTableSupportsLocalization ? " · +3 RU" : string.Empty) +
           (HasSoundArchives && CurrentTableSupportsSounds ? " · +2 звук" : string.Empty);
 
     public string ColumnModeToolTip =>
         "Понятные поля — расшифровки для обычной работы; Все поля — полный набор; Исходные байты — только физические поля database.res.";
+
+    public bool CanSearchPrototypeContents => SelectedTable?.Key == "units.prototypes";
+
+    public bool SearchPrototypeContents
+    {
+        get => _searchPrototypeContents;
+        set
+        {
+            if (SetProperty(ref _searchPrototypeContents, value))
+            {
+                OnPropertyChanged(nameof(RecordSearchPlaceholder));
+                ScheduleRecordSearch();
+            }
+        }
+    }
+
+    public string RecordSearchPlaceholder => CanSearchPrototypeContents && SearchPrototypeContents
+        ? "Поиск по содержимому…"
+        : "Поиск по имени и пути…";
 
     public string SearchText
     {
@@ -1914,6 +1951,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         ReplaceCollection(Resources, workspace.Resources);
         ReplaceCollection(Databases, workspace.Databases);
         ReplaceCollection(TextResources, workspace.TextResources);
+        ResourceValidationStatus = "Ресурсы ещё не проверены для этой БД. Нажмите F5. " + LinkedResourceValidation.Scope;
         ReplaceCollection(Diagnostics, workspace.Diagnostics);
         RefreshDiagnosticsView();
         SubscribeWorkspaceRecords(Databases);
@@ -2602,7 +2640,10 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             return true;
         }
 
-        return record.SearchText.Contains(SearchText.Trim(), StringComparison.CurrentCultureIgnoreCase);
+        var query = SearchText.Trim();
+        return CanSearchPrototypeContents && SearchPrototypeContents
+            ? record.MatchesPrototypeContents(query)
+            : record.SearchText.Contains(query, StringComparison.CurrentCultureIgnoreCase);
     }
 
     private bool FilterResource(object item)
@@ -3373,8 +3414,8 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
                 {
                     SetAddedRecordPresence(recordFrame.Table, recordFrame.Record, shouldBePresent);
                     status = shouldBePresent
-                        ? $"Возвращена новая строка: {recordFrame.Record.DisplayName}"
-                        : $"Отменено добавление строки: {recordFrame.Record.DisplayName}";
+                        ? $"Восстановлена строка: {recordFrame.Record.DisplayName}"
+                        : $"Удалена строка: {recordFrame.Record.DisplayName}";
                     return true;
                 }
                 catch (Exception exception)
@@ -3825,6 +3866,19 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         _validationCancellation = validation;
         CancellationToken cancellationToken = validation.Token;
         Dispatcher? dispatcher = Application.Current?.Dispatcher;
+        ResourceValidationStatus = deferred ? "Результаты ресурсов устарели после изменения БД. Требуется F5. " + LinkedResourceValidation.Scope :
+            "Проверка ресурсов: подготовка источников. " + LinkedResourceValidation.Scope;
+        IsResourceValidationRunning = !deferred;
+        if (!deferred)
+        {
+            ReplaceCollection(Diagnostics, Diagnostics.Where(d => d.Domain != "Resources").ToArray());
+            RefreshDiagnosticsView(); ApplyDiagnosticsToRecords(Diagnostics); RefreshAllCounts();
+        }
+        var progress = new Progress<ResourceValidationProgress>(p =>
+        {
+            if (ReferenceEquals(_validationCancellation, validation) && !cancellationToken.IsCancellationRequested)
+                ResourceValidationStatus = p.Description + " " + LinkedResourceValidation.Scope;
+        });
         try
         {
             if (deferred)
@@ -3839,7 +3893,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             }
 
             IReadOnlyList<ValidationMessageViewModel> diagnostics =
-                await _service.ValidateAsync(cancellationToken).ConfigureAwait(false);
+                await _service.ValidateAsync(cancellationToken, !deferred, progress).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_validationCancellation, validation))
             {
@@ -3850,12 +3904,16 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
                 dispatcher,
                 () =>
                 {
+                    if (!ReferenceEquals(_validationCancellation, validation) || cancellationToken.IsCancellationRequested) return;
                     ReplaceCollection(Diagnostics, diagnostics);
+                    IsResourceValidationRunning = false;
+                    if (!deferred) ResourceValidationStatus = diagnostics.FirstOrDefault(d => d.Code == "RESOURCE_SCAN_COVERAGE")?.Message ??
+                        "Ресурсы не проверены: служба не предоставила отчёт об охвате.";
                     RefreshDiagnosticsView();
                     ApplyDiagnosticsToRecords(Diagnostics);
                     RefreshAllCounts();
                     StatusText = Diagnostics.Count == 0
-                        ? "Проверка завершена: проблем не обнаружено."
+                        ? "Структурная проверка завершена: проблем не обнаружено; охват ресурсов указан отдельно."
                         : $"Проверка завершена: {ErrorCount} ошибок, {WarningCount} предупреждений.";
                 },
                 cancellationToken).ConfigureAwait(false);
@@ -3872,7 +3930,13 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         {
             await InvokeOnDispatcherAsync(
                 dispatcher,
-                () => ShowError($"Проверка не выполнена: {UnwrapMessage(exception)}"),
+                () =>
+                {
+                    if (!ReferenceEquals(_validationCancellation, validation)) return;
+                    IsResourceValidationRunning = false;
+                    ResourceValidationStatus = "Проверка ресурсов не завершена: " + UnwrapMessage(exception) + " Результат не опубликован. Повторите F5.";
+                    ShowError($"Проверка не выполнена: {UnwrapMessage(exception)}");
+                },
                 CancellationToken.None).ConfigureAwait(false);
         }
         finally
@@ -4098,6 +4162,9 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     private void NotifyWorkspaceProperties()
     {
         OnPropertyChanged(nameof(HasDocument));
+        OnPropertyChanged(nameof(PageTitle));
+        OnPropertyChanged(nameof(PageSubtitle));
+        OnPropertyChanged(nameof(BreadcrumbText));
         OnPropertyChanged(nameof(SourcePath));
         OnPropertyChanged(nameof(SourceFileName));
         OnPropertyChanged(nameof(SourceDirectory));
@@ -4177,6 +4244,11 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             ref _validationCancellation,
             null);
         validation?.Cancel();
+        if (IsResourceValidationRunning)
+        {
+            IsResourceValidationRunning = false;
+            ResourceValidationStatus = "Проверка ресурсов отменена; полный результат не получен. Повторите F5. Последний охват: " + ResourceValidationStatus;
+        }
         validation?.Dispose();
     }
 

@@ -209,10 +209,25 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
     public Task<IReadOnlyList<ValidationMessageViewModel>> ValidateAsync(
         CancellationToken cancellationToken)
     {
+        return ValidateAsync(cancellationToken, false, null);
+    }
+
+    public Task<IReadOnlyList<ValidationMessageViewModel>> ValidateAsync(CancellationToken cancellationToken,
+        bool includeResources, IProgress<ResourceValidationProgress>? progress)
+    {
         DatabaseDocument document = RequireDocument();
-        return Task.Run<IReadOnlyList<ValidationMessageViewModel>>(
-            () => MapDiagnostics(document.Validate(cancellationToken), _mappedDatabases, cancellationToken),
-            cancellationToken);
+        var databases = _mappedDatabases;
+        var linked = includeResources ? document.Databases.SelectMany(g => g.Tables).SelectMany(t =>
+            t.Records.Select((r, i) => (ModelRecord.Capture(t.Key, r), new DiagnosticLocation(t.ResourceName, t.Key, i, r.IdentityValue)))).ToArray() : [];
+        return Task.Run<IReadOnlyList<ValidationMessageViewModel>>(async () =>
+        {
+            var diagnostics = document.Validate(cancellationToken).ToList();
+            if (includeResources) diagnostics.AddRange(await LinkedResourceValidation.ScanAsync(document.SourcePath, linked,
+                cancellationToken, progress).ConfigureAwait(false));
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(document, _document)) throw new OperationCanceledException(cancellationToken);
+            return MapDiagnostics(diagnostics, databases, cancellationToken);
+        }, cancellationToken);
     }
 
     internal RecordRowViewModel CreateBriefingRecord(DatabaseTableViewModel table, RecordRowViewModel reference)
@@ -1139,6 +1154,7 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
     private static string FormatDomain(DiagnosticDomain domain) => domain switch
     {
         DiagnosticDomain.Semantic => "Семантика",
+        DiagnosticDomain.Resources => "Ресурсы",
         _ => "Структура",
     };
 

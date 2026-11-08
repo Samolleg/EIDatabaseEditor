@@ -8,7 +8,11 @@ public sealed record EmbeddedMagicShapeOption(
     string Kind,
     string RequiredMaterialType,
     double Mana,
-    int Slots);
+    int Slots)
+{
+    // Search metadata derived from the same class/index fields as the item preview.
+    public IReadOnlyList<string> ModelNames { get; init; } = [];
+}
 
 public sealed record EmbeddedMagicMaterialOption(
     string Value,
@@ -143,9 +147,45 @@ public sealed class EmbeddedMagicCatalog
                     kind,
                     GetText(record, 3),
                     GetDouble(record, 10),
-                    GetInt32(record, 11)))
+                    GetInt32(record, 11)) { ModelNames = GetShapeModelNames(tableKey, record) })
                 .Where(option => option.Value.Length > 0));
         }
+    }
+
+    private static IReadOnlyList<string> GetShapeModelNames(string table, DatabaseRecord record)
+    {
+        if (!TryGetInt32(record.Fields.FirstOrDefault(f => f.Id == 2)?.Value, out int type) ||
+            !TryGetInt32(record.Fields.FirstOrDefault(f => f.Id == 5)?.Value, out int index) || index < 0)
+            return [];
+        if (table == "items.armors")
+        {
+            string code = type switch { 0 => "hl", 1 => "pl", 2 => "lg", 3 => "sh", 4 => "pt", 5 => "bt", 6 => "gl", _ => "" };
+            if (code.Length == 0) return [];
+            string[] parts = type switch
+            {
+                0 => ["hd"],
+                1 => ["bd", "rh1", "rh2", "rh3", "lh1", "lh2", "lh3"],
+                2 => ["hp", "rl1", "rl2", "rl3", "ll1", "ll2", "ll3"],
+                _ => []
+            };
+            return [$"initar{code}{index}.mod", .. parts.Select(p => $"{p}.armor{index:D2}")];
+        }
+        (string kind, string textureCode) = type switch
+        {
+            0 => ("sword", "sw"), 1 => ("axe", "ax"), 2 => ("dagger", "dg"), 3 => ("pike", "sp"),
+            4 => ("club", "hm"), 5 => ("bow", "bw"), 6 => ("crossbow", "cb"), 9 => ("shield", "sd"),
+            10 => ("dpike", "tp"), 11 => ("staff", "sf"), 12 => ("dsword", "ts"),
+            13 => ("daxe", "ta"), 14 => ("dclub", "th"), 15 => ("dstaff", "tf"), _ => ("", "")
+        };
+        if (kind.Length == 0) return [];
+        string[] weaponParts = type switch
+        {
+            9 => [$"lh2.shield{index:D2}"],
+            5 => [$"lh3.bwpartb{index:D2}", $"bwparta{index:D2}", $"bwtetivaa{index:D2}", $"bwtetivab{index:D2}", "quiver", "arrows", "rh3.arrow00"],
+            6 => [$"rh3.crbow{index:D2}main", $"crbow{index:D2}part01", $"crbow{index:D2}part02", $"crbow{index:D2}tetiva01", $"crbow{index:D2}tetiva02", "quiver", "arrows"],
+            _ => [$"rh3.{kind}{index:D2}", $"lh3.{kind}{index:D2}"]
+        };
+        return [$"initwe{textureCode}{index}.mod", .. weaponParts];
     }
 
     public IReadOnlyList<EmbeddedMagicMaterialOption> GetCompatibleMaterials(string? shapeValue)

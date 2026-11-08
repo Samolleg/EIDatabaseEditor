@@ -1,9 +1,11 @@
 using System.IO;
 using System.Numerics;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using EvilIslands.DatabaseEditor.App.Dialogs;
+using EvilIslands.DatabaseEditor.App.Services;
 using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.UiSmoke;
@@ -23,12 +25,32 @@ internal static class KimodoDraftRegression
             AnimationEditorDialog.TryReadKimodoStep("profile text.resident_load layers=32 ms=200", 20, out _) ||
             AnimationEditorDialog.TryReadKimodoStep("profile motion.diffusion_step index=20 ms=1", 20, out _))
             throw new Exception("KIMODO: diffusion progress is not based on completed generator steps.");
+        if (new KimodoDraftPreferences().Seed != "0" ||
+            AnimationEditorDialog.ResolveKimodoSeed(51) != 51 ||
+            AnimationEditorDialog.NextKimodoSeed(51) != 52 ||
+            AnimationEditorDialog.NextKimodoSeed(ulong.MaxValue) != 1)
+            throw new Exception("KIMODO: default, explicit or repeat seed is wrong.");
+        var randomSeeds = Enumerable.Range(0, 16).Select(_ => AnimationEditorDialog.ResolveKimodoSeed(0)).ToArray();
+        if (randomSeeds.Any(value => value == 0 || value >= int.MaxValue) || randomSeeds.Distinct().Count() < 2)
+            throw new Exception("KIMODO: seed zero did not select fresh valid generator seeds.");
         var suggestionEditor = new FigureAnimationEditor(scene.Animations!);
         await suggestionEditor.CreateAnimationAsync(template, suggested, frames, true);
         string temp = Path.Combine(Path.GetTempPath(), "kimodo-regression-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temp);
         try
         {
+            string preferencesPath = Path.Combine(temp, "draft.json");
+            var preferences = new KimodoDraftPreferencesStore(preferencesPath);
+            var draftSettings = new KimodoDraftPreferences { Model = scene.Model, Template = template,
+                Prompt = "A person strikes", Avoid = "stepping forward", Frames = "65", Steps = "30", Seed = "0", LastUsedSeed = "51", HasRun = true };
+            preferences.Save(draftSettings);
+            var reopenedSettings = preferences.Load();
+            if (reopenedSettings != draftSettings ||
+                !KimodoDraftPreferences.EffectivePrompt(reopenedSettings.Prompt, reopenedSettings.Avoid).Contains("Avoid: stepping forward", StringComparison.Ordinal) ||
+                KimodoDraftPreferences.EffectivePrompt(" A person strikes ", "") != "A person strikes" ||
+                !ulong.TryParse(reopenedSettings.LastUsedSeed, out ulong lastUsed) ||
+                AnimationEditorDialog.NextKimodoSeed(lastUsed) != 52)
+                throw new Exception("KIMODO: prompt, avoidance instruction or generator settings were not retained.");
             using (var root = new BinaryWriter(File.Create(Path.Combine(temp, "root_positions.f32"))))
             using (var pose = new BinaryWriter(File.Create(Path.Combine(temp, "local_rotations_xyzw.f32"))))
                 for (int f = 0; f < frames; f++)
@@ -47,12 +69,68 @@ internal static class KimodoDraftRegression
             var created = editor.ExportBytes();
             await editor.ApplyKimodoDraftAsync("kmd_regress", draft);
             var clip = await editor.Preview().LoadAsync("kmd_regress");
+            AnimationSaveRegression.CheckNested(editor.ExportBytes(), "kmd_regress", clip.Tracks.Count);
             if (clip.FrameCount != frames ||
                 Math.Abs(Quaternion.Dot(clip.Tracks["lh1"].Rotation(3), Quaternion.CreateFromAxisAngle(Vector3.UnitZ, .3f))) < .9999f ||
                 clip.Tracks["hp"].Positions.Length != frames ||
                 clip.Tracks["hp"].Position(3).Y >= clip.Tracks["hp"].Position(0).Y - .2f ||
                 Math.Abs(clip.Tracks["hp"].Position(3).Z - clip.Tracks["hp"].Position(0).Z) > .001f)
                 throw new Exception("KIMODO: draft did not reach the humanoid ANM clip.");
+            var endpoints = new FigureAnimationEditor(editor.Preview());
+            await endpoints.AnchorGeneratedEndpointsAsync("kmd_regress", template);
+            var anchored = await endpoints.Preview().LoadAsync("kmd_regress");
+            var idle = await endpoints.Preview().LoadAsync(template);
+            foreach (var pair in anchored.Tracks)
+            {
+                var reference = idle.Tracks[pair.Key];
+                if (Math.Abs(Quaternion.Dot(pair.Value.Rotation(0), reference.Rotation(0))) < .99999f ||
+                    Math.Abs(Quaternion.Dot(pair.Value.Rotation(frames - 1), reference.Rotation(idle.FrameCount - 1))) < .99999f ||
+                    pair.Value.Positions.Length > 0 && (Vector3.Distance(pair.Value.Position(0), reference.Position(0)) > .00001f ||
+                        Vector3.Distance(pair.Value.Position(frames - 1), reference.Position(idle.FrameCount - 1)) > .00001f))
+                    throw new Exception("KIMODO: exact reference boundary pose was not retained.");
+            }
+            endpoints.Undo();
+            if (!endpoints.ExportBytes().SequenceEqual(editor.ExportBytes()))
+                throw new Exception("KIMODO: endpoint correction was not one undoable operation.");
+            var window = new AnimationEditorDialog(scene, template);
+            await window.Refresh();
+            await window.ShowImportedKimodo(editor, "kmd_regress", KimodoPlayback.Once, [], temp, 51);
+            if (window.WorkingClipName != "kmd_regress" || window.WorkingClipCount != 2 ||
+                !window.WorkingEditor.Preview().Names.Contains(template) ||
+                !window.WorkingEditor.Preview().Names.Contains("kmd_regress") ||
+                !window.WorkingEditor.CanUndo ||
+                !window.WorkingGenerationSummary.Contains("Seed: 51", StringComparison.Ordinal))
+                throw new Exception("KIMODO: generated clip did not open in the same editor with its source and undo history.");
+            var layout = (FrameworkElement)window.Content;
+            layout.Measure(new Size(1100, 800)); layout.Arrange(new Rect(0, 0, 1100, 800)); layout.UpdateLayout();
+            window.SelectJoint("hp", 0);
+            var points = window.WorkingPreview.SkeletonOverlayVisualCount;
+            var checkbox = FindPointsToggle(layout) ?? throw new Exception("KIMODO: points checkbox missing.");
+            checkbox.IsChecked = false;
+            if (points == 0 || window.WorkingPreview.SkeletonOverlayVisualCount != 0)
+                throw new Exception("KIMODO: hiding control points did not clear the preview overlay.");
+            checkbox.IsChecked = true;
+            if (window.WorkingPreview.SkeletonOverlayVisualCount == 0)
+                throw new Exception("KIMODO: restoring control points did not redraw the preview overlay.");
+            await window.SwitchWorkingClip(template);
+            if (window.WorkingClipName != template || !window.WorkingEditor.Preview().Names.Contains("kmd_regress"))
+                throw new Exception("KIMODO: returning to the source clip lost the generated draft.");
+            var again = new FigureAnimationEditor(window.WorkingEditor.Preview());
+            await again.CreateAnimationAsync(template, "kmd_again", frames, true);
+            await window.ShowImportedKimodo(again, "kmd_again", KimodoPlayback.Once, [], temp);
+            if (window.WorkingClipCount != 3 || window.WorkingClipName != "kmd_again" ||
+                !window.WorkingEditor.Preview().Names.Contains("kmd_regress") ||
+                !window.WorkingEditor.Preview().Names.Contains(template))
+                throw new Exception("KIMODO: repeated generation lost a clip or opened another editor context.");
+            window.WorkingEditor.Undo();
+            await window.RefreshAfterHistory();
+            if (window.WorkingClipName != template || window.WorkingEditor.Preview().Names.Contains("kmd_again"))
+                throw new Exception("KIMODO: undo of a generated clip left the editor on a missing clip.");
+            window.WorkingEditor.Redo();
+            await window.RefreshAfterHistory();
+            await window.SwitchWorkingClip("kmd_again");
+            if (window.WorkingClipName != "kmd_again" || !window.WorkingEditor.Preview().Names.Contains("kmd_regress"))
+                throw new Exception("KIMODO: redo or clip switching lost a generated draft.");
             var before = ResArchiveDocument.Parse("before", original);
             var after = ResArchiveDocument.Parse("after", editor.ExportBytes());
             foreach (var entry in before.Entries)
@@ -115,5 +193,13 @@ internal static class KimodoDraftRegression
             }
         }
         finally { Directory.Delete(temp, true); }
+    }
+
+    private static CheckBox? FindPointsToggle(DependencyObject root)
+    {
+        if (root is CheckBox checkbox && Equals(checkbox.Content, "Показывать точки и оси")) return checkbox;
+        foreach (object child in LogicalTreeHelper.GetChildren(root))
+            if (child is DependencyObject element && FindPointsToggle(element) is { } match) return match;
+        return null;
     }
 }

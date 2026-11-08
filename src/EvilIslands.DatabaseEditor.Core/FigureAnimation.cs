@@ -73,10 +73,12 @@ public sealed class FigureAnimationSet
 {
     private readonly ResArchiveDocument _archive;
     public byte[] ExportBytes() => _archive.OriginalBytes.ToArray();
+    public FigureRootSpace RootSpace { get; init; } = FigureRootSpace.Raw;
     public AnimationSaveTarget? SaveTarget { get; init; }
-    public FigureAnimationSet WithBytes(byte[] bytes) => new("edited", bytes, Parents, Bones, BindPositions) { SaveTarget = SaveTarget };
+    public FigureAnimationSet WithBytes(byte[] bytes) => new("edited", bytes, Parents, Bones, BindPositions) { SaveTarget = SaveTarget, RootSpace = RootSpace };
     public FigureAnimationSet WithSavedBytes(byte[] bytes) => new("saved", bytes, Parents, Bones, BindPositions)
-    { SaveTarget = SaveTarget is null ? null : SaveTarget with { OriginalBytes = bytes.ToArray() } };
+    { SaveTarget = SaveTarget is null ? null : SaveTarget with { OriginalBytes = bytes.ToArray() }, RootSpace = RootSpace };
+    public FigureAnimationSet WithRootSpace(FigureRootSpace space) => new("space", ExportBytes(), Parents, Bones, BindPositions) { SaveTarget = SaveTarget, RootSpace = space };
     public IReadOnlyList<string> Names { get; }
     public IReadOnlyList<string> SkippedResources { get; }
     public IReadOnlyDictionary<string, string> Parents { get; }
@@ -134,7 +136,7 @@ public sealed class FigureAnimationSet
             var rotation = track?.Rotation(frame) ?? Quaternion.Identity;
             if (rotations is not null && rotations.TryGetValue(name, out var replacement)) rotation = replacement;
             if (name == editedPart && editedRotation.HasValue) rotation = editedRotation.Value;
-            if (parent.Length == 0) pose = new(track is null || track.Positions.Length == 0 ? bone : track.Position(frame), rotation);
+            if (parent.Length == 0) pose = new(track is null || track.Positions.Length == 0 ? bone : RootSpace.ToGame(track.Position(frame)), rotation);
             else
             {
                 var ancestor = Calculate(parent);
@@ -142,7 +144,7 @@ public sealed class FigureAnimationSet
                 // comes from BON rotated by parent, not the track's position array.
                 pose = new(ancestor.Position + Vector3.Transform(bone, ancestor.Rotation), Quaternion.Normalize(rotation * ancestor.Rotation));
             }
-            if (parent.Length == 0 && name == editedPart && editedPosition.HasValue) pose = pose with { Position = editedPosition.Value };
+            if (parent.Length == 0 && name == editedPart && editedPosition.HasValue) pose = pose with { Position = RootSpace.ToGame(editedPosition.Value) };
             visiting.Remove(name); result.Add(name, pose); return pose;
         }
         foreach (string name in Parents.Keys) Calculate(name);

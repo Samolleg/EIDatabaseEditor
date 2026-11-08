@@ -11,6 +11,7 @@ public enum DiagnosticDomain
 {
     Structural,
     Semantic,
+    Resources,
 }
 
 public sealed record DiagnosticLocation(
