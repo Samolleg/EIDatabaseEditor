@@ -1,6 +1,13 @@
 param([Parameter(Mandatory=$true)][string]$PackagePath)
 $ErrorActionPreference = 'Stop'
-$hostRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\handoff\current'))
+$workspaceRoot = $PSScriptRoot
+while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md') -PathType Leaf)) {
+    $parent = Split-Path -Parent $workspaceRoot
+    if (!$parent -or $parent -eq $workspaceRoot) { throw 'Project RULES.md not found above worktree.' }
+    $workspaceRoot = $parent
+}
+
+$hostRoot = [IO.Path]::GetFullPath((Join-Path $workspaceRoot 'builds/dbeditor/current'))
 $moduleRelative = 'Modules\malachite\current\'
 $target = Join-Path $hostRoot $moduleRelative
 $source = (Resolve-Path -LiteralPath $PackagePath).Path
@@ -10,7 +17,7 @@ $capabilities = @('workspace.read.v1','navigation.record.v1','files.export-copy.
 function Assert-Closed {
     foreach ($p in @(Get-Process -Name EvilIslands.DatabaseEditor -ErrorAction SilentlyContinue)) {
         if (-not $p.Path -or $p.Path.StartsWith($hostRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Close the editor in handoff/current before updating Malachite.'
+            throw 'Close the editor in builds/dbeditor/current before updating Malachite.'
         }
     }
 }
@@ -24,7 +31,7 @@ function Assert-NoLinks([string]$Path) {
 Assert-NoLinks $source
 Assert-NoLinks $target
 Assert-Closed
-$lockPath = Join-Path (Split-Path -Parent $hostRoot) '.current-update.lock'
+$lockPath = Join-Path $workspaceRoot 'docs/dbeditor-current-update.lock'
 Assert-NoLinks $lockPath
 $updateLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
@@ -33,7 +40,7 @@ if (Test-Path -LiteralPath (Join-Path $hostRoot 'Modules\malachite\0.4.0\module.
 }
 if ($source.Equals($target, [StringComparison]::OrdinalIgnoreCase)) { throw 'Source and destination must differ.' }
 $manifest = Get-Content -LiteralPath (Join-Path $source 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($manifest.scriptCheck.commit -notmatch '^[0-9a-f]{40}$' -or $manifest.scriptCheck.runtime -ne 'static CRT/MFC, x86' -or
+if ($manifest.scriptCheck.commit -notmatch '^[0-9a-f]{40}$' -or $manifest.scriptCheck.runtime -ne 'static CRT/MFC, x64' -or
     $manifest.scriptCheck.path -ne 'tools/ScriptCheck/ScriptCheck.exe' -or
     $manifest.scriptCheck.sha256 -ne (Get-FileHash -LiteralPath (Join-Path $source 'tools/ScriptCheck/ScriptCheck.exe')).Hash) { throw 'Invalid ScriptCheck identity.' }
 if (@($manifest.files).Count -ne $allowed.Count -or @($manifest.files.name | Sort-Object -Unique).Count -ne $allowed.Count) { throw 'Unexpected module file list.' }

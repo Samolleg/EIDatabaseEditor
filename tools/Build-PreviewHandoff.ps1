@@ -3,6 +3,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$workspaceRoot = $PSScriptRoot
+while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md') -PathType Leaf)) {
+    $parent = Split-Path -Parent $workspaceRoot
+    if (!$parent -or $parent -eq $workspaceRoot) { throw 'Project RULES.md not found above worktree.' }
+    $workspaceRoot = $parent
+}
+
 
 # Local builds always update the permanent editor folder. Versioned exports are explicit only.
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -25,9 +32,9 @@ $version = if ([string]::IsNullOrWhiteSpace($versionSuffix)) {
 } else {
     "$versionPrefix-$versionSuffix"
 }
-$handoffRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot 'handoff'))
+$handoffRoot = [System.IO.Path]::GetFullPath((Join-Path $workspaceRoot 'builds/dbeditor'))
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $handoffRoot "EvilIslands.DatabaseEditor-$version"
+    $OutputDirectory = Join-Path $handoffRoot 'current'
 }
 
 $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)

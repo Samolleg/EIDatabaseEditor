@@ -3,8 +3,15 @@ param(
     [string]$ModulePath
 )
 $ErrorActionPreference = 'Stop'
+$workspaceRoot = $PSScriptRoot
+while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md') -PathType Leaf)) {
+    $parent = Split-Path -Parent $workspaceRoot
+    if (!$parent -or $parent -eq $workspaceRoot) { throw 'Project RULES.md not found above worktree.' }
+    $workspaceRoot = $parent
+}
+
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$destination = Join-Path $projectRoot 'handoff\current'
+$destination = Join-Path $workspaceRoot 'builds/dbeditor/current'
 $manifestName = 'host-manifest.sha256.json'
 
 function Resolve-ContainedFile([string]$Root, [string]$Relative) {
@@ -25,7 +32,7 @@ function Resolve-ContainedFile([string]$Root, [string]$Relative) {
 function Assert-Closed {
     foreach ($process in @(Get-Process -Name EvilIslands.DatabaseEditor,kmd-generate -ErrorAction SilentlyContinue)) {
         if (-not $process.Path -or $process.Path.StartsWith($destination + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Закройте редактор и генератор Kimodo из handoff\current перед обновлением.'
+            throw 'Закройте редактор и генератор Kimodo из builds\dbeditor\current перед обновлением.'
         }
     }
 }
@@ -33,7 +40,7 @@ Assert-Closed
 $temporary = $null
 $handoffRoot = Split-Path -Parent $destination
 New-Item -ItemType Directory -Path $handoffRoot -Force | Out-Null
-$lockPath = Resolve-ContainedFile $handoffRoot '.current-update.lock'
+$lockPath = Resolve-ContainedFile (Join-Path $workspaceRoot 'docs') 'dbeditor-current-update.lock'
 $updateLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
     if (-not $PackagePath) {
