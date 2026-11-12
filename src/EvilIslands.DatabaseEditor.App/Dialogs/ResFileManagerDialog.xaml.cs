@@ -794,14 +794,14 @@ public partial class ResFileManagerDialog : Window
         var dialog = new SaveFileDialog
         {
             Title = "Сохранить проверенную копию RES",
-            Filter = "Evil Islands RES-контейнер (*.res)|*.res",
-            DefaultExt = ".res",
+            Filter = "Evil Islands PAK (*.pak)|*.pak",
+            DefaultExt = ".pak",
             AddExtension = true,
             OverwritePrompt = false,
             CreatePrompt = false,
             CheckPathExists = true,
             RestoreDirectory = true,
-            FileName = sourceName + ".edited.res",
+            FileName = sourceName + ".edited.pak",
         };
         if (dialog.ShowDialog(this) is not true)
         {
@@ -913,7 +913,7 @@ public partial class ResFileManagerDialog : Window
         {
             Title = "Открыть RES как архив",
             InitialDirectory = _preferences.GetLastResDirectory() ?? Path.GetDirectoryName(_archivePath),
-            Filter = "Evil Islands RES-контейнер (*.res)|*.res|Все файлы (*.*)|*.*",
+            Filter = "Evil Islands PAK/RES (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             Multiselect = false,
             CheckFileExists = true,
             RestoreDirectory = true,

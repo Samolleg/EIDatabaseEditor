@@ -149,7 +149,7 @@ public sealed class SpellVisualEffectsView : UserControl
         _details.Text = row.Name + "\n" + row.Stage + "\n\nИсточник:\n" + (row.Source.Length > 0 ? row.Source : "Не найден в подключённых источниках.") +
             "\n\nВсе версии в порядке источников:\n" + row.Versions + "\n\nИзвестные заклинания с этим атласом:\n" + users +
             "\nЭто неполный перечень использований: атлас также могут использовать другие частицы, предметы и сценарии.";
-        _open.IsEnabled = row.Source.EndsWith(".res", StringComparison.OrdinalIgnoreCase);
+        _open.IsEnabled = ResourceArchivePaths.IsArchive(row.Source);
         _bind.IsEnabled = row.Source.Length > 0 && _library.IsChecked != true && _vm?.SelectedRecord?.TableKey == "spells.prototypes";
         PreviewTask = PreviewAsync(row, _catalog, _previewCancellation.Token);
     }
@@ -169,7 +169,7 @@ public sealed class SpellVisualEffectsView : UserControl
     }
     private void OpenResource()
     {
-        if (_vm is null || _catalog is null || _list.SelectedItem is not ResourceRow row || !row.Source.EndsWith(".res", StringComparison.OrdinalIgnoreCase)) return;
+        if (_vm is null || _catalog is null || _list.SelectedItem is not ResourceRow row || !ResourceArchivePaths.IsArchive(row.Source)) return;
         if (!_catalog.IsCurrent()) { _catalog = null; QueueLoad(); return; }
         var locked = new[] { _vm.SourcePath, _vm.TextsPath }.Concat(_vm.SoundArchivePaths.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
         var dialog = new ResFileManagerDialog(row.Source, locked) { Owner = Window.GetWindow(this), InitialResourceName = row.Name };

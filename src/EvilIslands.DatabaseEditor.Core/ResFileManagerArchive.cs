@@ -36,6 +36,7 @@ public sealed class ResFileManagerArchive
 {
     private const int CopyBufferSize = 1024 * 1024;
     private readonly Dictionary<string, ResEntry> _entriesByName;
+    private PakArchive? _pak;
 
     private ResFileManagerArchive(
         string sourcePath,
@@ -63,8 +64,19 @@ public sealed class ResFileManagerArchive
     public IReadOnlyList<ResEntry> Entries { get; }
 
     // Read-only discovery: reuse structural validation without hashing/loading payloads.
-    public static IReadOnlyList<ResEntry> ReadCatalog(string path, CancellationToken cancellationToken = default) =>
-        OpenArchiveIndex(Path.GetFullPath(path), cancellationToken, readOnlyCatalog: true).Entries;
+    public static IReadOnlyList<ResEntry> ReadCatalog(string path, CancellationToken cancellationToken = default)
+    {
+        path=ResourceArchivePaths.Resolve(Path.GetFullPath(path));
+        if(PakArchive.IsPak(path)){using var pak=PakArchive.Open(path,cancellationToken);return pak.Entries;}
+        return OpenArchiveIndex(path,cancellationToken,readOnlyCatalog:true).Entries;
+    }
+    public static byte[] ReadResource(string path,string name,CancellationToken token=default)
+    {
+        path=ResourceArchivePaths.Resolve(path);
+        if(PakArchive.IsPak(path))return PakArchive.Read(path,name,token);
+        var entry=ReadCatalog(path,token).Single(e=>e.Name.Equals(name,StringComparison.OrdinalIgnoreCase));
+        using var stream=File.OpenRead(path);stream.Position=entry.Offset;byte[] bytes=new byte[entry.Size];stream.ReadExactly(bytes);return bytes;
+    }
 
     public static Task<ResFileManagerArchive> OpenAsync(
         string path,
@@ -134,6 +146,7 @@ public sealed class ResFileManagerArchive
         if (length > MmpPreviewDecoder.MaximumInputBytes)
             throw new InvalidDataException("Ресурс превышает лимит предпросмотра 128 МиБ.");
         cancellationToken.ThrowIfCancellationRequested();
+        if(imported is null && _pak is not null)return MmpPreviewDecoder.Decode(_pak.Read(resourceName,cancellationToken),cancellationToken);
         using var stream = imported is null ? OpenVerifiedSource(cancellationToken) :
             new FileStream(imported.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
         if (imported is not null && stream.Length != length)
@@ -226,6 +239,11 @@ public sealed class ResFileManagerArchive
 
     private static ResFileManagerArchive Open(string path, CancellationToken cancellationToken)
     {
+        path=ResourceArchivePaths.Resolve(path);
+        if(PakArchive.IsPak(path)) {
+            var pak=PakArchive.Open(path,cancellationToken);
+            return new ResFileManagerArchive(path,pak.Length,File.GetLastWriteTimeUtc(path),pak.Sha256,pak.Entries){_pak=pak};
+        }
         if (!File.Exists(path))
         {
             throw new FileNotFoundException("RES-файл не найден.", path);
@@ -262,6 +280,11 @@ public sealed class ResFileManagerArchive
         bool overwrite,
         CancellationToken cancellationToken)
     {
+        if(_pak is not null) {
+            if(DatabaseSafetyPolicy.ContainsReparsePoint(targetPath))throw new IOException("Unsafe extraction path.");
+            using var output=new FileStream(targetPath,overwrite?FileMode.Create:FileMode.CreateNew,FileAccess.Write,FileShare.None);
+            output.Write(_pak.Read(entry.Name,cancellationToken));output.Flush(true);return;
+        }
         string? directory = Path.GetDirectoryName(targetPath);
         if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
         {
@@ -379,6 +402,10 @@ public sealed class ResFileManagerArchive
         string destinationPath,
         CancellationToken cancellationToken)
     {
+        if (_pak is not null || PakArchive.IsPak(destinationPath)) {
+            EnsureSafeCopyDestination(destinationPath);
+            return SavePak(edits,destinationPath,false,false,cancellationToken);
+        }
         if (string.Equals(SourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Для исходного RES используйте «Сохранить в текущий RES».");
@@ -414,6 +441,7 @@ public sealed class ResFileManagerArchive
         CancellationToken cancellationToken, bool createBackup)
     {
         EnsureSafeInPlaceTarget(SourcePath, allowGameInstallationPath);
+        if(_pak is not null)return SavePak(edits,SourcePath,true,createBackup,cancellationToken);
         MutationPlan plan = CreatePlan(edits);
         string directory = Path.GetDirectoryName(SourcePath)!;
         string tempPath = Path.Combine(directory, $".{Path.GetFileName(SourcePath)}.partial-{Guid.NewGuid():N}");
@@ -485,6 +513,29 @@ public sealed class ResFileManagerArchive
         {
             throw new IOException("Исходный RES изменился после открытия. Откройте его повторно.");
         }
+    }
+
+    private ResFileManagerSaveResult SavePak(IReadOnlyList<ResFileEdit> edits,string destination,bool inPlace,bool backup,CancellationToken token)
+    {
+        if(!PakArchive.IsPak(destination))throw new IOException("PAK output requires .pak extension.");
+        var changes=new Dictionary<string,byte[]?>();var keys=new HashSet<string>();int added=0,replaced=0,deleted=0;
+        if(!inPlace) {
+            foreach(var entry in Entries)changes.Add(entry.Name,_pak?.Read(entry.Name,token)??ReadResource(SourcePath,entry.Name,token));
+            if(_pak is not null)foreach(var name in _pak.Deleted)changes.Add(name,null);
+        }
+        foreach(var edit in edits) {
+            string key=PakArchive.LookupKey(edit.ResourceName);if(!keys.Add(key))throw new IOException("Duplicate PAK edit.");
+            var original=Entries.FirstOrDefault(e=>PakArchive.LookupKey(e.Name)==key);string name=original?.Name??edit.ResourceName;
+            if(edit.Kind==ResFileEditKind.Delete){changes[name]=null;deleted++;continue;}
+            var imported=edit.ImportedFile??throw new IOException("Missing imported payload.");byte[] bytes=File.ReadAllBytes(imported.SourcePath);
+            if(!Convert.ToHexString(SHA256.HashData(bytes)).Equals(imported.Sha256,StringComparison.OrdinalIgnoreCase))throw new IOException("Imported file changed.");
+            changes[name]=bytes;if(original is null)added++;else replaced++;
+        }
+        string? backupPath=null;
+        if(backup) {backupPath=CreateAvailableBackupPath(SourcePath);File.WriteAllBytes(backupPath,_pak!.OriginalBytes());}
+        PakArchive.ApplyChanges([(destination,inPlace?Sha256:null,changes)]);
+        using var result=PakArchive.Open(destination,token);
+        return new(destination,result.Length,result.Sha256,result.Entries.Count,added,replaced,deleted,backupPath);
     }
 
     private MutationPlan CreatePlan(IReadOnlyList<ResFileEdit> edits)

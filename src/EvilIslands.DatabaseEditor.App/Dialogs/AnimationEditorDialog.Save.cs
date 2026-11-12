@@ -29,7 +29,9 @@ internal sealed partial class AnimationEditorDialog
         if (checkIssues && !await CheckBeforeExport()) return;
         _editor.NestFlatClip(_name);
         byte[] bytes = _editor.ExportBytes();
-        var savedBackup = await target.SaveAsync(_saveBaseline, bytes, backup);
+        var savedBackup = _scene.AnimationDatabase is { } actions
+            ? await AnimationPairSave.SaveAsync(target, _saveBaseline, bytes, actions, actions.CreateDraft(), backup)
+            : await target.SaveAsync(_saveBaseline, bytes, backup);
         _saveBaseline = bytes.ToArray(); _exported = bytes;
         SavedAnimationSet = _scene.Animations!.WithSavedBytes(bytes);
         SavedClipName = _name;

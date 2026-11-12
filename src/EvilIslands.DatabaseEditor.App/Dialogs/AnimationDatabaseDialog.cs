@@ -315,7 +315,7 @@ internal sealed partial class AnimationDatabaseDialog : LuaToolWindow
         {
             if (_list.SelectedItem is not Row { Index: null } row) throw new InvalidOperationException("Выберите клип со статусом «Только ANM».");
             if (!_id.Text.Trim().Equals(row.Id, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Для добавления выберите существующий клип ANM; переименовать его здесь нельзя.");
-            if (!SavedClipExists(row.Id)) throw new InvalidOperationException("Сначала сохраните этот клип в исходный ANM и обновите предпросмотр.");
+            if (!SavedClipExists(row.Id)) throw new InvalidOperationException("Клип отсутствует в текущем ANM. Обновите предпросмотр.");
             uint length = UInt(_length);
             if (length == 0) throw new FormatException("Укажите число кадров клипа.");
             int index = _draft.Count;
@@ -351,17 +351,9 @@ internal sealed partial class AnimationDatabaseDialog : LuaToolWindow
 
     private bool SavedClipExists(string id)
     {
-        var target = _preview.SaveTarget;
-        if (target is null) return false;
-        byte[] bytes;
-        if (target.ResourceName is null) bytes = File.ReadAllBytes(target.Path);
-        else
-        {
-            var archive = ResArchiveDocument.Open(target.Path);
-            bytes = archive.GetResourceBytes(target.ResourceName).ToArray();
-        }
-        var anm = new FigureAnimationSet(_scene.Model, bytes, _preview.Parents, _preview.Bones, _preview.BindPositions);
-        return anm.Names.Contains(id, StringComparer.OrdinalIgnoreCase);
+        // The paired save publishes this preview's ANM together with the ADB.
+        // Disk snapshot conflicts are checked under writer locks by the transaction.
+        return _preview.SaveTarget is not null && _preview.Names.Contains(id, StringComparer.OrdinalIgnoreCase);
     }
     private async Task Save()
     {
@@ -369,7 +361,14 @@ internal sealed partial class AnimationDatabaseDialog : LuaToolWindow
         {
             if (_list.SelectedItem is Row { Index: int } && !Apply()) return;
             if (!_dirty) { _status.Text = "Изменений ADB нет."; return; }
-            string? backup = await _source.SaveAsync(_draft);
+            string? backup;
+            if (_preview.SaveTarget is { } target)
+            {
+                byte[] animation = _preview.ExportBytes();
+                backup = await AnimationPairSave.SaveAsync(target, target.OriginalBytes, animation, _source, _draft);
+                SavedAnimationSet = _preview = _preview.WithSavedBytes(animation);
+            }
+            else backup = await _source.SaveAsync(_draft);
             _draft = _source.CreateDraft(); _dirty = false; _history.Clear();
             _status.Text = "ADB сохранён и проверен. Резервная копия: " + (backup ?? "не потребовалась");
         }

@@ -33,6 +33,40 @@ public sealed record SoundArchiveCopyResult(
 public static class SoundArchiveCopyEditor
 {
     private const int CopyBufferSize = 1024 * 1024;
+    public static PreparedFileWrite PreparePakImage(BriefingSoundImportTarget target,SoundImportAsset asset)
+    {
+        ValidateAudioSignature(asset.Data.Span,asset.Format);
+        var source=ResArchiveDocument.Open(target.Archive.SourcePath);
+        if(!source.IsPak)throw new IOException("Expected a PAK sound source.");
+        if(target.Archive.Sha256 is not null&&!source.Sha256.Equals(target.Archive.Sha256,StringComparison.OrdinalIgnoreCase))throw new IOException("Sound archive changed since opening.");
+        byte[] image=source.TryGetEntry(target.ResourceName,out var entry)&&entry is not null
+            ? ResArchiveWriter.Rebuild(source,new Dictionary<int,byte[]>{{entry.Index,asset.Data.ToArray()}})
+            : ResArchiveWriter.Rebuild(source,new Dictionary<int,byte[]>(),[new(target.ResourceName,asset.Data.ToArray())]);
+        return new(Guid.NewGuid(),source.SourcePath,source.Sha256,image);
+    }
+    private static SoundArchiveCopyResult SavePak(BriefingSoundImportTarget target,SoundImportAsset asset,string destination,bool inPlace)
+    {
+        ValidateAudioSignature(asset.Data.Span,asset.Format);
+        if(!PakArchive.IsPak(destination))throw new IOException("PAK output requires .pak extension.");
+        var changes=new Dictionary<string,byte[]?>();
+        if(!PakArchive.IsPak(target.Archive.SourcePath)) {
+            var legacy=ResArchiveDocument.Open(target.Archive.SourcePath);
+            foreach(var entry in legacy.Entries)changes.Add(entry.Name,legacy.GetResourceBytes(entry).ToArray());
+            changes[target.ResourceName]=asset.Data.ToArray();
+            PakArchive.ApplyChanges([(destination,null,changes)]);
+            using var converted=PakArchive.Open(destination);
+            return new(destination,converted.Length,converted.Sha256,target.ResourceName,target.IsReplacement,converted.Entries.Count,true);
+        }
+        using var archive=PakArchive.Open(target.Archive.SourcePath);
+        if(target.Archive.Sha256 is not null&&!archive.Sha256.Equals(target.Archive.Sha256,StringComparison.OrdinalIgnoreCase))throw new IOException("Sound archive changed since opening.");
+        if(!inPlace){foreach(var entry in archive.Entries)changes.Add(entry.Name,archive.Read(entry.Name));foreach(var name in archive.Deleted)changes.Add(name,null);}
+        changes[target.ResourceName]=asset.Data.ToArray();
+        string? backup=null;if(inPlace){backup=CreateAvailableBackupPath(destination);File.WriteAllBytes(backup,archive.OriginalBytes());}
+        PakArchive.ApplyChanges([(destination,inPlace?archive.Sha256:null,changes)]);
+        using var saved=PakArchive.Open(destination);
+        if(!saved.Read(target.ResourceName).AsSpan().SequenceEqual(asset.Data.Span))throw new IOException("Sound readback differs.");
+        return new(destination,saved.Length,saved.Sha256,target.ResourceName,target.IsReplacement,saved.Entries.Count,true,backup);
+    }
 
     public static async Task<SoundImportAsset> LoadImportAsync(
         string path,
@@ -122,11 +156,11 @@ public static class SoundArchiveCopyEditor
         {
             SoundResourceInfo? briefingAnchor = catalog.Resources
                 .Where(resource => resource.ResourceName.Contains("\\Briefing\\", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(resource => resource.Archive.FileName.Equals("speech.res", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .OrderBy(resource => Path.GetFileNameWithoutExtension(resource.Archive.FileName).Equals("speech", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(resource => resource.Archive.Priority)
                 .FirstOrDefault();
             archive = briefingAnchor?.Archive ?? catalog.Archives
-                .OrderBy(candidate => candidate.FileName.Equals("speech.res", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .OrderBy(candidate => Path.GetFileNameWithoutExtension(candidate.FileName).Equals("speech", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
                 .ThenBy(candidate => candidate.Priority)
                 .FirstOrDefault();
             if (archive is null)
@@ -195,6 +229,10 @@ public static class SoundArchiveCopyEditor
     {
         string sourcePath = Path.GetFullPath(target.Archive.SourcePath);
         string destinationPath = Path.GetFullPath(outputPath);
+        if(PakArchive.IsPak(sourcePath)||PakArchive.IsPak(destinationPath)) {
+            EnsureSafeDestination(destinationPath);
+            return SavePak(target,asset,destinationPath,false);
+        }
         if (string.Equals(sourcePath, destinationPath, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("Исходный звуковой RES заблокирован от перезаписи. Сохраните новую копию.");
@@ -303,6 +341,7 @@ public static class SoundArchiveCopyEditor
     {
         string sourcePath = Path.GetFullPath(target.Archive.SourcePath);
         EnsureSafeInPlaceTarget(sourcePath, allowGameInstallationPath);
+        if(PakArchive.IsPak(sourcePath))return SavePak(target,asset,sourcePath,true);
         ValidateResourceName(target.ResourceName);
         ValidateAudioSignature(asset.Data.Span, asset.Format);
 

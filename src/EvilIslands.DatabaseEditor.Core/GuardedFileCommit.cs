@@ -17,11 +17,13 @@ internal sealed class GuardedFileCommit : IDisposable
 {
     private readonly string _sourcePath;
     private readonly FileStream _source;
+    private readonly string _expectedHash;
 
     public GuardedFileCommit(string sourcePath, string expectedSha256)
     {
         _sourcePath = Path.GetFullPath(sourcePath);
-        _source = OpenLocked(_sourcePath);
+        _expectedHash=expectedSha256;
+        _source = PakArchive.IsPak(_sourcePath) ? new FileStream(_sourcePath,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Delete) : OpenLocked(_sourcePath);
         try
         {
             VerifyHash(_source, expectedSha256);
@@ -38,6 +40,15 @@ internal sealed class GuardedFileCommit : IDisposable
     {
         preparedPath = Path.GetFullPath(preparedPath);
         backupPath = Path.GetFullPath(backupPath);
+        if(PakArchive.IsPak(_sourcePath)) {
+            if(DatabaseSafetyPolicy.ContainsReparsePoint(preparedPath)||DatabaseSafetyPolicy.ContainsReparsePoint(backupPath))throw new IOException("Unsafe PAK save path.");
+            byte[] bytes=File.ReadAllBytes(preparedPath);
+            if(!Convert.ToHexString(SHA256.HashData(bytes)).Equals(expectedPreparedSha256,StringComparison.OrdinalIgnoreCase))throw new IOException("Prepared PAK changed.");
+            _source.Position=0;using(var backup=new FileStream(backupPath,FileMode.CreateNew,FileAccess.Write,FileShare.None)){_source.CopyTo(backup);backup.Flush(true);}
+            beforePublish?.Invoke();
+            PakArchive.PublishImages([(_sourcePath,_expectedHash,bytes)]);
+            File.Delete(preparedPath);return;
+        }
         if (!string.Equals(Path.GetDirectoryName(_sourcePath), Path.GetDirectoryName(preparedPath), StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(Path.GetDirectoryName(_sourcePath), Path.GetDirectoryName(backupPath), StringComparison.OrdinalIgnoreCase) ||
             DatabaseSafetyPolicy.ContainsReparsePoint(_sourcePath) ||

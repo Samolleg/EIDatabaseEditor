@@ -130,7 +130,7 @@ public sealed class SpellTextureBindingDialog : Window
     private void Open()
     {
         if (_dirty && !ConfirmDiscard()) return;
-        var dialog = new OpenFolderDialog { Title = "Папка пакета с config/spell-textures.tsv и res/spell-textures.res" };
+        var dialog = new OpenFolderDialog { Title = "Папка пакета с config/spell-textures.tsv и res/spell-textures.pak" };
         if (dialog.ShowDialog(this) != true) return;
         try
         {
@@ -147,7 +147,7 @@ public sealed class SpellTextureBindingDialog : Window
         try
         {
             string folder = Path.Combine(dialog.FolderName, name); SpellTexturePack.Export(folder, _rows, _textures);
-            _dirty = false; _status.Text = "Пакет проверен: " + folder + "\nДля изменения текстуры откройте его res/spell-textures.res в RES-менеджере. В игру ничего не установлено.";
+            _dirty = false; _status.Text = "Пакет проверен: " + folder + "\nДля изменения текстуры откройте его res/spell-textures.pak в RES-менеджере. В игру ничего не установлено.";
         }
         catch (Exception ex) { _status.Text = "Экспорт не завершён: " + ex.Message; }
     }

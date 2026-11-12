@@ -181,6 +181,8 @@ public sealed class DatabaseDocument
         }
 
         var rebuilt = ResArchiveWriter.Rebuild(_archive, replacements);
+        if(PakArchive.IsPak(destinationPath))rebuilt=PakArchive.ConvertResImage(rebuilt);
+        else if(_archive.IsPak)throw new IOException("PAK output requires .pak extension.");
         var verifiedDocument = VerifyRebuiltArchive(destinationPath, rebuilt, replacements);
         var verifiedDiagnostics = verifiedDocument.Diagnostics;
         var rebuiltSha256 = Convert.ToHexString(SHA256.HashData(rebuilt));
@@ -211,7 +213,8 @@ public sealed class DatabaseDocument
                 throw new IOException("Путь назначения изменился и больше не является безопасным.");
             }
 
-            File.Move(tempPath, destinationPath);
+            if(PakArchive.IsPak(destinationPath)){PakArchive.PublishImages([(destinationPath,null,rebuilt)]);File.Delete(tempPath);}
+            else File.Move(tempPath, destinationPath);
         }
         catch
         {
@@ -639,7 +642,7 @@ public sealed class DatabaseDocument
         var verifiedArchive = ResArchiveDocument.Parse(destinationPath, rebuilt);
         foreach (var originalEntry in _archive.Entries)
         {
-            var verifiedEntry = verifiedArchive.Entries.Single(entry => entry.Index == originalEntry.Index);
+            var verifiedEntry = verifiedArchive.Entries.Single(entry => entry.Name.Equals(originalEntry.Name,StringComparison.OrdinalIgnoreCase));
             if (replacements.ContainsKey(originalEntry.Index))
             {
                 continue;

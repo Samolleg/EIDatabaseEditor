@@ -10,7 +10,8 @@ public sealed record SoundArchiveInfo(
     long FileLength,
     DateTime? LastWriteTimeUtc,
     int ArchiveEntryCount,
-    int SoundResourceCount);
+    int SoundResourceCount,
+    string? Sha256 = null);
 
 public sealed record SoundResourceInfo(
     SoundArchiveInfo Archive,
@@ -121,6 +122,7 @@ public sealed class SoundArchiveCatalog
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(resource);
+        if(PakArchive.IsPak(resource.Archive.SourcePath))return PakArchive.Read(resource.Archive.SourcePath,resource.ResourceName,cancellationToken);
         if (resource.Length < 0 || resource.DataOffset < ResArchiveDocument.HeaderSize)
         {
             throw new DatabaseFormatException("Диапазон звукового ресурса некорректен.", resource.Archive.SourcePath);
@@ -154,11 +156,13 @@ public sealed class SoundArchiveCatalog
     {
         var archives = new SoundArchiveInfo[sourceArchives.Count];
         var resources = new List<SoundResourceInfo>();
+        var deletedNames=new HashSet<string>(StringComparer.Ordinal);
         for (var archiveIndex = 0; archiveIndex < sourceArchives.Count; archiveIndex++)
         {
             SoundArchiveIndex source = sourceArchives[archiveIndex];
+            if(PakArchive.IsPak(source.SourcePath))foreach(string name in PakArchive.DeletedNames(source.SourcePath))deletedNames.Add(PakArchive.LookupKey(name));
             ResEntry[] soundEntries = source.Entries
-                .Where(entry => IsSupportedSound(entry.Name))
+                .Where(entry => IsSupportedSound(entry.Name) && !deletedNames.Contains(PakArchive.LookupKey(entry.Name)))
                 .ToArray();
             var archive = new SoundArchiveInfo(
                 archiveIndex,
@@ -167,7 +171,7 @@ public sealed class SoundArchiveCatalog
                 source.FileLength,
                 ReadLastWriteTimeUtc(source.SourcePath),
                 source.Entries.Count,
-                soundEntries.Length);
+                soundEntries.Length,source.Sha256);
             archives[archiveIndex] = archive;
             resources.AddRange(soundEntries.Select(entry => new SoundResourceInfo(
                 archive,
@@ -183,6 +187,7 @@ public sealed class SoundArchiveCatalog
 
     private static SoundArchiveIndex ReadArchiveIndex(string path)
     {
+        if(PakArchive.IsPak(path)){using var pak=PakArchive.Open(path);return new(path,pak.Length,pak.Entries,pak.Sha256);}
         using var stream = new FileStream(
             path,
             FileMode.Open,
@@ -199,6 +204,7 @@ public sealed class SoundArchiveCatalog
         string path,
         CancellationToken cancellationToken)
     {
+        if(PakArchive.IsPak(path)){using var pak=PakArchive.Open(path,cancellationToken);return new(path,pak.Length,pak.Entries,pak.Sha256);}
         await using var stream = new FileStream(
             path,
             FileMode.Open,
@@ -352,7 +358,7 @@ public sealed class SoundArchiveCatalog
     {
         var result = new List<string>();
         var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string path in paths)
+        foreach (string path in ResourceArchivePaths.Order(paths))
         {
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -490,7 +496,8 @@ public sealed class SoundArchiveCatalog
     private sealed record SoundArchiveIndex(
         string SourcePath,
         long FileLength,
-        IReadOnlyList<ResEntry> Entries);
+        IReadOnlyList<ResEntry> Entries,
+        string? Sha256=null);
 
     private readonly record struct ArchiveHeader(
         int EntryCount,

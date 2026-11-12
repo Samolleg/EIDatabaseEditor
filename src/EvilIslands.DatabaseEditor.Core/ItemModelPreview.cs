@@ -141,7 +141,7 @@ public static class ItemModelPreview
                 default: throw new NotSupportedException("Для этой записи не определён вид предмета: " + item.Table);
             }
             if (validation is not null) validation.Context = "Инвентарная модель: " + root;
-            var reader = new FigureResources(databasePath, sources, used, token, validation);
+            using var reader = new FigureResources(databasePath, sources, used, token, validation);
             Dictionary<string, string> parents;
             Func<string, byte[]> figure, bone;
             if (reader.Contains(root + ".mod"))
@@ -231,35 +231,43 @@ public static class ItemModelPreview
         return new(width, height, image.Format + " · инвентарный атлас", bytes, image.PremultipliedAlpha);
     }
 
-    private sealed class FigureResources
+    private sealed class FigureResources : IDisposable
     {
         private readonly Dictionary<string, (string Path, ResEntry Entry, long Length, long Written)> _entries = new(StringComparer.OrdinalIgnoreCase);
+        private readonly PakArchiveSet _pakFiles = new();
+        public void Dispose() => _pakFiles.Dispose();
+        private readonly HashSet<string> _blocked = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> _used;
         private readonly CancellationToken _token;
         private readonly ResourceValidationSession? _validation;
+        private readonly string? _configuration;
         public FigureResources(string database, TextureSources sources, List<string> used, CancellationToken token, ResourceValidationSession? validation = null)
         {
-            _used = used; _token = token; _validation = validation;
+            _used = used; _token = token; _validation = validation;_configuration=sources.ConfigurationPath;
             if (validation is not null) return;
             foreach (string path in UnitModelPreview.FigureArchives(database, sources).Where(File.Exists))
             {
                 token.ThrowIfCancellationRequested();
                 var info = new FileInfo(path); long length = info.Length; long written = ResourceFileStamp.Read(path);
-                var entries = ResFileManagerArchive.ReadCatalog(path, token);
+                if (PakArchive.IsPak(path)) foreach (string name in _pakFiles.Get(path, token).Deleted) _blocked.Add(PakArchive.LookupKey(name));
+                var entries = PakArchive.IsPak(path) ? _pakFiles.Get(path, token).Entries : ResFileManagerArchive.ReadCatalog(path, token);
                 info.Refresh();
                 if (length != info.Length || written != ResourceFileStamp.Read(path)) throw new IOException("Архив изменился во время чтения.");
-                foreach (var entry in entries) _entries.TryAdd(entry.Name, (path, entry, length, written));
+                foreach (var entry in entries) if (!_blocked.Contains(PakArchive.LookupKey(entry.Name))) _entries.TryAdd(PakArchive.LookupKey(entry.Name), (path, entry, length, written));
             }
         }
-        public bool Contains(string name) => _validation?.Contains(name) ?? _entries.ContainsKey(name);
+        public bool Contains(string name) => ResourceArchivePaths.FindLoose(_configuration,name) is not null||(_validation?.Contains(name) ?? _entries.ContainsKey(PakArchive.LookupKey(name)));
         public byte[] Read(string name)
         {
             _token.ThrowIfCancellationRequested();
+            if(ResourceArchivePaths.FindLoose(_configuration,name) is { } loose){_used.Add(name+" — "+loose);return File.ReadAllBytes(loose);}
             if (_validation is not null) return _validation.Read(name, _token);
-            if (!_entries.TryGetValue(name, out var resource)) throw new FileNotFoundException("Не найдена инвентарная модель: " + name);
+            if (!_entries.TryGetValue(PakArchive.LookupKey(name), out var resource)) throw new FileNotFoundException("Не найдена инвентарная модель: " + name);
             using var stream = new FileStream(resource.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (stream.Length != resource.Length || ResourceFileStamp.Read(resource.Path) != resource.Written) throw new IOException("Архив модели изменился. Обновите предпросмотр.");
-            stream.Position = resource.Entry.Offset; var bytes = new byte[resource.Entry.Size]; stream.ReadExactly(bytes);
+            byte[] bytes;
+            if (PakArchive.IsPak(resource.Path)) bytes = _pakFiles.Get(resource.Path, _token).Read(resource.Entry.Name, _token);
+            else { stream.Position = resource.Entry.Offset; bytes = new byte[resource.Entry.Size]; stream.ReadExactly(bytes); }
             _used.Add(name + " — " + resource.Path); return bytes;
         }
     }

@@ -4,6 +4,7 @@ namespace EvilIslands.DatabaseEditor.Core;
 
 public sealed record MapObjectResource(string Model, string ArchivePath, string ModResource, string? BonResource)
 {
+    public string? BonArchivePath { get; init; }
     public string ArchiveName => Path.GetFileName(ArchivePath);
     public string Label => $"{Model} — {ArchiveName}";
 }
@@ -14,23 +15,29 @@ public static class MapObjectResourceCatalog
     public static Task<IReadOnlyList<MapObjectResource>> DiscoverAsync(string databasePath, CancellationToken token = default) =>
         Task.Run<IReadOnlyList<MapObjectResource>>(() =>
         {
-            string folder = Path.GetDirectoryName(Path.GetFullPath(databasePath))!;
-            var result = new List<MapObjectResource>();
-            foreach (string archive in Directory.EnumerateFiles(folder, "*.res", SearchOption.TopDirectoryOnly).Order(StringComparer.OrdinalIgnoreCase))
-            {
-                token.ThrowIfCancellationRequested();
-                var entries = ResFileManagerArchive.ReadCatalog(archive, token);
-                var names = entries.Select(e => e.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                foreach (var entry in entries)
-                {
-                    if (!entry.Name.EndsWith(".mod", StringComparison.OrdinalIgnoreCase)) continue;
-                    string stem = entry.Name[..^4];
-                    string bon = stem + ".bon";
-                    result.Add(new(stem, archive, entry.Name, names.Contains(bon) ? bon : null));
+            var sources=TextureSources.FromDatabaseFolderAsync(databasePath,token).GetAwaiter().GetResult();
+            var resources=new Dictionary<string,(string Owner,string Name)>(StringComparer.Ordinal);
+            var claimed=new HashSet<string>(StringComparer.Ordinal);
+            if(sources.ConfigurationPath is { } config){
+                string root=Path.GetDirectoryName(config)!;
+                foreach(string file in Directory.EnumerateFiles(root,"*",SearchOption.AllDirectories)){
+                    string name=Path.GetRelativePath(root,file);if(!name.EndsWith(".mod",StringComparison.OrdinalIgnoreCase)&&!name.EndsWith(".bon",StringComparison.OrdinalIgnoreCase))continue;
+                    if(DatabaseSafetyPolicy.ContainsReparsePoint(file))continue;
+                    string key=PakArchive.LookupKey(name);if(claimed.Add(key))resources.Add(key,(root,name));
                 }
             }
-            return result.OrderBy(e => e.Model, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(e => e.ArchiveName, StringComparer.OrdinalIgnoreCase).ToArray();
+            foreach(string archive in UnitModelPreview.FigureArchives(databasePath,sources).Where(File.Exists)){
+                token.ThrowIfCancellationRequested();
+                using var pak=PakArchive.IsPak(archive)?PakArchive.Open(archive,token):null;
+                if(pak is not null)foreach(string name in pak.Deleted)claimed.Add(PakArchive.LookupKey(name));
+                foreach(var entry in pak?.Entries??ResFileManagerArchive.ReadCatalog(archive,token)){
+                    string key=PakArchive.LookupKey(entry.Name);if(claimed.Add(key))resources.Add(key,(archive,entry.Name));
+                }
+            }
+            return resources.Values.Where(r=>r.Name.EndsWith(".mod",StringComparison.OrdinalIgnoreCase)).Select(r=>{
+                string model=r.Name[..^4];bool found=resources.TryGetValue(PakArchive.LookupKey(model+".bon"),out var bon);
+                return new MapObjectResource(model,r.Owner,r.Name,found?bon.Name:null){BonArchivePath=found?bon.Owner:null};
+            }).OrderBy(r=>r.Model,StringComparer.OrdinalIgnoreCase).ThenBy(r=>r.ArchiveName,StringComparer.OrdinalIgnoreCase).ToArray();
         }, token);
 
     public static Task<UnitModelScene> LoadAsync(MapObjectResource resource, CancellationToken token = default) =>
@@ -38,7 +45,7 @@ public static class MapObjectResourceCatalog
 
     /// <summary>Mapper complexion: X strength, Y dexterity, Z height; each is in [0, 1].</summary>
     public static Task<UnitModelScene> LoadAsync(MapObjectResource resource, Vector3 morph, CancellationToken token = default) =>
-        Task.Run(async () =>
+        Task.Run(() =>
         {
             token.ThrowIfCancellationRequested();
             if (!float.IsFinite(morph.X) || !float.IsFinite(morph.Y) || !float.IsFinite(morph.Z) ||
@@ -47,10 +54,10 @@ public static class MapObjectResourceCatalog
             // The mapper interpolates dexterity inside each sample pair, then strength
             // between pairs. The shared FIG decoder uses the opposite axis order.
             Vector3 figureMorph = new(morph.Y, morph.X, morph.Z);
-            var archive = await ResArchiveDocument.OpenAsync(resource.ArchivePath, token).ConfigureAwait(false);
-            var mod = ResArchiveDocument.Parse(resource.ModResource, archive.GetResourceBytes(resource.ModResource).ToArray(), token);
+            byte[] OwnerBytes(string owner,string name) => Directory.Exists(owner)?File.ReadAllBytes(Path.Combine(owner,name)):ResFileManagerArchive.ReadResource(owner,name,token);
+            var mod = ResArchiveDocument.Parse(resource.ModResource,OwnerBytes(resource.ArchivePath,resource.ModResource),token);
             ResArchiveDocument? bon = resource.BonResource is null ? null :
-                ResArchiveDocument.Parse(resource.BonResource, archive.GetResourceBytes(resource.BonResource).ToArray(), token);
+                ResArchiveDocument.Parse(resource.BonResource,OwnerBytes(resource.BonArchivePath??resource.ArchivePath,resource.BonResource),token);
             var parents = UnitModelPreview.ReadHierarchy(mod.GetResourceBytes(resource.Model).ToArray());
             var positions = new Dictionary<string, Vector3>(StringComparer.OrdinalIgnoreCase);
             var visiting = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

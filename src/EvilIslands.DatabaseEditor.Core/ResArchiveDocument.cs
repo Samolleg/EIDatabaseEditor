@@ -21,6 +21,17 @@ public sealed class ResArchiveDocument
 
     private readonly byte[] _data;
     private readonly Dictionary<string, ResEntry> _entriesByName;
+    private PakArchive? _pak;
+    public bool IsPak => _pak is not null;
+    internal PakArchive? Pak => _pak;
+
+    private ResArchiveDocument(string sourcePath, byte[] data, PakArchive pak)
+    {
+        pak.Materialize();
+        SourcePath=sourcePath;_data=data;_pak=pak;Sha256=pak.Sha256;
+        Entries=pak.Entries;DeclaredEntryCount=Entries.Count;DirectoryOffset=data.Length;NamePoolSize=0;
+        _entriesByName=Entries.ToDictionary(e=>PakArchive.LookupKey(e.Name),StringComparer.Ordinal);
+    }
 
     private ResArchiveDocument(
         string sourcePath,
@@ -69,7 +80,8 @@ public sealed class ResArchiveDocument
     public static ResArchiveDocument Open(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var fullPath = Path.GetFullPath(path);
+        var fullPath = ResourceArchivePaths.Resolve(Path.GetFullPath(path));
+        if(PakArchive.IsPak(fullPath))PakArchive.RecoverFor(fullPath);
         var data = File.ReadAllBytes(fullPath);
         return Parse(fullPath, data);
     }
@@ -79,19 +91,21 @@ public sealed class ResArchiveDocument
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        var fullPath = Path.GetFullPath(path);
+        var fullPath = ResourceArchivePaths.Resolve(Path.GetFullPath(path));
+        if(PakArchive.IsPak(fullPath))PakArchive.RecoverFor(fullPath);
         var data = await File.ReadAllBytesAsync(fullPath, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return Parse(fullPath, data, cancellationToken);
     }
 
     public bool TryGetEntry(string name, out ResEntry? entry) =>
-        _entriesByName.TryGetValue(name, out entry);
+        _entriesByName.TryGetValue(IsPak ? PakArchive.LookupKey(name) : name, out entry);
 
     public ReadOnlyMemory<byte> GetResourceBytes(ResEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
         EnsureOwnedEntry(entry);
+        if (_pak is not null) return _pak.Read(entry.Name);
         return _data.AsMemory(entry.Offset, entry.Size);
     }
 
@@ -110,6 +124,7 @@ public sealed class ResArchiveDocument
     internal IReadOnlyList<ValidationDiagnostic> Validate(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_pak is not null) return [];
         var diagnostics = new List<ValidationDiagnostic>();
         var ordered = Entries.OrderBy(entry => entry.Offset).ToArray();
         cancellationToken.ThrowIfCancellationRequested();
@@ -184,6 +199,7 @@ public sealed class ResArchiveDocument
         byte[] data,
         CancellationToken cancellationToken = default)
     {
+        if (PakArchive.IsPak(data)) return new ResArchiveDocument(sourcePath,data,PakArchive.FromBytes(data,cancellationToken));
         if (data.Length < HeaderSize)
         {
             throw new DatabaseFormatException("RES header is truncated.", sourcePath, 0);
@@ -305,7 +321,7 @@ public sealed class ResArchiveDocument
 
     private void EnsureOwnedEntry(ResEntry entry)
     {
-        if (!_entriesByName.TryGetValue(entry.Name, out var owned) || owned != entry)
+        if (!TryGetEntry(entry.Name, out var owned) || owned != entry)
         {
             throw new ArgumentException("The resource entry does not belong to this archive.", nameof(entry));
         }

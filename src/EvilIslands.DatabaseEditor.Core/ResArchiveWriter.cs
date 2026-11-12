@@ -10,6 +10,7 @@ internal static class ResArchiveWriter
         ResArchiveDocument archive,
         IReadOnlyDictionary<int, byte[]> replacements)
     {
+        if (archive.Pak is { } pak) return pak.Rebuild(replacements,[],null);
         if (replacements.Count == 0)
         {
             return archive.OriginalBytes.ToArray();
@@ -75,6 +76,7 @@ internal static class ResArchiveWriter
         ArgumentNullException.ThrowIfNull(archive);
         ArgumentNullException.ThrowIfNull(replacements);
         ArgumentNullException.ThrowIfNull(additions);
+        if (archive.Pak is { } pak) return pak.Rebuild(replacements,additions,removals);
         if (additions.Count == 0 && replacements.Count == 0 && (removals is null || removals.Count == 0))
         {
             return archive.OriginalBytes.ToArray();
