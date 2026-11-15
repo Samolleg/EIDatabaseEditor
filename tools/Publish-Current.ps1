@@ -10,7 +10,14 @@ while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md') -PathType 
 }
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$destination = Join-Path $workspaceRoot 'builds/dbeditor/current'
+$taskRoot = Split-Path -Parent $projectRoot
+if ((Split-Path -Parent $taskRoot) -ne (Join-Path $workspaceRoot 'tasks') -or
+    -not (Test-Path -LiteralPath (Join-Path $taskRoot 'BRIEF.md') -PathType Leaf)) {
+    throw 'Запускайте скрипт из рабочей копии текущего задания tasks\<ID>\wt.'
+}
+$destination = Join-Path $taskRoot 'kit'
+$taskTemporary = Join-Path $taskRoot 'tmp'
+New-Item -ItemType Directory -Path $taskTemporary -Force | Out-Null
 $manifestName = 'host-manifest.sha256.json'
 $moduleSource = Join-Path $workspaceRoot 'builds/malachite/current'
 if (-not $PackagePath -and -not (Test-Path -LiteralPath $moduleSource -PathType Container)) {
@@ -43,28 +50,40 @@ Assert-Closed
 $temporary = $null
 $handoffRoot = Split-Path -Parent $destination
 New-Item -ItemType Directory -Path $handoffRoot -Force | Out-Null
-$lockPath = Resolve-ContainedFile (Join-Path $workspaceRoot 'docs') 'dbeditor-current-update.lock'
+$lockPath = Resolve-ContainedFile $taskTemporary 'dbeditor-current-update.lock'
 $updateLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
     if (-not $PackagePath) {
-        $temporary = Join-Path ([IO.Path]::GetTempPath()) ('database-editor-current-' + [guid]::NewGuid().ToString('N'))
+        $temporary = Join-Path $taskTemporary ('database-editor-current-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $temporary | Out-Null
-        & dotnet publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -p:DebugType=none -p:DebugSymbols=false -o $temporary
+        & dotnet publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -o $temporary
         if ($LASTEXITCODE -ne 0) { throw "Сборка не завершена: $LASTEXITCODE" }
         $moduleTarget = Join-Path $temporary 'Modules\malachite\current'
         New-Item -ItemType Directory -Path $moduleTarget -Force | Out-Null
-        Get-ChildItem -LiteralPath $moduleSource -Recurse -File | Where-Object Extension -ne '.pdb' | ForEach-Object {
+        Get-ChildItem -LiteralPath $moduleSource -Recurse -File | ForEach-Object {
             $relative = $_.FullName.Substring($moduleSource.Length + 1)
             $target = Join-Path $moduleTarget $relative
             New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
             Copy-Item -LiteralPath $_.FullName -Destination $target
         }
         Copy-Item -LiteralPath (Join-Path $projectRoot 'packaging\CURRENT_README.txt') -Destination (Join-Path $temporary 'README.txt')
-        Get-ChildItem -LiteralPath $temporary -Recurse -File -Filter *.pdb | ForEach-Object { Remove-Item -LiteralPath $_.FullName }
+        $packSource = Join-Path $workspaceRoot 'builds/rebuild64/current'
+        $packSums = @(Get-Content -LiteralPath (Join-Path $packSource 'SHA256SUMS') -Encoding UTF8)
+        foreach ($name in 'EIRebuild64Pack.exe', 'EIRebuild64Pack.pdb') {
+            $sums = @($packSums | Where-Object { $_ -match ('^[0-9A-Fa-f]{64}  ' + [regex]::Escape($name) + '$') })
+            if ($sums.Count -ne 1) { throw "Нет единственного SHA-256 упаковщика: $name" }
+            $expected = $sums[0].Substring(0, 64)
+            $file = Resolve-ContainedFile $packSource $name
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) { throw "Хэш упаковщика не совпал: $file" }
+            $target = Join-Path $temporary $name
+            Copy-Item -LiteralPath $file -Destination $target
+            if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $expected) { throw "Ошибка проверки копии упаковщика: $target" }
+        }
         $entries = @(Get-ChildItem -LiteralPath $temporary -Recurse -File | ForEach-Object {
             [pscustomobject]@{ Path = $_.FullName.Substring($temporary.Length + 1); Length = $_.Length; SHA256 = (Get-FileHash -LiteralPath $_.FullName).Hash }
         })
         ConvertTo-Json -InputObject $entries -Depth 4 | Set-Content -LiteralPath (Join-Path $temporary $manifestName) -Encoding utf8
+        Copy-Item -LiteralPath (Join-Path $workspaceRoot 'builds/dbeditor/current/Kimodo') -Destination (Join-Path $temporary 'Kimodo') -Recurse
         $PackagePath = $temporary
     }
     $source = (Resolve-Path -LiteralPath $PackagePath).Path
@@ -139,7 +158,7 @@ try {
     $changes += [pscustomobject]@{ Path = $manifestName; SHA256 = (Get-FileHash -LiteralPath $hostManifestSource).Hash }
     # Only replaced files need rollback copies; unchanged large model weights
     # are verified above but never recopied.
-    $rollback = Join-Path ([IO.Path]::GetTempPath()) ('database-editor-rollback-' + [guid]::NewGuid().ToString('N'))
+    $rollback = Join-Path $taskTemporary ('database-editor-rollback-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $rollback | Out-Null
     foreach ($entry in @($changes) + @($obsolete)) {
         if ($snapshots[$entry.Path]) {
@@ -184,13 +203,17 @@ try {
         }
         throw "Обновление не завершено: $failure. Копия для отката: $rollback. Ошибки отката: $($rollbackErrors -join '; ')"
     }
+    $checksums = @(Get-ChildItem -LiteralPath $destination -Recurse -File | Where-Object { $_.FullName -ne (Join-Path $destination 'SHA256SUMS') } | Sort-Object FullName | ForEach-Object {
+        '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.FullName.Substring($destination.Length + 1).Replace('\', '/')
+    })
+    $checksums | Set-Content -LiteralPath (Join-Path $destination 'SHA256SUMS') -Encoding ASCII
     Write-Output "Копия заменённых файлов: $rollback"
     Write-Output "Готовый редактор: $destination\EvilIslands.DatabaseEditor.exe"
 } finally {
     $updateLock.Dispose()
     if ($temporary) {
         $resolved = [IO.Path]::GetFullPath($temporary)
-        $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        $tempRoot = [IO.Path]::GetFullPath($taskTemporary).TrimEnd('\') + '\'
         if ($resolved.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolved).StartsWith('database-editor-current-')) {
             Remove-Item -LiteralPath $resolved -Recurse -Force
         }

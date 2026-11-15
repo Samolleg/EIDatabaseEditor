@@ -11,7 +11,7 @@
   </ItemGroup>
   <Target Name="VerifyPakDependency" BeforeTargets="Build" Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
     <GetFileHash Files="$(PakToolPath)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="PakDependencyHash" /></GetFileHash>
-    <Error Condition="'%(PakDependencyHash.FileHash)' != '0BF903E62C1984D5AFE6C51BBB0642836C745540966037A4E44B621D57126F65'" Text="PAK utility differs from the reviewed PAKTXN01 dependency." />
+    <Error Condition="'%(PakDependencyHash.FileHash)' != 'B93F0C0C9D68F818E168CB5009B7C169AB3A603B0E28286377CC2A5FAA9F7656'" Text="PAK utility differs from the accepted PAKTXN01 dependency (rebuild64 main 6a1045e)." />
   </Target>
   <!-- The public module SDK did not change in this migration. Ship the accepted
        binary identity against which the independently built module is pinned. -->
