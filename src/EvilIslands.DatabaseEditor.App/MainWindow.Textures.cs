@@ -63,7 +63,7 @@ public partial class MainWindow
     private async void TextureArchives_Click(object sender, RoutedEventArgs e)
     {
         if (_viewModel.IsBusy) return;
-        var dialog = new OpenFileDialog { Title = "Текстурные RES", Filter = "Архивы RES|*.res", Multiselect = true, InitialDirectory = _viewModel.SourceDirectory, RestoreDirectory = true };
+        var dialog = new OpenFileDialog { Title = "Текстурные архивы PAK/RES", Filter = "Архивы PAK/RES|*.pak;*.res", Multiselect = true, InitialDirectory = _viewModel.SourceDirectory, RestoreDirectory = true };
         if (dialog.ShowDialog(this) != true) return;
         try { await _viewModel.ConnectTextureArchivesAsync(dialog.FileNames); }
         catch (Exception ex) { _viewModel.ReportSpreadsheetError(ex.Message); }

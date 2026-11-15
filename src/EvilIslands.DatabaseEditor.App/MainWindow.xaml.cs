@@ -253,7 +253,7 @@ public partial class MainWindow : Window
         var fileDialog = new OpenFileDialog
         {
             Title = "Открыть любой RES как архив",
-            Filter = "Evil Islands RES-контейнер (*.res)|*.res|Все файлы (*.*)|*.*",
+            Filter = "Evil Islands PAK/RES (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
             Multiselect = false,
@@ -329,15 +329,15 @@ public partial class MainWindow : Window
         var dialog = new SaveFileDialog
         {
             Title = "Сохранить проверенную копию звукового RES",
-            Filter = "Evil Islands RES-контейнер (*.res)|*.res",
-            DefaultExt = ".res",
+            Filter = "Evil Islands PAK (*.pak)|*.pak",
+            DefaultExt = ".pak",
             AddExtension = true,
             CheckPathExists = true,
             OverwritePrompt = false,
             CreatePrompt = false,
             RestoreDirectory = true,
             InitialDirectory = GetStagingDirectory(),
-            FileName = $"{sourceName}.audio-edited.res",
+            FileName = $"{sourceName}.audio-edited.pak",
         };
         if (dialog.ShowDialog(this) is not true)
         {
@@ -505,7 +505,7 @@ public partial class MainWindow : Window
         var fileDialog = new OpenFileDialog
         {
             Title = "Выберите вторую database.res для сравнения",
-            Filter = "Evil Islands database.res|database.res;*.res|RES-контейнеры (*.res)|*.res|Все файлы (*.*)|*.*",
+            Filter = "Evil Islands database|database.pak;database.res;*.pak;*.res|PAK/RES-контейнеры (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
             Multiselect = false,
@@ -576,7 +576,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "Подключить texts.res",
-            Filter = "Evil Islands texts.res|texts.res;*.res|RES-контейнеры (*.res)|*.res|Все файлы (*.*)|*.*",
+            Filter = "Evil Islands texts|texts.pak;texts.res;*.pak;*.res|PAK/RES-контейнеры (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
             Multiselect = false,
@@ -597,7 +597,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "Подключить RES со звуковыми файлами",
-            Filter = "Звуковые RES (*.res)|*.res|Все файлы (*.*)|*.*",
+            Filter = "Звуковые архивы (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
             Multiselect = true,
@@ -2928,7 +2928,7 @@ public partial class MainWindow : Window
         var dialog = new OpenFileDialog
         {
             Title = "Открыть database.res",
-            Filter = "Evil Islands database.res|database.res;*.res|RES-контейнеры (*.res)|*.res|Все файлы (*.*)|*.*",
+            Filter = "Evil Islands database|database.pak;database.res;*.pak;*.res|PAK/RES-контейнеры (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
             Multiselect = false,
@@ -3062,15 +3062,15 @@ public partial class MainWindow : Window
         var dialog = new SaveFileDialog
         {
             Title = "Сохранить новую проверенную копию",
-            Filter = "Evil Islands RES-контейнер (*.res)|*.res",
-            DefaultExt = ".res",
+            Filter = "Evil Islands PAK (*.pak)|*.pak",
+            DefaultExt = ".pak",
             AddExtension = true,
             CheckPathExists = true,
             OverwritePrompt = false,
             CreatePrompt = false,
             RestoreDirectory = true,
             InitialDirectory = stagingDirectory,
-            FileName = $"{sourceName}.edited.res",
+            FileName = $"{sourceName}.edited.pak",
         };
 
         if (dialog.ShowDialog(this) is not true)

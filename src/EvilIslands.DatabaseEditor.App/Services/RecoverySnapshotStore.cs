@@ -34,7 +34,7 @@ internal sealed class RecoverySnapshotStore
             _drafts.Add(snapshotDirectory, Path.GetFullPath(sourcePath));
             return new RecoverySnapshotDraft(
                 snapshotDirectory,
-                Path.Combine(snapshotDirectory, "database.res"));
+                Path.Combine(snapshotDirectory, Path.GetExtension(sourcePath).Equals(".pak",StringComparison.OrdinalIgnoreCase)?"database.pak":"database.res"));
         }
     }
 

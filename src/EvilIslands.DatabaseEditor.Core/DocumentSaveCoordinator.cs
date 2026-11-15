@@ -16,6 +16,17 @@ public static class DocumentSaveCoordinator
         bool allowGameInstallationPaths = false, Action<int>? beforePublish = null)
     {
         if (writes.Count == 0) return new(true, "", []);
+        if(writes.Any(w=>PakArchive.IsPak(w.Path))) {
+            foreach(var write in writes)if(DatabaseSafetyPolicy.ContainsReparsePoint(write.Path)||(!allowGameInstallationPaths&&DatabaseSafetyPolicy.IsLikelyGameInstallationPath(write.Path)))throw new IOException("Unsafe transaction target.");
+            var images=new List<(string Path,string? ExpectedHash,byte[] Bytes)>();
+            foreach(var group in writes.GroupBy(w=>Path.GetFullPath(w.Path),StringComparer.OrdinalIgnoreCase)){
+                var first=group.First();byte[] bytes=first.Bytes;
+                if(group.Count()>1){if(!PakArchive.IsPak(group.Key)||group.Any(w=>!w.ExpectedHash.Equals(first.ExpectedHash,StringComparison.OrdinalIgnoreCase)))throw new IOException("Conflicting shared transaction baseline.");bytes=PakArchive.MergeImages(group.Key,first.ExpectedHash,group.Select(w=>w.Bytes).ToArray());}
+                images.Add((group.Key,string.IsNullOrEmpty(first.ExpectedHash)?null:first.ExpectedHash,bytes));
+            }
+            PakArchive.PublishMixedImages(images);
+            return new(true,"",writes.Select(w=>new CoordinatedFileResult(w.Id,w.Path,"Saved","PAK transaction committed","","",w.ExpectedHash,Convert.ToHexString(SHA256.HashData(images.Single(i=>i.Path.Equals(Path.GetFullPath(w.Path),StringComparison.OrdinalIgnoreCase)).Bytes)))).ToArray());
+        }
         string operation = Guid.NewGuid().ToString("N");
         string journal = System.IO.Path.Combine(System.IO.Path.GetFullPath(journalDirectory), operation + ".json");
         var results = writes.Select(w => new CoordinatedFileResult(w.Id, System.IO.Path.GetFullPath(w.Path),

@@ -28,7 +28,7 @@ public static class AnimationClipDeletion
         var references = current.Database.Entries.Where(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Select(e => e.Index).ToArray();
         if (references.Length > 0) throw new InvalidOperationException("На клип ссылаются записи ADB: " + string.Join(", ", references) + ". Сначала удалите или замените эти записи и сохраните ADB.");
         byte[] result = Remove(source.ExportBytes(), name);
-        await target.SaveAsync(target.OriginalBytes, result, true);
+        await AnimationPairSave.SaveAsync(target, target.OriginalBytes, result, adb, adb.CreateDraft(), true);
         return source.WithSavedBytes(result);
     }
 }

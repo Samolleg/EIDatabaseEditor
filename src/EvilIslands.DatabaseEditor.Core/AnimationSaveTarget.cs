@@ -4,6 +4,7 @@ namespace EvilIslands.DatabaseEditor.Core;
 
 public sealed record AnimationSaveTarget(string Path, string? ResourceName, byte[] OriginalBytes)
 {
+    public string? ArchiveSha256 { get; set; } = ResourceName is null ? null : AnimationPairSave.HashFile(Path);
     public string Description => ResourceName is null ? Path : Path + " → " + ResourceName;
 
     public async Task<string?> SaveAsync(byte[] expected, byte[] bytes, bool backup)
@@ -13,10 +14,11 @@ public sealed record AnimationSaveTarget(string Path, string? ResourceName, byte
         if (ResourceName is not null)
         {
             var archive = await ResFileManagerArchive.OpenAsync(Path);
+            if (ArchiveSha256 is not null && !archive.Sha256.Equals(ArchiveSha256, StringComparison.OrdinalIgnoreCase)) throw new IOException("Архив ANM изменён после открытия. Обновите модель.");
             var entry = archive.Entries.SingleOrDefault(e => e.Name.Equals(ResourceName, StringComparison.OrdinalIgnoreCase))
                 ?? throw new IOException("Исходный ANM удалён из архива. Обновите модель или экспортируйте отдельно.");
             byte[] current = new byte[entry.Size];
-            using (var stream = File.OpenRead(Path)) { stream.Position = entry.Offset; stream.ReadExactly(current); }
+            current = ResFileManagerArchive.ReadResource(Path, entry.Name);
             if (!current.AsSpan().SequenceEqual(expected)) throw new IOException("Исходный ANM изменён после открытия. Сохранение отменено; экспортируйте правки отдельно.");
             string temporary = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ei-animation-" + Guid.NewGuid().ToString("N") + ".anm");
             try
@@ -25,12 +27,13 @@ public sealed record AnimationSaveTarget(string Path, string? ResourceName, byte
                 var import = await ResFileManagerArchive.InspectImportAsync(temporary);
                 var result = await archive.SaveInPlaceAsync([new(ResFileEditKind.AddOrReplace, ResourceName, import)], true, createBackup: backup);
                 savedBackup = result.BackupPath;
+                ArchiveSha256 = result.Sha256;
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
             var readback = await ResFileManagerArchive.OpenAsync(Path);
             entry = readback.Entries.Single(e => e.Name.Equals(ResourceName, StringComparison.OrdinalIgnoreCase));
             current = new byte[entry.Size];
-            using (var stream = File.OpenRead(Path)) { stream.Position = entry.Offset; stream.ReadExactly(current); }
+            current = ResFileManagerArchive.ReadResource(Path, entry.Name);
             if (!current.AsSpan().SequenceEqual(bytes)) throw new IOException("Не прошла проверка сохранённого ANM.");
         }
         else

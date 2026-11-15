@@ -341,12 +341,15 @@ public sealed class TextsDocument
         using var sourceGuard = OpenSourceGuard(sourcePath);
         EnsureSourceUnchanged(sourceGuard);
         byte[] rebuilt = BuildAndVerify(destinationPath);
+        if(PakArchive.IsPak(destinationPath))rebuilt=PakArchive.ConvertResImage(rebuilt);
+        else if(_archive.IsPak)throw new IOException("PAK output requires .pak extension.");
         string tempPath = CreateTempPath(destinationPath);
         try
         {
             WriteVerified(tempPath, rebuilt);
             EnsureSourceUnchanged(sourceGuard);
-            File.Move(tempPath, destinationPath);
+            if(PakArchive.IsPak(destinationPath)){PakArchive.PublishImages([(destinationPath,null,rebuilt)]);File.Delete(tempPath);}
+            else File.Move(tempPath, destinationPath);
         }
         catch
         {

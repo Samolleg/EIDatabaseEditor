@@ -8,6 +8,7 @@ using DatabaseEditor.Modules.V1;
 using EvilIslands.DatabaseEditor.App;
 using EvilIslands.DatabaseEditor.App.Services;
 using EvilIslands.DatabaseEditor.App.ViewModels;
+using EvilIslands.DatabaseEditor.Core;
 
 namespace EvilIslands.DatabaseEditor.UiSmoke;
 internal static class ModuleIntegrationRegression
@@ -43,8 +44,11 @@ internal static class ModuleIntegrationRegression
     }
     private static async Task Check(string source, string moduleRoot)
     {
+        string inputRoot=Path.Combine(Path.GetTempPath(),"module-host-input-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(inputRoot);
+        string localSource=Path.Combine(inputRoot,"database"+Path.GetExtension(source));File.Copy(source,localSource);
+        foreach(string name in new[]{"texts.pak","texts.res"}){string original=Path.Combine(Path.GetDirectoryName(source)!,name);if(File.Exists(original))File.Copy(original,Path.Combine(inputRoot,name));}
         var window = new MainWindow(); var vm = (MainWindowViewModel)window.DataContext;
-        await vm.OpenPathAsync(source);
+        await vm.OpenPathAsync(localSource);
         string journals = Path.Combine(Path.GetTempPath(), "module-journal-" + Guid.NewGuid().ToString("N"));
         var adapter = new ModuleHostAdapter(window, vm, journals);
         CheckRejectedModules(adapter);
@@ -53,6 +57,12 @@ internal static class ModuleIntegrationRegression
         var module = loaded.Modules[0].Instance;
         var view = module.CreateView(); view.Measure(new Size(1400, 850)); view.Arrange(new Rect(0, 0, 1400, 850)); view.UpdateLayout();
         module.Activate(true);
+        // Current Malachite starts on its home page with no document. Open a
+        // workspace through its public entry point before simulating typing.
+        var initialWorkspace=view.GetType().GetProperty("Workspace")!.GetValue(view)!;
+        initialWorkspace.GetType().GetProperty("Name")!.SetValue(initialWorkspace,"Host integration");
+        initialWorkspace.GetType().GetProperty("Text")!.SetValue(initialWorkspace,"// initial host document");
+        view.GetType().GetMethod("LoadWorkspace")!.Invoke(view,[initialWorkspace,false]);
         var editor = Children(view).OfType<TextBox>().Single(t => t.Name == "CodeEditor");
         string old = editor.Text; editor.Text += "\n// host integration";
         Require(vm.ModuleDocuments.List("malachite").Any(d => d.Text == editor.Text && d.IsDirty), "Last input not in host session");
@@ -62,8 +72,13 @@ internal static class ModuleIntegrationRegression
         var document = vm.ModuleDocuments.List("malachite").Single(d => d.Text == editor.Text);
         string savePath = Path.Combine(Path.GetTempPath(), "module-real-" + Guid.NewGuid().ToString("N") + ".malachite");
         adapter.BindSaveTarget(document.DocumentId, savePath, "");
+        var briefing=vm.Databases.SelectMany(g=>g.Tables).Single(t=>t.Key=="quests.briefings").Records.First(r=>!r.IsTextOnlyBriefing);
+        string briefingName=briefing.CoreRecord.Name;
+        var value=briefing.CoreRecord.Fields.Single(f=>f.Id==1);string changed=value.EditorText=="1"?"0":"1";
+        Require(value.TrySetValue(changed,out _),"Host database fixture edit failed");
         var saved = adapter.SaveAll();
         Require(saved.Complete && File.Exists(savePath), "Real module SaveAll: " + string.Join("; ", saved.Files.Select(f => f.Message)));
+        Require(DatabaseDocument.Open(localSource).Databases.SelectMany(g=>g.Tables).Single(t=>t.Key=="quests.briefings").Records.Single(r=>r.Name==briefingName).Fields.Single(f=>f.Id==1).EditorText==changed,"Module SaveAll did not include PAK database edit");
         Require(!vm.ModuleDocuments.Get(document.DocumentId)!.IsDirty, "Saved document remains dirty");
         Require(adapter.Undo().Succeeded && vm.ModuleDocuments.Get(document.DocumentId)!.IsDirty, "Undo did not become dirty after save");
         Require(adapter.Redo().Succeeded && !vm.ModuleDocuments.Get(document.DocumentId)!.IsDirty, "Redo did not return to checkpoint");
@@ -85,6 +100,8 @@ internal static class ModuleIntegrationRegression
         Require(json.RootElement.GetProperty("Views").GetProperty("malachite").GetBytesFromBase64().SequenceEqual(rejectedState), "Unavailable view overwritten by replacement module");
         Require(!window.IsVisible && Application.Current.Windows.Cast<Window>().All(w => !w.IsVisible), "Unexpected visible window");
         module.Dispose(); vm.Dispose();
+        if(!Path.GetFullPath(inputRoot).StartsWith(Path.GetFullPath(Path.GetTempPath()),StringComparison.OrdinalIgnoreCase))throw new IOException("Unsafe test cleanup path");
+        Directory.Delete(inputRoot,true);
     }
 
     private static void CheckRejectedModules(IModuleHost host)

@@ -460,6 +460,22 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         string[] soundPaths = currentCatalog.Archives
             .Select(archive => archive.SourcePath)
             .ToArray();
+        if(PakArchive.IsPak(edit.Target.Archive.SourcePath)) {
+            var soundWrite=SoundArchiveCopyEditor.PreparePakImage(edit.Target,edit.Asset);
+            var writes=PrepareModuleSave().Append(soundWrite).ToList();
+            var relatedDatabase=RequireDocument();
+            if(!writes.Any(w=>w.Path.Equals(relatedDatabase.SourcePath,StringComparison.OrdinalIgnoreCase)))writes.Add(new(Guid.NewGuid(),relatedDatabase.SourcePath,relatedDatabase.Sha256,relatedDatabase.PrepareImage()));
+            if(_textsDocument is not null&&!writes.Any(w=>w.Path.Equals(_textsDocument.SourcePath,StringComparison.OrdinalIgnoreCase)))writes.Add(new(Guid.NewGuid(),_textsDocument.SourcePath,_textsDocument.Sha256,_textsDocument.PrepareImage()));
+            string backup=soundWrite.Path+".bak."+Guid.NewGuid().ToString("N");
+            byte[] original=File.ReadAllBytes(soundWrite.Path);
+            if(!Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(original)).Equals(soundWrite.ExpectedHash,StringComparison.OrdinalIgnoreCase))throw new IOException("Sound archive changed during preparation.");
+            writes.Add(new(Guid.NewGuid(),backup,"",original));
+            DocumentSaveCoordinator.Commit(writes,Path.GetDirectoryName(soundWrite.Path)!,allowGameInstallationPath);
+            var workspace=await OpenInternalAsync(RequireDocument().SourcePath,_textsDocument?.SourcePath,soundPaths,CancellationToken.None).ConfigureAwait(false);
+            using var saved=PakArchive.Open(soundWrite.Path);
+            var savedSound=new SoundArchiveCopyResult(soundWrite.Path,saved.Length,saved.Sha256,edit.ResourceName,edit.IsReplacement,saved.Entries.Count,true,backup);
+            return new(savedSound,workspace.SoundArchives,workspace.SoundResourceCount,workspace.ManagedBackups,workspace);
+        }
         SoundArchiveCopyResult result = await SoundArchiveCopyEditor.SaveInPlaceAsync(
             edit.Target,
             edit.Asset,
@@ -489,6 +505,20 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         TextsDocument? texts = _textsDocument;
         SaveResult? textsResult = null;
         SaveResult? databaseResult = null;
+        if(PakArchive.IsPak(document.SourcePath)||texts is not null&&PakArchive.IsPak(texts.SourcePath)) {
+            var writes=PrepareModuleSave();
+            var backups=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+            if(createBackup)foreach(var write in writes.GroupBy(w=>w.Path,StringComparer.OrdinalIgnoreCase).Select(g=>g.First())){
+                byte[] original=File.ReadAllBytes(write.Path);
+                if(!Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(original)).Equals(write.ExpectedHash,StringComparison.OrdinalIgnoreCase))throw new IOException("Archive changed since opening.");
+                string backup=write.Path+".bak."+Guid.NewGuid().ToString("N");File.WriteAllBytes(backup,original);backups.Add(write.Path,backup);
+            }
+            DocumentSaveCoordinator.Commit(writes,Path.GetDirectoryName(document.SourcePath)!,allowGameInstallationPath);
+            var reloaded=await OpenInternalAsync(document.SourcePath,texts?.SourcePath,_soundCatalog?.Archives.Select(a=>a.SourcePath).ToArray(),CancellationToken.None).ConfigureAwait(false);
+            var current=RequireDocument();var databaseSaved=new SaveResult(current.SourcePath,current.FileLength,current.Sha256,true,current.Diagnostics,backups.GetValueOrDefault(current.SourcePath));
+            SaveResult? textsSaved=_textsDocument is null?null:new SaveResult(_textsDocument.SourcePath,_textsDocument.FileLength,_textsDocument.Sha256,true,[],backups.GetValueOrDefault(_textsDocument.SourcePath));
+            return new SaveCurrentResult(MapSaveResult(databaseSaved),reloaded,databaseSaved.BackupPath,textsSaved is null?null:MapSaveResult(textsSaved),textsSaved?.BackupPath);
+        }
         try
         {
             if (texts?.IsModified is true)
@@ -639,6 +669,17 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
         var document = RequireDocument();
         ArgumentException.ThrowIfNullOrWhiteSpace(targetPath);
         string databaseTarget = Path.GetFullPath(targetPath);
+        if(PakArchive.IsPak(databaseTarget)) {
+            string? textTarget=_textsDocument is null?null:DeriveTextsCopyPath(databaseTarget);
+            var images=new List<(string Path,string? ExpectedHash,byte[] Bytes)>{(databaseTarget,null,PakArchive.ConvertResImage(document.PrepareImage()))};
+            if(textTarget is not null)images.Add((textTarget,null,PakArchive.ConvertResImage(_textsDocument!.PrepareImage())));
+            foreach(var image in images)if(DatabaseSafetyPolicy.IsLikelyGameInstallationPath(image.Path)||DatabaseSafetyPolicy.ContainsReparsePoint(image.Path))throw new IOException("Save copy requires an offline regular path.");
+            PakArchive.PublishImages(images);
+            using var databasePak=PakArchive.Open(databaseTarget);
+            var saved=new SaveResult(databaseTarget,databasePak.Length,databasePak.Sha256,true,document.Diagnostics);
+            SaveResult? savedText=null;if(textTarget is not null){using var textPak=PakArchive.Open(textTarget);savedText=new SaveResult(textTarget,textPak.Length,textPak.Sha256,true,[]);}
+            return new SavePairCopyResult(MapSaveResult(saved),savedText is null?null:MapSaveResult(savedText));
+        }
         SaveResult databaseResult = await document.SaveAsAsync(databaseTarget, cancellationToken).ConfigureAwait(false);
         SaveResult? textsResult = null;
         try
@@ -962,17 +1003,14 @@ internal sealed class CoreDatabaseWorkspaceService : IDatabaseWorkspaceService
             GetTextsCompanionPath(databasePath),
             Path.Combine(directory, "texts.res"),
         ];
-        return candidates.FirstOrDefault(File.Exists);
+        return candidates.Select(ResourceArchivePaths.Resolve).FirstOrDefault(File.Exists);
     }
 
     private static string[] FindCompanionSoundPaths(string databasePath)
     {
         string directory = Path.GetDirectoryName(databasePath)!;
         string[] knownNames = ["JmvSFX.res", "sfx.res", "speech.res", "atamannala.res"];
-        return knownNames
-            .Select(name => Path.Combine(directory, name))
-            .Where(File.Exists)
-            .ToArray();
+        return ResourceArchivePaths.Order(knownNames.Select(name => Path.Combine(directory,name))).Where(File.Exists).ToArray();
     }
 
     private static string GetTextsCompanionPath(string databaseTarget)

@@ -54,6 +54,7 @@ public static class UnitModelPreview
         TextureSources sources = validation?.Sources ?? await TextureSources.FromDatabaseFolderAsync(databasePath, token).ConfigureAwait(false);
         return await Task.Run(async () =>
         {
+            using var pakFiles = new PakArchiveSet();
             var notes = new List<string>();
             var used = new List<string>();
             ModelRecord Find(string table, string name) => records.SingleOrDefault(r => r.Table == table && r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
@@ -66,6 +67,7 @@ public static class UnitModelPreview
             if (validation is not null) validation.Context = "Модель: " + mask;
             var archives = FigureArchives(databasePath, sources);
             var indexes = new List<(string Path, IReadOnlyList<ResEntry> Entries, long Length, long Written)>();
+            var claimed = new HashSet<string>(StringComparer.Ordinal);
             if (validation is not null) indexes = validation.Indexes;
             foreach (string path in validation is null ? archives : [])
             {
@@ -74,7 +76,8 @@ public static class UnitModelPreview
                 {
                     var info = new FileInfo(path);
                     long length = info.Length; long written = ResourceFileStamp.Read(path);
-                    var entries = ResFileManagerArchive.ReadCatalog(path, token);
+                    if (PakArchive.IsPak(path)) foreach (string name in pakFiles.Get(path, token).Deleted) claimed.Add(PakArchive.LookupKey(name));
+                    IReadOnlyList<ResEntry> entries = (PakArchive.IsPak(path) ? pakFiles.Get(path, token).Entries : ResFileManagerArchive.ReadCatalog(path, token)).Where(e => claimed.Add(PakArchive.LookupKey(e.Name))).ToArray();
                     info.Refresh();
                     if (info.Length != length || ResourceFileStamp.Read(path) != written) throw new IOException("Архив модели изменился во время чтения.");
                     indexes.Add((path, entries, length, written));
@@ -83,16 +86,19 @@ public static class UnitModelPreview
             AnimationSaveTarget? animationTarget = null;
             byte[] Resource(string name)
             {
+                if(ResourceArchivePaths.FindLoose(sources.ConfigurationPath,name) is { } loose){byte[] bytes=File.ReadAllBytes(loose);used.Add(name+" — "+loose);if(name.EndsWith(".anm",StringComparison.OrdinalIgnoreCase))animationTarget=new(loose,null,bytes.ToArray());return bytes;}
+                if (validation is not null) return validation.Read(name, token);
                 foreach (var archive in indexes)
                 {
-                    var entry = archive.Entries.FirstOrDefault(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+                    var entry = archive.Entries.FirstOrDefault(e => PakArchive.LookupKey(e.Name) == PakArchive.LookupKey(name));
                     if (entry is null) continue;
                     using var stream = new FileStream(archive.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
                     if (stream.Length != archive.Length || ResourceFileStamp.Read(archive.Path) != archive.Written)
                         throw new IOException("Архив модели изменился. Обновите предпросмотр.");
-                    stream.Position = entry.Offset;
-                    var bytes = new byte[entry.Size]; stream.ReadExactly(bytes);
-                    if (name.EndsWith(".anm", StringComparison.OrdinalIgnoreCase)) animationTarget = new(archive.Path, entry.Name, bytes.ToArray());
+                    byte[] bytes;
+                    if (PakArchive.IsPak(archive.Path)) bytes = pakFiles.Get(archive.Path, token).Read(entry.Name, token);
+                    else { stream.Position = entry.Offset; bytes = new byte[entry.Size]; stream.ReadExactly(bytes); }
+                    if (name.EndsWith(".anm", StringComparison.OrdinalIgnoreCase)) animationTarget = new(archive.Path, entry.Name, bytes.ToArray()) { ArchiveSha256 = PakArchive.IsPak(archive.Path) ? pakFiles.Get(archive.Path, token).Sha256 : AnimationPairSave.HashFile(archive.Path) };
                     used.Add(name + " — " + archive.Path);
                     return bytes;
                 }
@@ -100,7 +106,7 @@ public static class UnitModelPreview
             }
             // Base FIGs already use the secondary atlas coordinates. Keep this
             // tied to the selected resource, even when a mod DB falls back to it.
-            string? modelArchive = indexes.FirstOrDefault(a => a.Entries.Any(e => e.Name.Equals(mask + ".mod", StringComparison.OrdinalIgnoreCase))).Path;
+            string? modelArchive = ResourceArchivePaths.FindLoose(sources.ConfigurationPath,mask + ".mod") ?? indexes.FirstOrDefault(a => a.Entries.Any(e => e.Name.Equals(mask + ".mod", StringComparison.OrdinalIgnoreCase))).Path;
             string? gameFolder = sources.GameFolder;
             if (gameFolder is null && modelArchive is not null &&
                 string.Equals(Path.GetFileName(Path.GetDirectoryName(modelArchive)), "Res", StringComparison.OrdinalIgnoreCase))
@@ -447,22 +453,30 @@ public static class UnitModelPreview
 
     internal static IEnumerable<string> FigureArchives(string database, TextureSources sources)
     {
+        if(sources.ConfigurationPath is { } graphicsConfig&&sources.GameFolder is { } graphicsBase)
+            return TextureSources.FromGame(graphicsBase,graphicsConfig,["figures.res","menus.res"]).Archives.Where(File.Exists);
         var paths = new List<string>();
+        bool ignoreBase = false;
         if (sources.ConfigurationPath is { } config)
         {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
             string section = "";
-            foreach (string raw in File.ReadAllLines(config))
+            foreach (string raw in File.ReadAllLines(config, Encoding.GetEncoding(1251)))
             {
                 string line = raw.Trim();
                 if (line.StartsWith('[')) { section = line.Trim('[', ']'); continue; }
                 int eq = line.IndexOf('=');
                 if (section.Equals("RES", StringComparison.OrdinalIgnoreCase) && eq > 0 && line[..eq].Trim().Equals("figures.res", StringComparison.OrdinalIgnoreCase))
-                    paths.Add(Path.GetFullPath(line[(eq + 1)..].Trim().Trim('"'), Path.GetDirectoryName(config)!));
+                {
+                    string value = line[(eq + 1)..].Trim().Trim('"');
+                    if (value.StartsWith('-')) ignoreBase = true;
+                    else paths.Add(Path.GetFullPath(value, Path.GetDirectoryName(config)!));
+                }
             }
         }
-        else paths.AddRange(Directory.EnumerateFiles(Path.GetDirectoryName(database)!, "*.res"));
-        if (sources.GameFolder is { } game) paths.Add(Path.Combine(game, "Res", "figures.res"));
-        return paths.Distinct(StringComparer.OrdinalIgnoreCase);
+        else paths.AddRange(ResourceArchivePaths.Enumerate(Path.GetDirectoryName(database)!));
+        var baseline = !ignoreBase && sources.GameFolder is { } game ? new[] { Path.Combine(game, "Res", "figures.res") } : Array.Empty<string>();
+        return ResourceArchivePaths.Order(paths, baseline);
     }
 
     internal static Dictionary<string, string> ReadHierarchy(byte[] bytes)

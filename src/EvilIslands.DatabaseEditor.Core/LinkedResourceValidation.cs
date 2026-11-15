@@ -28,7 +28,7 @@ public static class LinkedResourceValidation
             .ThenBy(p => p.Record.Table == "units.prototypes" ? p.Record.Text(1) : p.Record.Integer(5).ToString("D8"), StringComparer.Ordinal)
             .ToArray();
         var sources = await TextureSources.FromDatabaseFolderAsync(database, token).ConfigureAwait(false);
-        var session = await ResourceValidationSession.OpenAsync(database, sources, token).ConfigureAwait(false);
+        using var session = await ResourceValidationSession.OpenAsync(database, sources, token).ConfigureAwait(false);
         int done = 0, variants = 0;
         LuaDataWorkspace? lua = null;
         try { lua = LuaDataWorkspace.FindNearby(database) is { } folder ? LuaDataWorkspace.Open(folder) : null; }
@@ -136,7 +136,7 @@ public static class LinkedResourceValidation
     }
 }
 
-internal sealed class ResourceValidationSession
+internal sealed class ResourceValidationSession : IDisposable
 {
     internal sealed record Issue(ValidationDiagnostic Diagnostic, HashSet<DiagnosticLocation> Locations, HashSet<string> Contexts);
     public TextureSources Sources { get; }
@@ -158,6 +158,8 @@ internal sealed class ResourceValidationSession
     private readonly Dictionary<string, FigureMesh> _figures = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Exception> _figureFailures = new(StringComparer.OrdinalIgnoreCase);
     private long _uvBytes;
+    private readonly PakArchiveSet _pakFiles = new();
+    public void Dispose() => _pakFiles.Dispose();
     private readonly Dictionary<string, ResArchiveDocument> _models = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ValidationDiagnostic?> _textures = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, long?> _archiveStamps = new(StringComparer.OrdinalIgnoreCase);
@@ -167,6 +169,7 @@ internal sealed class ResourceValidationSession
         var session = new ResourceValidationSession(sources, await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false));
         foreach (string path in sources.Archives)
             session._archiveStamps[path] = File.Exists(path) ? ResourceFileStamp.Read(path) : null;
+        var claimed = new HashSet<string>(StringComparer.Ordinal);
         foreach (string path in UnitModelPreview.FigureArchives(database, sources))
         {
             token.ThrowIfCancellationRequested();
@@ -175,7 +178,8 @@ internal sealed class ResourceValidationSession
             try
             {
                 var file = new FileInfo(path); long length = file.Length, written = ResourceFileStamp.Read(path);
-                var entries = ResFileManagerArchive.ReadCatalog(path, token);
+                if (PakArchive.IsPak(path)) foreach (string name in session._pakFiles.Get(path, token).Deleted) claimed.Add(PakArchive.LookupKey(name));
+                IReadOnlyList<ResEntry> entries = (PakArchive.IsPak(path) ? session._pakFiles.Get(path, token).Entries : ResFileManagerArchive.ReadCatalog(path, token)).Where(e => claimed.Add(PakArchive.LookupKey(e.Name))).ToArray();
                 file.Refresh();
                 if (file.Length != length || ResourceFileStamp.Read(path) != written) throw new IOException("Архив изменился при индексировании.");
                 session.Indexes.Add((path, entries, length, written));
@@ -190,16 +194,18 @@ internal sealed class ResourceValidationSession
         (File.Exists(p.Key) ? ResourceFileStamp.Read(p.Key) : (long?)null) == p.Value);
     public string FigurePath(string name) => name + " — " + (Indexes.FirstOrDefault(a => a.Entries.Any(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase))).Path
         ?? "поиск: " + string.Join("; ", _archiveStamps.Keys));
-    public bool Contains(string name) => Indexes.Any(a => a.Entries.Any(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase)));
+    public bool Contains(string name) => ResourceArchivePaths.FindLoose(Sources.ConfigurationPath,name) is not null||Indexes.Any(a => a.Entries.Any(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase)));
     public byte[] Read(string name, CancellationToken token)
     {
         Path = FigurePath(name); token.ThrowIfCancellationRequested();
+        if(ResourceArchivePaths.FindLoose(Sources.ConfigurationPath,name) is { } loose){Path=name+" — "+loose;_archiveStamps[loose]=ResourceFileStamp.Read(loose);return File.ReadAllBytes(loose);}
         foreach (var archive in Indexes)
         {
             var entry = archive.Entries.FirstOrDefault(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
             if (entry is null) continue;
             using var stream = new FileStream(archive.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
             if (stream.Length != archive.Length || ResourceFileStamp.Read(archive.Path) != archive.Written) throw new IOException("Архив изменился во время проверки.");
+            if (PakArchive.IsPak(archive.Path)) return _pakFiles.Get(archive.Path, token).Read(entry.Name, token);
             stream.Position = entry.Offset; var bytes = new byte[entry.Size]; stream.ReadExactly(bytes); return bytes;
         }
         throw new FileNotFoundException("Не найден ресурс модели: " + name);

@@ -1543,6 +1543,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
                 edit,
                 allowGameInstallationPath,
                 cancellationToken);
+            if(result.Workspace is not null){ApplyWorkspace(result.Workspace);selectedRecord=SelectedRecord;}
             if (_workspace is not null)
             {
                 _workspace = new WorkspaceSnapshot

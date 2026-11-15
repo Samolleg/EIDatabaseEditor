@@ -140,7 +140,8 @@ public static class ManagedResBackupManager
             CreateVerifiedBackup(source, sourceSha256, currentStateBackupPath);
             EnsureFileHash(sourcePath, sourceSha256, "Текущий RES перед восстановлением");
 
-            File.Replace(tempPath, sourcePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
+            if(PakArchive.IsPak(sourcePath)){PakArchive.PublishImages([(sourcePath,sourceSha256,File.ReadAllBytes(tempPath))]);File.Delete(tempPath);}
+            else File.Replace(tempPath, sourcePath, destinationBackupFileName: null, ignoreMetadataErrors: true);
             EnsureFileHash(currentStateBackupPath, sourceSha256, "Резервная копия текущего состояния");
             EnsureFileHash(sourcePath, restoreSha256, "Восстановленный RES");
             ValidateArchive(sourcePath, requestedBackup.Kind);

@@ -2288,7 +2288,8 @@ internal sealed record SaveSoundCurrentResult(
     SoundArchiveCopyResult Save,
     IReadOnlyList<SoundArchiveViewModel> SoundArchives,
     int SoundResourceCount,
-    IReadOnlyList<ManagedBackupViewModel> ManagedBackups);
+    IReadOnlyList<ManagedBackupViewModel> ManagedBackups,
+    WorkspaceSnapshot? Workspace = null);
 
 internal sealed record RestoreManagedBackupResult(
     ManagedResRestoreResult Restore,

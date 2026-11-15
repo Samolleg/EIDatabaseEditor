@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Text;
 
 namespace EvilIslands.DatabaseEditor.Core;
@@ -42,7 +41,9 @@ public static class SpellTexturePack
         var match = catalog.Check(name).Matches.FirstOrDefault() ?? throw new FileNotFoundException(name);
         if (match.Length > MmpPreviewDecoder.MaximumInputBytes) throw new InvalidDataException("MMP превышает лимит размера.");
         using var stream = File.OpenRead(match.Source);
-        stream.Position = match.Offset; var data = new byte[match.Length]; stream.ReadExactly(data);
+        byte[] data;
+        if (PakArchive.IsPak(match.Source)) data = PakArchive.Read(match.Source, match.Name, default);
+        else { stream.Position = match.Offset; data = new byte[match.Length]; stream.ReadExactly(data); }
         if (!catalog.IsCurrent()) throw new IOException("Источник изменился во время чтения.");
         ValidateTexture(data); return data;
     }
@@ -65,27 +66,23 @@ public static class SpellTexturePack
             if (!textures.TryGetValue(name, out var data)) throw new InvalidDataException("Нет данных текстуры: " + name);
             ValidateTexture(data); return new AddedResResource(name.Replace('/', '\\'), data);
         }).ToArray();
-        byte[] empty = new byte[16]; BinaryPrimitives.WriteUInt32LittleEndian(empty, ResArchiveDocument.Signature);
-        BinaryPrimitives.WriteUInt32LittleEndian(empty.AsSpan(8), 16);
-        byte[] res = ResArchiveWriter.Rebuild(ResArchiveDocument.Parse("empty", empty), new Dictionary<int, byte[]>(), added);
-        var check = ResArchiveDocument.Parse("spell-textures.res", res);
-        foreach (var entry in added)
-            if (!check.GetResourceBytes(entry.Name).Span.SequenceEqual(entry.Data)) throw new InvalidDataException("Ошибка проверки RES.");
         string staging = target + ".partial-" + Guid.NewGuid().ToString("N");
         try
         {
             Directory.CreateDirectory(Path.Combine(staging, "config")); Directory.CreateDirectory(Path.Combine(staging, "res"));
             File.WriteAllText(Path.Combine(staging, "config", "spell-textures.tsv"), text, new UTF8Encoding(false));
-            File.WriteAllBytes(Path.Combine(staging, "res", "spell-textures.res"), res);
+            PakArchive.Create(Path.Combine(staging, "res", "spell-textures.pak"), added.ToDictionary(e => e.Name, e => e.Data));
             File.WriteAllText(Path.Combine(staging, "README.txt"),
                 "Привязки текстур заклинаний — экспериментальный addon с поддержкой EISPELLTEXTURES1.\n" +
                 "Этот пакет сам ничего не устанавливает. После отдельного решения об установке: config/spell-textures.tsv положить в config мода; " +
-                "res/spell-textures.res подключить в группе textures.res действующего config.ini/REG. Не заменять весь config чужой копией. Перезапустить игру.\n" +
+                "res/spell-textures.pak подключить в группе textures.res действующего config.ini/REG. Не заменять весь config чужой копией. Перезапустить игру.\n" +
                 "TSV содержит полный набор пользовательских привязок, а не дополнение: перед изменением существующего набора откройте его в редакторе.\n" +
                 "Имена исходных ресурсов не изменены. Новая текстура применяется к указанному заклинанию вместо указанного атласа во всех поддержанных фазах. " +
                 "Сетка кадров, движение, число частиц и режим смешивания остаются игровыми. Иконки не меняются. " +
                 "Диагностический этап: игровая проверка обязательна. На удалённом сетевом клиенте и при неизвестном контексте остаётся штатный атлас. Полное восстановление временных фаз после загрузки ещё не подтверждено. Если новый ресурс не подключён, addon оставляет исходный атлас. Изменения требуют игровой проверки; совместимость со старым addon не заявлена.\n");
-            _ = ResArchiveDocument.Open(Path.Combine(staging, "res", "spell-textures.res"));
+            var check = ResArchiveDocument.Open(Path.Combine(staging, "res", "spell-textures.pak"));
+            foreach (var entry in added)
+                if (!check.GetResourceBytes(entry.Name).Span.SequenceEqual(entry.Data)) throw new InvalidDataException("Ошибка проверки PAK.");
             if (File.ReadAllText(Path.Combine(staging, "config", "spell-textures.tsv")) != text) throw new IOException("Ошибка повторного чтения привязок.");
             Directory.Move(staging, target);
         }
@@ -98,7 +95,7 @@ public static class SpellTexturePack
     public static (IReadOnlyList<SpellTextureOverride> Rows, Dictionary<string, byte[]> Textures) Open(string folder)
     {
         var rows = Parse(File.ReadAllText(Path.Combine(folder, "config", "spell-textures.tsv")));
-        var res = ResArchiveDocument.Open(Path.Combine(folder, "res", "spell-textures.res"));
+        var res = ResArchiveDocument.Open(ResourceArchivePaths.Resolve(Path.Combine(folder, "res", "spell-textures.res")));
         var textures = new Dictionary<string, byte[]>(StringComparer.Ordinal);
         foreach (string name in rows.Select(r => r.Replacement).Distinct())
         {

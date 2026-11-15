@@ -27,7 +27,9 @@ public static class MmpBatchConverter
         try
         {
             // Hold a verified read handle throughout the batch: one hash, no concurrent source writes.
-            using var source = await Task.Run(() => archive.OpenVerifiedSource(token), token);
+            using var pak = PakArchive.IsPak(archive.SourcePath) ? PakArchive.Open(archive.SourcePath, token) : null;
+            if (pak is not null && !pak.Sha256.Equals(archive.Sha256, StringComparison.OrdinalIgnoreCase)) throw new IOException("Архив изменился после открытия.");
+            using var source = pak is null ? await Task.Run(() => archive.OpenVerifiedSource(token), token) : null;
             var entries = archive.Entries.ToDictionary(e => e.Name, StringComparer.OrdinalIgnoreCase);
             string files = Path.Combine(stage,"MMP"); Directory.CreateDirectory(files);
             var imports = new List<ResFileEdit>();
@@ -46,9 +48,9 @@ public static class MmpBatchConverter
                     target = candidate;
                     if (!entries.TryGetValue(name, out var entry)) throw new KeyNotFoundException("Ресурс не найден.");
                     if (entry.Size > MmpPreviewDecoder.MaximumInputBytes) throw new InvalidDataException("Ресурс превышает лимит 128 МиБ.");
-                    source.Position = entry.Offset;
-                    byte[] data = new byte[checked((int)entry.Size)];
-                    await source.ReadExactlyAsync(data, token);
+                    byte[] data;
+                    if (pak is not null) data = pak.Read(entry.Name);
+                    else { source!.Position = entry.Offset; data = new byte[checked((int)entry.Size)]; await source.ReadExactlyAsync(data, token); }
                     MmpImage image = await Task.Run(() => MmpPreviewDecoder.Decode(data, token), token);
                     MmpConversionResult converted = await Task.Run(()=>MmpDxtConverter.ConvertAsync(image,choice,compressor,scratch,token,alphaThreshold),token);
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -70,8 +72,8 @@ public static class MmpBatchConverter
             {
                 var exportEdits = archive.Entries.Where(entry => !imports.Any(item => item.ResourceName.Equals(entry.Name, StringComparison.OrdinalIgnoreCase))).Select(entry => new ResFileEdit(ResFileEditKind.Delete, entry.Name)).ToList();
                 exportEdits.AddRange(imports);
-                await archive.SaveCopyAsync(exportEdits,Path.Combine(stage,"converted.res"),token);
-                var reopened = await ResFileManagerArchive.OpenAsync(Path.Combine(stage,"converted.res"),token);
+                await archive.SaveCopyAsync(exportEdits,Path.Combine(stage,"converted.pak"),token);
+                var reopened = await ResFileManagerArchive.OpenAsync(Path.Combine(stage,"converted.pak"),token);
                 if (reopened.Entries.Count!=imports.Count) throw new InvalidDataException("Не совпадает число ресурсов результата.");
                 Directory.Delete(files,true);
             }
