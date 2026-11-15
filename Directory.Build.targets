@@ -10,8 +10,17 @@
     <Content Include="$(EiWorkspace)\deps\zstd\v1.5.7\lib\common\xxhash.h" Link="third-party\PAK\xxhash.h" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="VerifyPakDependency" BeforeTargets="Build" Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
+    <ReadLinesFromFile File="$(EiWorkspace)\builds\rebuild64\current\SHA256SUMS"><Output TaskParameter="Lines" ItemName="PakManifestLine" /></ReadLinesFromFile>
+    <ItemGroup>
+      <PakManifestEntry Include="@(PakManifestLine)" Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(Identity)', '^[0-9A-Fa-f]{64}  EIRebuild64Pack[.]exe$'))" />
+    </ItemGroup>
+    <Error Condition="'@(PakManifestEntry->Count())' != '1'" Text="Accepted rebuild64 SHA256SUMS must contain exactly one EIRebuild64Pack.exe entry." />
+    <PropertyGroup>
+      <PakExpectedHash>@(PakManifestEntry)</PakExpectedHash>
+      <PakExpectedHash>$([System.Text.RegularExpressions.Regex]::Replace('$(PakExpectedHash)', ' .*$', ''))</PakExpectedHash>
+    </PropertyGroup>
     <GetFileHash Files="$(PakToolPath)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="PakDependencyHash" /></GetFileHash>
-    <Error Condition="'%(PakDependencyHash.FileHash)' != '0BF903E62C1984D5AFE6C51BBB0642836C745540966037A4E44B621D57126F65'" Text="PAK utility differs from the reviewed PAKTXN01 dependency." />
+    <Error Condition="'%(PakDependencyHash.FileHash)' != '$(PakExpectedHash)'" Text="PAK utility SHA-256 differs from builds/rebuild64/current/SHA256SUMS." />
   </Target>
   <!-- The public module SDK did not change in this migration. Ship the accepted
        binary identity against which the independently built module is pinned. -->
@@ -21,5 +30,13 @@
     <Error Condition="'%(FrozenSdkHash.Filename)' == 'ModuleContracts.V1' and '%(FrozenSdkHash.FileHash)' != '465EA159720BD3F988A5E3C32561BBBE66B87EE6AB101FB4368FEBB2B45FB88C'" Text="Accepted ModuleContracts.V1 identity changed; review the module SDK dependency." />
     <Error Condition="'%(FrozenSdkHash.Filename)' == 'ModuleContracts.Wpf.V1' and '%(FrozenSdkHash.FileHash)' != '6BAC0E4CE06B9E4045E3CA9FDE5DDAA537B094376FE0CF7582C6C646562A017D'" Text="Accepted WPF module SDK identity changed; review the module dependency." />
     <Copy SourceFiles="@(FrozenSdk)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PreserveAcceptedModuleSdkInPublish" AfterTargets="Publish" DependsOnTargets="PreserveAcceptedModuleSdk" Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
+    <Copy SourceFiles="@(FrozenSdk)" DestinationFolder="$(PublishDir)" />
+    <ItemGroup><PublishedFrozenSdk Include="@(FrozenSdk->'$(PublishDir)%(Filename)%(Extension)')" /></ItemGroup>
+    <GetFileHash Files="@(PublishedFrozenSdk)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="PublishedFrozenSdkHash" /></GetFileHash>
+    <Error Condition="'%(PublishedFrozenSdkHash.Filename)' == 'ModuleContracts.V1' and '%(PublishedFrozenSdkHash.FileHash)' != '465EA159720BD3F988A5E3C32561BBBE66B87EE6AB101FB4368FEBB2B45FB88C'" Text="Published ModuleContracts.V1 differs from the accepted module SDK." />
+    <Error Condition="'%(PublishedFrozenSdkHash.Filename)' == 'ModuleContracts.Wpf.V1' and '%(PublishedFrozenSdkHash.FileHash)' != '6BAC0E4CE06B9E4045E3CA9FDE5DDAA537B094376FE0CF7582C6C646562A017D'" Text="Published WPF module SDK differs from the accepted module SDK." />
+    <Delete Files="$(PublishDir)ModuleContracts.V1.pdb;$(PublishDir)ModuleContracts.Wpf.V1.pdb" />
   </Target>
 </Project>
