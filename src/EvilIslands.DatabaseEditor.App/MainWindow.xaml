@@ -559,7 +559,7 @@
                         <StackPanel Grid.Row="0" Margin="10,14,10,8">
                             <Button Style="{StaticResource OpenDatabaseButton}"
                                     Command="{Binding OpenCommand}"
-                                    ToolTip="Открыть database.res (Ctrl+O)">
+                                    ToolTip="Открыть БД PAK/RES (Ctrl+O)">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="＋" FontSize="17" Foreground="White" VerticalAlignment="Center" />
                                     <TextBlock Text="  Открыть БД (RES/PAK)…" Foreground="White" VerticalAlignment="Center" />
@@ -781,7 +781,7 @@
                                           <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Margin="8,5" Background="{StaticResource BorderBrush}" /></ControlTemplate></Setter.Value></Setter>
                                         </Style>
                                       </ContextMenu.Resources>
-                                      <MenuItem Header="Подключить из папки database.res" Click="TextureNearby_Click" />
+                                      <MenuItem Header="Подключить из папки открытой БД" Click="TextureNearby_Click" />
                                       <MenuItem Header="Добавить RES…" Click="TextureArchives_Click" />
                                       <Separator Style="{StaticResource TextureMenuSeparatorStyle}" />
                                       <MenuItem Header="Подключить папку игры…" Click="TextureGame_Click" />
@@ -1050,7 +1050,7 @@
                                                         Margin="0,18,0,0"
                                                         Padding="13,7"
                                                         Click="CompareDatabaseButton_Click"
-                                                        ToolTip="Открыть вторую database.res только для чтения и показать различия по таблицам, записям и полям" />
+                                                        ToolTip="Открыть вторую БД PAK/RES только для чтения и показать различия по таблицам, записям и полям" />
                                             </StackPanel>
                                             <Border Grid.Column="1" Width="118" Height="118" Margin="24,0,0,0" Background="#242424" BorderBrush="#3E3E3E" BorderThickness="1" CornerRadius="16">
                                                 <StackPanel VerticalAlignment="Center">

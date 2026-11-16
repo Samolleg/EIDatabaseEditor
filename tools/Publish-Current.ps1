@@ -1,5 +1,6 @@
 param(
-    [string]$PackagePath
+    [string]$PackagePath,
+    [string]$ModulePackagePath
 )
 $ErrorActionPreference = 'Stop'
 $workspaceRoot = $PSScriptRoot
@@ -19,7 +20,8 @@ $destination = Join-Path $taskRoot 'kit'
 $taskTemporary = Join-Path $taskRoot 'tmp'
 New-Item -ItemType Directory -Path $taskTemporary -Force | Out-Null
 $manifestName = 'host-manifest.sha256.json'
-$moduleSource = Join-Path $workspaceRoot 'builds/malachite/current'
+$moduleSource = if ($ModulePackagePath) { (Resolve-Path -LiteralPath $ModulePackagePath).Path } else { Join-Path $workspaceRoot 'builds/malachite/current' }
+if ($PackagePath -and $ModulePackagePath) { throw 'ModulePackagePath applies only when building a new host package.' }
 if (-not $PackagePath -and -not (Test-Path -LiteralPath $moduleSource -PathType Container)) {
     throw "Нет комплекта Малахита: $moduleSource. Сначала заполните builds\malachite\current приёмкой задания Малахита."
 }
@@ -54,6 +56,18 @@ $lockPath = Resolve-ContainedFile $taskTemporary 'dbeditor-current-update.lock'
 $updateLock = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
     if (-not $PackagePath) {
+        # A coordinated task may package its reviewed module candidate without
+        # installing either product into builds/current before owner acceptance.
+        $moduleManifest = Get-Content -LiteralPath (Resolve-ContainedFile $moduleSource 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($file in $moduleManifest.files) {
+            $sourceFile = Resolve-ContainedFile $moduleSource $file.name
+            if ((Get-FileHash -LiteralPath $sourceFile).Hash -ne $file.sha256 -or (Get-Item -LiteralPath $sourceFile).Length -ne $file.length) { throw "Module file mismatch: $($file.name)" }
+        }
+        if (@($moduleManifest.sdk).Count -ne 2 -or @($moduleManifest.sdk.name | Sort-Object -Unique).Count -ne 2) { throw 'Invalid module SDK manifest.' }
+        foreach ($sdk in $moduleManifest.sdk) {
+            if ($sdk.name -notin @('ModuleContracts.V1.dll', 'ModuleContracts.Wpf.V1.dll') -or
+                (Get-FileHash -LiteralPath (Join-Path $workspaceRoot ('builds/dbeditor/current/' + $sdk.name))).Hash -ne $sdk.sha256) { throw 'Module SDK differs from the accepted host SDK.' }
+        }
         $temporary = Join-Path $taskTemporary ('database-editor-current-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $temporary | Out-Null
         & dotnet publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -o $temporary

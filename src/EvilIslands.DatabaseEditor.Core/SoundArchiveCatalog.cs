@@ -123,7 +123,7 @@ public sealed class SoundArchiveCatalog
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(resource);
-        if(PakArchive.IsPak(resource.Archive.SourcePath))return PakArchive.Read(resource.Archive.SourcePath,resource.ResourceName,cancellationToken);
+        if(PakArchive.IsPak(resource.Archive.SourcePath))return await Task.Run(() => PakArchive.Read(resource.Archive.SourcePath,resource.ResourceName,cancellationToken), cancellationToken).ConfigureAwait(false);
         if (resource.Length < 0 || resource.DataOffset < ResArchiveDocument.HeaderSize)
         {
             throw new DatabaseFormatException("Диапазон звукового ресурса некорректен.", resource.Archive.SourcePath);

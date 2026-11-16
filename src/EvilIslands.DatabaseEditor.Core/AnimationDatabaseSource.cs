@@ -44,7 +44,7 @@ public sealed class AnimationDatabaseSource
         {
             token.ThrowIfCancellationRequested();
             if (!File.Exists(path)) continue;
-            using var pak = PakArchive.IsPak(path) ? PakArchive.Open(path, token) : null;
+            using var pak = PakArchive.IsPak(path) ? new ReadOnlyPakArchive(path, token) : null;
             if (pak is not null && pak.Deleted.Any(n => PakArchive.LookupKey(n) == PakArchive.LookupKey(model + ".adb"))) return null;
             byte[]? legacyBytes = pak is null ? File.ReadAllBytes(path) : null;
             var legacy = legacyBytes is null ? null : ResArchiveDocument.Parse(path, legacyBytes, token);

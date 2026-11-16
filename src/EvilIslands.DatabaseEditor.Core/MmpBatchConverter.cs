@@ -27,8 +27,8 @@ public static class MmpBatchConverter
         try
         {
             // Hold a verified read handle throughout the batch: one hash, no concurrent source writes.
-            using var pak = PakArchive.IsPak(archive.SourcePath) ? PakArchive.Open(archive.SourcePath, token) : null;
-            if (pak is not null && !pak.Sha256.Equals(archive.Sha256, StringComparison.OrdinalIgnoreCase)) throw new IOException("Архив изменился после открытия.");
+            using var pak = PakArchive.IsPak(archive.SourcePath) ? await Task.Run(() => new ReadOnlyPakArchive(archive.SourcePath, token), token) : null;
+            if (pak is not null && !await Task.Run(() => pak.Sha256.Equals(archive.Sha256, StringComparison.OrdinalIgnoreCase), token)) throw new IOException("Архив изменился после открытия.");
             using var source = pak is null ? await Task.Run(() => archive.OpenVerifiedSource(token), token) : null;
             var entries = archive.Entries.ToDictionary(e => e.Name, StringComparer.OrdinalIgnoreCase);
             string files = Path.Combine(stage,"MMP"); Directory.CreateDirectory(files);
@@ -49,7 +49,7 @@ public static class MmpBatchConverter
                     if (!entries.TryGetValue(name, out var entry)) throw new KeyNotFoundException("Ресурс не найден.");
                     if (entry.Size > MmpPreviewDecoder.MaximumInputBytes) throw new InvalidDataException("Ресурс превышает лимит 128 МиБ.");
                     byte[] data;
-                    if (pak is not null) data = pak.Read(entry.Name);
+                    if (pak is not null) data = await Task.Run(() => pak.Read(entry.Name, token), token);
                     else { source!.Position = entry.Offset; data = new byte[checked((int)entry.Size)]; await source.ReadExactlyAsync(data, token); }
                     MmpImage image = await Task.Run(() => MmpPreviewDecoder.Decode(data, token), token);
                     MmpConversionResult converted = await Task.Run(()=>MmpDxtConverter.ConvertAsync(image,choice,compressor,scratch,token,alphaThreshold),token);

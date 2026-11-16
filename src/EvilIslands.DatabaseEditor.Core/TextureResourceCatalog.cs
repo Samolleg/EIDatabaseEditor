@@ -13,7 +13,7 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
 
     public static Task<string> ResolveDatabasePathAsync(string path, CancellationToken token = default) => Task.Run(() =>
     {
-        string fullPath = ResourceArchivePaths.Resolve(path);
+        string fullPath = Path.GetFullPath(ResourceArchivePaths.ResolveRecent(path)!);
         var entries = ResFileManagerArchive.ReadCatalog(fullPath, token);
         // Identify content before entering the strict, editable database parser.
         // Read-only texture aliases do not relax the database writing contract.
@@ -24,13 +24,13 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
         string database = ResourceArchivePaths.Resolve(Path.Combine(Path.GetDirectoryName(fullPath)!, "database.res"));
         if (database.Equals(fullPath, StringComparison.OrdinalIgnoreCase) || !File.Exists(database))
             throw new InvalidOperationException($"{Path.GetFileName(fullPath)} содержит текстуры, а не таблицы БД. " +
-                "Рядом нет database.res. Откройте нужную базу и подключите этот архив через «Текстуры → Добавить RES…» слева.");
+                "Рядом нет database.pak или database.res. Откройте нужную базу и подключите этот архив через «Текстуры → Добавить архив…» слева.");
         return database;
     }, token);
 
     public static Task<TextureSources> FromDatabaseFolderAsync(string databasePath, CancellationToken token = default) => Task.Run(() =>
     {
-        string fullPath = ResourceArchivePaths.Resolve(databasePath);
+        string fullPath = Path.GetFullPath(ResourceArchivePaths.ResolveRecent(databasePath)!);
         string folder = Path.GetDirectoryName(fullPath)!;
         // Only use a nearby mod profile when it explicitly names this database.
         foreach (string config in new[] { Path.Combine(folder, "config.ini"), Path.Combine(Path.GetDirectoryName(folder) ?? folder, "config.ini") }.Distinct())
@@ -80,7 +80,7 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
     public string? ConfigurationHash { get; init; }
     public static TextureSources Manual(IEnumerable<string> paths) =>
         new(ResourceArchivePaths.Order(paths),
-            [], false, false, ["Подключена часть ресурсов. Порядок выбранных RES не подтверждает конфигурацию игры."]);
+            [], false, false, ["Подключена часть ресурсов. Порядок выбранных архивов не подтверждает конфигурацию игры."]);
 
     public static TextureSources FromGame(string gameFolder, string? configPath = null, IReadOnlyList<string>? resourceGroups = null)
     {
@@ -121,7 +121,7 @@ public sealed record TextureSources(IReadOnlyList<string> Archives, IReadOnlyLis
             var configured = overrides.Where(x => x.Key.Equals(group, StringComparison.OrdinalIgnoreCase)).Select(x => x.Path).ToArray();
             archives.AddRange(configured.Where(p => p != "-"));
             string baseline = Path.Combine(gameFolder, "Res", group);
-            if (!File.Exists(baseline) && File.Exists(Path.Combine(gameFolder, group)))
+            if (!File.Exists(ResourceArchivePaths.Resolve(baseline)) && File.Exists(ResourceArchivePaths.Resolve(Path.Combine(gameFolder, group))))
                 baseline = Path.Combine(gameFolder, group);
             if (!configured.Contains("-")) baselineArchives.Add(baseline);
         }

@@ -19,7 +19,13 @@ public sealed class PakArchive : IDisposable
     public string Sha256 { get; }
     public long Length { get; }
     public IReadOnlyList<string> Deleted => _rows.Values.Where(r => r.Method == 2).Select(r => r.Name).ToArray();
-    private static Encoding Legacy { get { Encoding.RegisterProvider(CodePagesEncodingProvider.Instance); return Encoding.GetEncoding(1251, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback); } }
+    private static readonly Encoding Legacy = CreateEncoding();
+    private static Encoding CreateEncoding()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        return Encoding.GetEncoding(1251, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+    }
+    private static readonly IReadOnlyDictionary<byte, byte> LowercaseBytes = new Dictionary<byte, byte> { [0x80]=0x90,[0x81]=0x83,[0x8a]=0x9a,[0x8c]=0x9c,[0x8d]=0x9d,[0x8e]=0x9e,[0x8f]=0x9f,[0xa1]=0xa2,[0xa3]=0xbc,[0xa5]=0xb4,[0xa8]=0xb8,[0xaa]=0xba,[0xaf]=0xbf,[0xb2]=0xb3,[0xbd]=0xbe };
 
     public static bool IsPak(string path)
     {
@@ -32,8 +38,7 @@ public sealed class PakArchive : IDisposable
     public static string LookupKey(string name)
     {
         byte[] bytes = Legacy.GetBytes(name);
-        var special = new Dictionary<byte, byte> { [0x80]=0x90,[0x81]=0x83,[0x8a]=0x9a,[0x8c]=0x9c,[0x8d]=0x9d,[0x8e]=0x9e,[0x8f]=0x9f,[0xa1]=0xa2,[0xa3]=0xbc,[0xa5]=0xb4,[0xa8]=0xb8,[0xaa]=0xba,[0xaf]=0xbf,[0xb2]=0xb3,[0xbd]=0xbe };
-        for (int i=0;i<bytes.Length;i++) { byte b=bytes[i]; bytes[i]=(b>=0x41&&b<=0x5a)||(b>=0xc0&&b<=0xdf)?(byte)(b+32):special.GetValueOrDefault(b,b); }
+        for (int i=0;i<bytes.Length;i++) { byte b=bytes[i]; bytes[i]=(b>=0x41&&b<=0x5a)||(b>=0xc0&&b<=0xdf)?(byte)(b+32):LowercaseBytes.GetValueOrDefault(b,b); }
         return Convert.ToHexString(bytes);
     }
     public static PakArchive Open(string path, CancellationToken token = default)
@@ -75,9 +80,9 @@ public sealed class PakArchive : IDisposable
         return result;
     }
     public static byte[] Read(string path,string name,CancellationToken token=default)
-    { using var archive=Open(path,token);return archive.Read(name,token); }
+    { using var archive=new ReadOnlyPakArchive(path,token);return archive.Read(name,token); }
     public static IReadOnlyList<string> DeletedNames(string path,CancellationToken token=default)
-    { using var archive=Open(path,token);return archive.Deleted; }
+    { using var archive=new ReadOnlyPakArchive(path,token);return archive.Deleted; }
     internal byte[] OriginalBytes() => File.ReadAllBytes(_snapshot);
     internal void VerifyContents(CancellationToken token = default)
     {

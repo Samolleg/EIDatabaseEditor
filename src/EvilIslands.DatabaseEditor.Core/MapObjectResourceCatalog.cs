@@ -28,7 +28,7 @@ public static class MapObjectResourceCatalog
             }
             foreach(string archive in UnitModelPreview.FigureArchives(databasePath,sources).Where(File.Exists)){
                 token.ThrowIfCancellationRequested();
-                using var pak=PakArchive.IsPak(archive)?PakArchive.Open(archive,token):null;
+                using var pak=PakArchive.IsPak(archive)?new ReadOnlyPakArchive(archive,token):null;
                 if(pak is not null)foreach(string name in pak.Deleted)claimed.Add(PakArchive.LookupKey(name));
                 foreach(var entry in pak?.Entries??ResFileManagerArchive.ReadCatalog(archive,token)){
                     string key=PakArchive.LookupKey(entry.Name);if(claimed.Add(key))resources.Add(key,(archive,entry.Name));

@@ -68,13 +68,13 @@ public sealed class ResFileManagerArchive
     // Read-only discovery: reuse structural validation without hashing/loading payloads.
     public static IReadOnlyList<ResEntry> ReadCatalog(string path, CancellationToken cancellationToken = default)
     {
-        path=ResourceArchivePaths.Resolve(Path.GetFullPath(path));
+        path=Path.GetFullPath(ResourceArchivePaths.ResolveRecent(path)!);
         if(PakArchive.IsPak(path)){using var pak=NativePakReader.Open(path,cancellationToken);return pak.Entries;}
         return OpenArchiveIndex(path,cancellationToken,readOnlyCatalog:true).Entries;
     }
     public static byte[] ReadResource(string path,string name,CancellationToken token=default)
     {
-        path=ResourceArchivePaths.Resolve(path);
+        path=Path.GetFullPath(ResourceArchivePaths.ResolveRecent(path)!);
         if(PakArchive.IsPak(path))return PakArchive.Read(path,name,token);
         var entry=ReadCatalog(path,token).Single(e=>e.Name.Equals(name,StringComparison.OrdinalIgnoreCase));
         using var stream=File.OpenRead(path);stream.Position=entry.Offset;byte[] bytes=new byte[entry.Size];stream.ReadExactly(bytes);return bytes;
@@ -543,6 +543,27 @@ public sealed class ResFileManagerArchive
             var imported=edit.ImportedFile??throw new IOException("Missing imported payload.");byte[] bytes=File.ReadAllBytes(imported.SourcePath);
             if(!Convert.ToHexString(SHA256.HashData(bytes)).Equals(imported.Sha256,StringComparison.OrdinalIgnoreCase))throw new IOException("Imported file changed.");
             changes[name]=bytes;if(original is null)added++;else replaced++;
+        }
+        // RES saves validate known documents before replacing the original. PAK
+        // must enforce the same schema gate, not merely validate its container.
+        if (IsKnownArchive(Path.GetFileName(SourcePath)) || IsKnownArchive(Path.GetFileName(destination)))
+        {
+            string stage = Path.Combine(Path.GetTempPath(), "ei-known-" + Guid.NewGuid().ToString("N") + ".pak");
+            try
+            {
+                if (inPlace) File.WriteAllBytes(stage, _pak!.OriginalBytes());
+                PakArchive.ApplyChanges([(stage, inPlace ? Sha256 : null, changes)]);
+                ValidateKnownArchive(stage, IsKnownArchive(Path.GetFileName(SourcePath)) ? Path.GetFileName(SourcePath) : Path.GetFileName(destination), token);
+                byte[] image = File.ReadAllBytes(stage);
+                string? verifiedBackup = backup ? CreateAvailableBackupPath(SourcePath) : null;
+                var writes = new List<(string Path, string? ExpectedHash, byte[] Bytes)> { (destination, inPlace ? Sha256 : null, image) };
+                if (verifiedBackup is not null) writes.Add((verifiedBackup, null, _pak!.OriginalBytes()));
+                token.ThrowIfCancellationRequested();
+                PakArchive.PublishMixedImages(writes);
+                using var verified = new ReadOnlyPakArchive(destination, token);
+                return new(destination, image.LongLength, verified.Sha256, verified.Entries.Count, added, replaced, deleted, verifiedBackup);
+            }
+            finally { if (File.Exists(stage)) File.Delete(stage); }
         }
         string? backupPath=null;
         if(backup) {backupPath=CreateAvailableBackupPath(SourcePath);File.WriteAllBytes(backupPath,_pak!.OriginalBytes());}
@@ -1081,16 +1102,22 @@ public sealed class ResFileManagerArchive
         string logicalFileName,
         CancellationToken cancellationToken)
     {
-        _ = OpenArchiveIndex(path, cancellationToken);
-        if (logicalFileName.Equals("database.res", StringComparison.OrdinalIgnoreCase))
+        _ = ReadCatalog(path, cancellationToken);
+        if (Path.GetFileNameWithoutExtension(logicalFileName).Equals("database", StringComparison.OrdinalIgnoreCase))
         {
-            _ = DatabaseDocument.Open(path);
+            var document = DatabaseDocument.Open(path);
+            var malformed = document.Diagnostics.FirstOrDefault(d => d.Code == "DB_PARSE_FAILED");
+            if (malformed is not null) throw new InvalidDataException(malformed.Message);
         }
-        else if (logicalFileName.Equals("texts.res", StringComparison.OrdinalIgnoreCase))
+        else if (Path.GetFileNameWithoutExtension(logicalFileName).Equals("texts", StringComparison.OrdinalIgnoreCase))
         {
             _ = TextsDocument.Open(path);
         }
     }
+
+    private static bool IsKnownArchive(string name) => ResourceArchivePaths.IsArchive(name) &&
+        (Path.GetFileNameWithoutExtension(name).Equals("database", StringComparison.OrdinalIgnoreCase) ||
+         Path.GetFileNameWithoutExtension(name).Equals("texts", StringComparison.OrdinalIgnoreCase));
 
     private static void ValidateResourceName(string name)
     {

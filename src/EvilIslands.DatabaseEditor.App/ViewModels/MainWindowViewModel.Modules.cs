@@ -19,19 +19,22 @@ internal sealed partial class MainWindowViewModel
         private readonly Guid session = Guid.NewGuid();
         private long generation = 1, revision;
         private readonly Dictionary<RecordRowViewModel, Guid> ids = new();
+        private global::DatabaseEditor.Modules.V1.WorkspaceSnapshot? cached;
         public event EventHandler<WorkspaceEvent>? Changed;
         internal WorkspaceStamp Stamp => new(session, generation, revision);
         internal RecordRowViewModel? Resolve(RecordRef reference) => ids.FirstOrDefault(p => p.Value == reference.RecordId && p.Key.TableKey == reference.TableKey).Key;
         internal ModuleWorkspaceReader(MainWindowViewModel vm) => this.vm = vm;
         internal void Replaced()
         {
+            cached = null;
             generation++; revision++; ids.Clear();
             Notify("WorkspaceReplaced");
         }
-        internal void Edited()
+        internal void Edited(bool databaseChanged = true)
         {
             if (vm._moduleTransactionActive) return;
             revision++;
+            cached = databaseChanged || cached is null ? null : cached with { Stamp = Stamp, Modified = vm.HasUnsavedWork };
             Notify("ContentChanged");
         }
         private void Notify(string kind)
@@ -42,6 +45,11 @@ internal sealed partial class MainWindowViewModel
         public global::DatabaseEditor.Modules.V1.WorkspaceSnapshot Snapshot()
         {
             Application.Current?.Dispatcher.VerifyAccess();
+            if (cached is not null && cached.Stamp == Stamp)
+            {
+                if (cached.Modified != vm.HasUnsavedWork) cached = cached with { Modified = vm.HasUnsavedWork };
+                return cached;
+            }
             var rows = ImmutableArray.CreateBuilder<RecordDto>();
             foreach (var table in vm.Databases.SelectMany(d => d.Tables))
             foreach (var row in table.Records)
@@ -49,11 +57,18 @@ internal sealed partial class MainWindowViewModel
                 if (!ids.TryGetValue(row, out var id)) ids.Add(row, id = Guid.NewGuid());
                 // Core owns QDB/text linking; never reconstruct QUEST/BRIEFING keys here.
                 vm._service.RefreshRelatedTexts(row);
+                var occurrences = new Dictionary<int, int>();
+                var fields = row.CoreRecord.Fields.Select(f =>
+                {
+                    int occurrence = occurrences.GetValueOrDefault(f.Id);
+                    occurrences[f.Id] = occurrence + 1;
+                    return new FieldDto(f.Id, occurrence, [], new ValueDto(f.Kind, f.EditorText, f.DisplayName, f.IsEditable && f.Kind is "String" or "Int32" or "Float32"));
+                }).ToImmutableArray();
                 rows.Add(new(new(session, generation, table.Key, id), row.DisplayName, row.LocalizationTitle,
-                    row.CoreRecord.Fields.Select((f, index) => new FieldDto(f.Id, row.CoreRecord.Fields.Take(index).Count(x => x.Id == f.Id), [], new ValueDto(f.Kind, f.EditorText, f.DisplayName, f.IsEditable && f.Kind is "String" or "Int32" or "Float32"))).ToImmutableArray(),
+                    fields,
                     row.RelatedTexts.Select(t => new TextDto(t.ResourceName, t.Title, t.Description, t.IsModified)).ToImmutableArray()));
             }
-            return new(new(session, generation, revision), vm.SourcePath ?? "", vm.HasUnsavedWork, rows.ToImmutable());
+            return cached = new(new(session, generation, revision), vm.SourcePath ?? "", vm.HasUnsavedWork, rows.ToImmutable());
         }
         public Result Navigate(RecordRef reference)
         {

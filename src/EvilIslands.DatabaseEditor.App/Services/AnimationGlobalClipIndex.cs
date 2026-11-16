@@ -20,29 +20,54 @@ internal sealed record AnimationGlobalCatalog(IReadOnlyList<AnimationGlobalHit> 
 
 internal static class AnimationGlobalClipIndex
 {
-    private static readonly ConcurrentDictionary<string, Lazy<Task<AnimationGlobalCatalog>>> Cache =
-        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object CacheLock = new();
+    private static string? cacheKey;
+    private static Task<AnimationGlobalCatalog>? cached;
 
-    public static Task<AnimationGlobalCatalog> OpenAsync(string directory) => Cache.GetOrAdd(directory,
-        path => new Lazy<Task<AnimationGlobalCatalog>>(() => Task.Run(() => Build(path)))).Value;
+    public static async Task<AnimationGlobalCatalog> OpenAsync(string databasePath)
+    {
+        var sources = await TextureSources.FromDatabaseFolderAsync(databasePath).ConfigureAwait(false);
+        return await Task.Run(async () =>
+        {
+            string directory = Path.GetDirectoryName(databasePath)!;
+            var archives = sources.GameFolder is { } game && sources.ConfigurationPath is { } config
+                ? TextureSources.FromGame(game, config, ["figures.res", "database.res", "menus.res"]).Archives.Where(File.Exists).ToArray()
+                : ResourceArchivePaths.Enumerate(directory).ToArray();
+            string? root = sources.ConfigurationPath is null ? null : Path.GetDirectoryName(sources.ConfigurationPath);
+            string[] loose = root is null ? [] : Directory.EnumerateFiles(root, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint })
+                .Where(p => Path.GetExtension(p).Equals(".anm", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(p).Equals(".adb", StringComparison.OrdinalIgnoreCase)).ToArray();
+            string[] paths = loose.Concat(archives).ToArray();
+            string Identity() => databasePath + "|" + sources.ConfigurationHash + "|" + string.Join("|", paths.Select(p => p + ":" + new FileInfo(p).Length + ":" + ResourceFileStamp.Read(p)));
+            string identity = Identity();
+            Task<AnimationGlobalCatalog> pending;
+            lock (CacheLock)
+            {
+                if (cacheKey != identity || cached is null || cached.IsFaulted || cached.IsCanceled)
+                {
+                    cacheKey = identity;
+                    cached = Task.Run(() => { var result = Build(paths, root); if (Identity() != identity) throw new IOException("Источники анимаций изменились во время поиска. Повторите поиск."); return result; });
+                }
+                pending = cached;
+            }
+            return await pending.ConfigureAwait(false);
+        }).ConfigureAwait(false);
+    }
 
-    public static void Invalidate(string directory) => Cache.TryRemove(directory, out _);
+    public static void Invalidate(string directory) { lock (CacheLock) { cacheKey = null; cached = null; } }
 
-    private static AnimationGlobalCatalog Build(string directory)
+    private static AnimationGlobalCatalog Build(string[] paths, string? looseRoot)
     {
         var animations = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         var registered = new Dictionary<string, Dictionary<string, List<int>>>(StringComparer.OrdinalIgnoreCase);
         var issues = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        string? looseRoot=new[]{directory,Path.GetDirectoryName(directory)}.FirstOrDefault(p=>p is not null&&File.Exists(Path.Combine(p,"config.ini")));
-        var loose=looseRoot is null?Enumerable.Empty<string>():Directory.EnumerateFiles(looseRoot,"*",SearchOption.AllDirectories).Where(p=>Path.GetExtension(p).Equals(".anm",StringComparison.OrdinalIgnoreCase)||Path.GetExtension(p).Equals(".adb",StringComparison.OrdinalIgnoreCase));
-        foreach (string path in loose.Concat(ResourceArchivePaths.Enumerate(directory)))
+        foreach (string path in paths)
         {
-            PakArchive? pak = null;
+            ReadOnlyPakArchive? pak = null;
             IReadOnlyList<ResEntry> entries;
             try {
                 bool direct=Path.GetExtension(path).Equals(".anm",StringComparison.OrdinalIgnoreCase)||Path.GetExtension(path).Equals(".adb",StringComparison.OrdinalIgnoreCase);
-                pak = !direct&&PakArchive.IsPak(path) ? PakArchive.Open(path) : null;
+                pak = !direct&&PakArchive.IsPak(path) ? new ReadOnlyPakArchive(path, default) : null;
                 entries = direct?[new ResEntry(0,Path.GetRelativePath(looseRoot!,path),0,checked((int)new FileInfo(path).Length),0,0,0)]:pak?.Entries ?? ResFileManagerArchive.ReadCatalog(path);
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
@@ -58,7 +83,7 @@ internal static class AnimationGlobalClipIndex
                 try
                 {
                     byte[] bytes;
-                    if (pak is not null) bytes = pak.Read(entry.Name);
+                    if (pak is not null) bytes = pak.Read(entry.Name, default);
                     else { stream.Position = entry.Offset; bytes = new byte[entry.Size]; stream.ReadExactly(bytes); }
                     string model = Path.GetFileNameWithoutExtension(entry.Name);
                     if (entry.Name.EndsWith(".anm", StringComparison.OrdinalIgnoreCase))
