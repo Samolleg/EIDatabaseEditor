@@ -26,12 +26,13 @@ internal static class PakDiscoveryRegression
             string config = Path.Combine(mod, "config.ini");
             File.WriteAllText(config, "[RES]\ndatabase.res=res\\database.res\ntextures.res=res\\early.res\ntextures.res=res\\late.res\nfigures.res=res\\models.res\n", Encoding.ASCII);
             var sources = TextureSources.FromGame(root, config, ["textures.res"]);
-            Require(sources.Archives.SequenceEqual(new[] { Path.Combine(res, "late.pak"), Path.Combine(res, "early.res"), Path.Combine(baseline, "textures.res") }), "PAK tier or base RES order");
+            Require(sources.Archives.SequenceEqual(new[] { Path.Combine(res, "late.pak"), Path.Combine(res, "early.res"), Path.Combine(baseline, "textures.pak") }), "PAK tier or base PAK order");
             Require(!sources.Archives.Contains(Path.Combine(res, "late.res")), "Shadowed RES included");
             var figures = UnitModelPreview.FigureArchives(Path.Combine(res, "database.pak"), sources).ToArray();
             Require(figures.SequenceEqual(new[] { Path.Combine(res, "models.pak"), Path.Combine(baseline, "figures.res"),Path.Combine(baseline,"menus.res") }), "Figure-kind provider order");
             var textureKinds=TextureSources.FromGame(root,config).Archives;
-            Require(!textureKinds.Contains(Path.Combine(res,"models.pak"))&&textureKinds.ToList().IndexOf(Path.Combine(baseline,"textures.res"))<textureKinds.ToList().IndexOf(Path.Combine(baseline,"menus.res")),"Archive kind or texture/menu priority");
+            Require(!textureKinds.Contains(Path.Combine(res,"models.pak"))&&textureKinds.ToList().IndexOf(Path.Combine(baseline,"textures.pak"))<textureKinds.ToList().IndexOf(Path.Combine(baseline,"menus.res")),"Archive kind or texture/menu priority");
+            Require(ResourceArchivePaths.IsBaseFigure(Path.Combine(baseline,"figures.pak"),null) && ResourceArchivePaths.IsBaseFigure(Path.Combine(baseline,"figures.res"),null) && !ResourceArchivePaths.IsBaseFigure(Path.Combine(res,"figures.pak"),root),"Base FIG UV classification");
             File.AppendAllText(config, "textures.res=-\nfigures.res=-\nmenus.res=-\n");
             sources = TextureSources.FromGame(root, config, ["textures.res"]);
             Require(sources.Archives.Count == 2 && sources.Archives.All(p => p.StartsWith(mod)), "Ignore-base textures");

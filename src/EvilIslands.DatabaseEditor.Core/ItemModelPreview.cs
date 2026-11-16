@@ -51,7 +51,7 @@ public static class ItemModelPreview
         var options = Options(item, records);
         if (options.Choices.Count == 0 || options.Label != "Материал" || item.Table == "items.loot_items") return options.Choices.FirstOrDefault();
         var sources = await TextureSources.FromDatabaseFolderAsync(database, token).ConfigureAwait(false);
-        var catalog = await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
+        var catalog = await TextureResourceCatalog.OpenCachedAsync(sources, token).ConfigureAwait(false);
         return DefaultChoice(item, records, catalog, token);
     }
 
@@ -190,7 +190,7 @@ public static class ItemModelPreview
                 if (mesh.Indices.Length > 0) meshes.Add(mesh);
             }
             if (meshes.Count == 0 && validation is null) throw new InvalidDataException("В инвентарной модели нет геометрии.");
-            var catalog = validation?.Catalog ?? await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
+            var catalog = validation?.Catalog ?? await TextureResourceCatalog.OpenCachedAsync(sources, token).ConfigureAwait(false);
             string? resolved = new[] { ".x4.mmp", ".x2.mmp", ".mmp" }.Select(s => texture + s).FirstOrDefault(n => catalog.Check(n).Matches.Count > 0);
             if (validation is not null)
             {
@@ -201,6 +201,8 @@ public static class ItemModelPreview
             if (resolved is null) notes.Add("Не найдена текстура предмета: " + texture + ".mmp");
             else
             {
+                try
+                {
                 var image = await catalog.ReadPreviewAsync(resolved, token).ConfigureAwait(false);
                 int width = logical, height = logical;
                 if (catalog.Check(texture + ".mmp").Matches.Count > 0)
@@ -213,6 +215,11 @@ public static class ItemModelPreview
                 var atlas = InventoryAtlas(image, width, height, token);
                 foreach (int slot in meshes.Select(m => m.TextureSlot).Distinct()) textures[slot] = atlas;
                 used.Add(resolved + " — " + catalog.Check(resolved).Source);
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or ArgumentException)
+                {
+                    notes.Add("Не удалось показать текстуру " + resolved + ": " + ex.Message + ". Геометрия предмета показана без этого слоя.");
+                }
             }
             notes.Add("Инвентарная модель предмета; не внешний вид надетой вещи или объекта карты. Файлы модели и UV не изменяются.");
             return new UnitModelScene(root, meshes, textures, used.Distinct().ToArray(), notes);

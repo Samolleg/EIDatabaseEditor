@@ -28,6 +28,9 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if(args.Length==3&&args[0]=="--preview214")return Preview214Regression.Run(args[1],args[2]);
+        if(args.Length==4&&args[0]=="--preview214-recheck")return Preview214Recheck.Run(args[1],args[2],args[3]);
+        if(args.Length==4&&args[0]=="--preview214-options")return Preview214Recheck.ExpandOptions(args[1],args[2],args[3]);
         if(args.Length==3&&args[0]=="--pak-native")return NativePakRegression.Run(args[1],args[2]);
         if(args.Length==3&&args[0]=="--pak-live")return NativePakRegression.Run(args[1],args[2],false);
         if(args.Length==3&&args[0]=="--pak-performance")return PakPerformanceRegression.Run(args[1],args[2]);

@@ -114,11 +114,17 @@ public static class UnitModelPreview
                 string? candidate = Path.GetDirectoryName(Path.GetDirectoryName(modelArchive));
                 if (candidate is not null && File.Exists(Path.Combine(candidate, "game.exe"))) gameFolder = candidate;
             }
-            bool baseFigure = gameFolder is not null && string.Equals(modelArchive,
-                Path.Combine(gameFolder, "Res", "figures.res"), StringComparison.OrdinalIgnoreCase);
-            var mod = validation is null ? ResArchiveDocument.Parse(mask + ".mod", Resource(mask + ".mod"), token) :
+            bool baseFigure = ResourceArchivePaths.IsBaseFigure(modelArchive, gameFolder);
+            ResArchiveDocument ModelArchive(string name)
+            {
+                string? source = ResourceArchivePaths.FindLoose(sources.ConfigurationPath, name) ?? indexes.FirstOrDefault(a => a.Entries.Any(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase))).Path;
+                if (source is null) throw new FileNotFoundException("Не найден ресурс модели: " + name);
+                used.Add(name + " — " + source);
+                return PreviewModelArchiveCache.Parse(source, name, () => Resource(name), token);
+            }
+            var mod = validation is null ? ModelArchive(mask + ".mod") :
                 validation.Parse(mask + ".mod", () => validation.Read(mask + ".mod", token), token);
-            var bon = validation is null ? ResArchiveDocument.Parse(mask + ".bon", Resource(mask + ".bon"), token) :
+            var bon = validation is null ? ModelArchive(mask + ".bon") :
                 validation.Parse(mask + ".bon", () => validation.Read(mask + ".bon", token), token);
             var parents = ReadHierarchy(mod.GetResourceBytes(mask).ToArray());
             Vector3 morph = appearance?.Morph ?? new(unit.Number(5), unit.Number(6), unit.Number(7));
@@ -145,7 +151,7 @@ public static class UnitModelPreview
             bool weaponSlots = bodyParts.All(parents.ContainsKey) && parents.Keys.Any(p =>
                 System.Text.RegularExpressions.Regex.IsMatch(p, @"^(rh3\.(sword|axe|dagger|pike|club)\d{2}|lh2\.shield\d{2}|lh3\.bwpartb\d{2})$", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
             bool dressed = armorSlots || weaponSlots;
-            var catalog = validation?.Catalog ?? await TextureResourceCatalog.OpenAsync(sources, token).ConfigureAwait(false);
+            var catalog = validation?.Catalog ?? await TextureResourceCatalog.OpenCachedAsync(sources, token).ConfigureAwait(false);
             // A humanoid hierarchy alone does not imply a composited skin (e.g. goblins).
             // Keep their explicit MOB skin unless the model's redress skin actually exists.
             bool hasCompositeSkin = new[] { ".x4.mmp", ".x2.mmp", ".mmp" }
@@ -163,7 +169,7 @@ public static class UnitModelPreview
             }
             if (dressed && unit.Integer(4, -1) >= 0) visible.Add($"hr.{unit.Integer(4):D2}");
             var primary = new List<string>(); var secondary = new List<string>();
-            if (dressed) primary.Add($"{mask}skin_{unit.Integer(3):D2}");
+            if (dressed && hasCompositeSkin) primary.Add($"{mask}skin_{unit.Integer(3):D2}");
             else
             {
                 string[] skins = race.Lists.GetValueOrDefault(31, []);
@@ -395,7 +401,7 @@ public static class UnitModelPreview
                         layers.Add(await catalog.ReadPreviewAsync(name, token).ConfigureAwait(false));
                         used.Add(name + " — " + catalog.Check(name).Source);
                     }
-                    catch (Exception ex) when (ex is IOException or NotSupportedException or ArgumentException) { notes.Add(name + ": " + ex.Message); }
+                    catch (Exception ex) when (ex is IOException or InvalidDataException or NotSupportedException or ArgumentException) { notes.Add(name + ": " + ex.Message); }
                 }
                 if (layers.Count > 0)
                 {
