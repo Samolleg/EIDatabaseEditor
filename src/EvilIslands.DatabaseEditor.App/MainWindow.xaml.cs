@@ -575,7 +575,7 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "Подключить texts.res",
+            Title = "Подключить тексты (PAK/RES)",
             Filter = "Evil Islands texts|texts.pak;texts.res;*.pak;*.res|PAK/RES-контейнеры (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,

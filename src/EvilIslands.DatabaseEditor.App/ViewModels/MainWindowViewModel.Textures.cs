@@ -68,7 +68,7 @@ internal sealed partial class MainWindowViewModel
     internal TextureSources? SpellPreviewTextureSources => _textureSources;
     private int _textureRevision;
     private CancellationTokenSource? _textureRefresh;
-    private string _textureSummary = "Подключите ресурсы игры или отдельные RES.";
+    private string _textureSummary = "Подключите ресурсы игры или отдельные архивы PAK/RES.";
     private bool _textureShowAll;
     private string? _textureDocument;
     private string _textureSearch = "";

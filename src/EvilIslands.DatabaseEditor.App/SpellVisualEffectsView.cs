@@ -112,7 +112,7 @@ public sealed class SpellVisualEffectsView : UserControl
                 sources ??= await TextureSources.FromDatabaseFolderAsync(path, token);
                 if (sources.GameFolder is { } game)
                     sources = TextureSources.FromGame(game, sources.ConfigurationPath, ["textures.res"]);
-                catalog = await TextureResourceCatalog.OpenAsync(sources, token);
+                catalog = await TextureResourceCatalog.OpenCachedAsync(sources, token);
             }
             token.ThrowIfCancellationRequested(); _catalog = catalog; _catalogPath = path;
             var bindings = library ? SpellVisualEffects.Bindings : SpellVisualEffects.ForSpell(record.Text(1), recordIndex);

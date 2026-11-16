@@ -133,7 +133,7 @@ internal sealed partial class MainWindowViewModel
             error = ex.Message; return false;
         }
         finally { _moduleTransactionActive = false; }
-        _moduleWorkspace?.Edited();
+        _moduleWorkspace?.Edited(frame.Frames.Any(f => f is not ModuleDocumentFrame));
         foreach (var d in frame.Frames.OfType<ModuleDocumentFrame>()) ModuleDocuments.Publish(d.Before.DocumentId);
         return true;
     }

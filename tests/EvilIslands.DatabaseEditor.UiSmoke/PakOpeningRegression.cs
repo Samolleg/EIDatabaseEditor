@@ -70,6 +70,7 @@ internal static class PakOpeningRegression
         var vm = (MainWindowViewModel)window.DataContext;
         for (int i = 0; i < 3000 && vm.IsBusy; i++) await Task.Delay(20);
         Check(!vm.IsBusy && vm.HasDocument && vm.SourcePath == copy && vm.RecordCount > 0, "Real PAK database did not open: " + vm.NotificationMessage);
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); // Finish the async open handler's recent-file update.
         Check(preferences.GetLastDatabasePath() == copy, "Recent database did not migrate to physical PAK path");
         Render((FrameworkElement)window.Content, Path.Combine(output, "database.png"), 1500, 950);
         Console.WriteLine($"PASS real database UI: {vm.RecordCount} records, migrated recent path");

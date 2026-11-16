@@ -79,7 +79,7 @@ internal sealed class PakArchiveSet : IDisposable
 
 // Preview/validation owns a read guard, not an editable disk snapshot. Keep the
 // guard until the request ends; compute a save baseline only when ANM needs it.
-internal sealed class ReadOnlyPakArchive : IDisposable
+public sealed class ReadOnlyPakArchive : IDisposable
 {
     private readonly FileStream _guard;
     private readonly NativePakReader _reader;
@@ -94,6 +94,6 @@ internal sealed class ReadOnlyPakArchive : IDisposable
     public IReadOnlyList<ResEntry> Entries => _reader.Entries;
     public IReadOnlyList<string> Deleted => _reader.Deleted;
     public string Sha256 => _sha256 ??= Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(_guard));
-    public byte[] Read(string name, CancellationToken token) => _reader.ReadPrefix(name, int.MaxValue, token);
+    public byte[] Read(string name, CancellationToken token = default) => _reader.ReadPrefix(name, int.MaxValue, token);
     public void Dispose() { _reader.Dispose(); _guard.Dispose(); }
 }

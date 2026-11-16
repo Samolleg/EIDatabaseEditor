@@ -233,7 +233,7 @@ public sealed partial class UnitModelPreviewView
 
     private async Task ShowOtherModelMatchesAsync(string query, string model, int version)
     {
-        string? archive = _animations?.SaveTarget?.Path;
+        string? archive = _vm?.SourcePath ?? _editingScene?.AnimationDatabase?.ArchivePath;
         if (archive is null)
         {
             _searchMatches.Children.Clear();
@@ -242,7 +242,7 @@ public sealed partial class UnitModelPreviewView
         }
         try
         {
-            var catalog = await AnimationGlobalClipIndex.OpenAsync(Path.GetDirectoryName(archive)!);
+            var catalog = await AnimationGlobalClipIndex.OpenAsync(archive);
             if (version != _globalSearchVersion || _editingScene?.Model != model) return;
             var hits = catalog.Search(query, model);
             _searchMatches.Children.Clear();

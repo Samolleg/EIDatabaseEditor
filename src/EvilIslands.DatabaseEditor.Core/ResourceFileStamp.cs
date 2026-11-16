@@ -4,7 +4,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace EvilIslands.DatabaseEditor.Core;
 
-internal static class ResourceFileStamp
+public static class ResourceFileStamp
 {
     // Legacy archives may carry FILETIME outside DateTime's range. Compare raw
     // metadata for change detection; do not normalize the user's file dates.

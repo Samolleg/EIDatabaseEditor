@@ -1076,16 +1076,16 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     public bool HasTextsDocument => !string.IsNullOrWhiteSpace(_workspace?.TextsPath);
 
     public string TextsFileName => _workspace?.TextsPath is null
-        ? "texts.res не подключён"
+        ? "Архив текстов не подключён"
         : Path.GetFileName(_workspace.TextsPath);
 
-    public string TextsPath => _workspace?.TextsPath ?? "Рядом с database.res файл texts.res не найден.";
+    public string TextsPath => _workspace?.TextsPath ?? "Рядом с БД архив texts.pak или texts.res не найден.";
 
     public int TextResourceCount => TextResources.Count;
 
     public string TextsStatusText => HasTextsDocument
         ? $"Подключён {TextsFileName} · {TextResourceCount:N0} текстов"
-        : "texts.res не подключён";
+        : "Архив текстов не подключён";
 
     public string AttachTextsButtonText => HasTextsDocument
         ? $"✓ {TextsFileName} · {TextResourceCount:N0}"
@@ -1099,7 +1099,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public string SoundArchivePaths => HasSoundArchives
         ? string.Join(Environment.NewLine, _workspace!.SoundArchives.Select(archive => archive.SourcePath))
-        : "Подключите speech.res, sfx.res или другой RES со звуками.";
+        : "Подключите speech.pak, sfx.pak или другой архив PAK/RES со звуками.";
 
     public string AttachSoundsButtonText => HasSoundArchives
         ? $"♪ Звук · {SoundArchiveCount:N0} RES · {SoundResourceCount:N0} файлов"
