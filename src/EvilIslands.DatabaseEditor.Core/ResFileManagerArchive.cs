@@ -69,7 +69,7 @@ public sealed class ResFileManagerArchive
     public static IReadOnlyList<ResEntry> ReadCatalog(string path, CancellationToken cancellationToken = default)
     {
         path=ResourceArchivePaths.Resolve(Path.GetFullPath(path));
-        if(PakArchive.IsPak(path)){using var pak=PakArchive.Open(path,cancellationToken);return pak.Entries;}
+        if(PakArchive.IsPak(path)){using var pak=NativePakReader.Open(path,cancellationToken);return pak.Entries;}
         return OpenArchiveIndex(path,cancellationToken,readOnlyCatalog:true).Entries;
     }
     public static byte[] ReadResource(string path,string name,CancellationToken token=default)

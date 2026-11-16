@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Text;
+using System.Security.Cryptography;
 
 namespace EvilIslands.DatabaseEditor.Core;
 
@@ -160,7 +161,7 @@ public sealed class SoundArchiveCatalog
         for (var archiveIndex = 0; archiveIndex < sourceArchives.Count; archiveIndex++)
         {
             SoundArchiveIndex source = sourceArchives[archiveIndex];
-            if(PakArchive.IsPak(source.SourcePath))foreach(string name in PakArchive.DeletedNames(source.SourcePath))deletedNames.Add(PakArchive.LookupKey(name));
+            foreach(string name in source.Deleted ?? [])deletedNames.Add(PakArchive.LookupKey(name));
             ResEntry[] soundEntries = source.Entries
                 .Where(entry => IsSupportedSound(entry.Name) && !deletedNames.Contains(PakArchive.LookupKey(entry.Name)))
                 .ToArray();
@@ -187,7 +188,7 @@ public sealed class SoundArchiveCatalog
 
     private static SoundArchiveIndex ReadArchiveIndex(string path)
     {
-        if(PakArchive.IsPak(path)){using var pak=PakArchive.Open(path);return new(path,pak.Length,pak.Entries,pak.Sha256);}
+        if(PakArchive.IsPak(path))return ReadPakIndex(path, CancellationToken.None);
         using var stream = new FileStream(
             path,
             FileMode.Open,
@@ -204,7 +205,7 @@ public sealed class SoundArchiveCatalog
         string path,
         CancellationToken cancellationToken)
     {
-        if(PakArchive.IsPak(path)){using var pak=PakArchive.Open(path,cancellationToken);return new(path,pak.Length,pak.Entries,pak.Sha256);}
+        if(PakArchive.IsPak(path))return await Task.Run(() => ReadPakIndex(path, cancellationToken), cancellationToken).ConfigureAwait(false);
         await using var stream = new FileStream(
             path,
             FileMode.Open,
@@ -216,6 +217,25 @@ public sealed class SoundArchiveCatalog
         await stream.ReadExactlyAsync(header, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         return await ReadArchiveIndexAsync(path, stream, header, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static SoundArchiveIndex ReadPakIndex(string path, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        // Prevent replacement during the short catalog/hash read, so metadata,
+        // tombstones and the save guard's SHA all belong to the same file.
+        // Sound catalogs never edit bytes and do not need a disk snapshot.
+        using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan);
+        using var reader = NativePakReader.Open(path, token);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] buffer = new byte[1024 * 1024];
+        int count;
+        while ((count = source.Read(buffer)) != 0) {
+            token.ThrowIfCancellationRequested();
+            hash.AppendData(buffer, 0, count);
+        }
+        token.ThrowIfCancellationRequested();
+        return new(path, source.Length, reader.Entries, Convert.ToHexString(hash.GetHashAndReset()), reader.Deleted);
     }
 
     private static SoundArchiveIndex ReadArchiveIndex(
@@ -497,7 +517,8 @@ public sealed class SoundArchiveCatalog
         string SourcePath,
         long FileLength,
         IReadOnlyList<ResEntry> Entries,
-        string? Sha256=null);
+        string? Sha256=null,
+        IReadOnlyList<string>? Deleted=null);
 
     private readonly record struct ArchiveHeader(
         int EntryCount,

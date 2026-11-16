@@ -55,7 +55,7 @@ internal static class PakOpeningRegression
         // Preserve a real legacy fixture for the existing PAK integration suite.
         using (var pak = PakArchive.Open(copy))
         {
-            pak.Materialize();
+            pak.VerifyContents();
             File.WriteAllBytes(Path.Combine(output, "legacy-database.res"), ResArchiveWriter.Rebuild(Empty(),
                 new Dictionary<int, byte[]>(), pak.Entries.Select(e => new AddedResResource(e.Name, pak.Read(e.Name))).ToArray()));
         }
@@ -129,7 +129,7 @@ internal static class PakOpeningRegression
         {
             File.WriteAllBytes(utility, [0]);
             bool rejected = false;
-            try { using var unexpected = PakArchive.Open(copy); }
+            try { PakArchive.Create(Path.Combine(output, "reject.pak"), new() { ["test"] = [1] }); }
             catch (IOException e) { rejected = e.Message.Contains("Утилита PAK не соответствует"); }
             Check(rejected, "Modified utility was not rejected before execution");
         }

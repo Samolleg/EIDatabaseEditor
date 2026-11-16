@@ -194,7 +194,9 @@ public sealed class TextureResourceCatalog
             try
             {
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
-                using var pak = PakArchive.IsPak(path) ? PakArchive.Open(path, token) : null;
+                // Catalog scans use the engine's pinned read handle directly;
+                // editable documents alone need a complete immutable disk snapshot.
+                using var pak = PakArchive.IsPak(path) ? NativePakReader.Open(path, token) : null;
                 if (pak is not null) foreach (string name in pak.Deleted) result._blocked.Add(PakArchive.LookupKey(name));
                 var before = new FileInfo(path);
                 long length = before.Length;
@@ -205,7 +207,7 @@ public sealed class TextureResourceCatalog
                     token.ThrowIfCancellationRequested();
                     if (!entry.Name.EndsWith(".mmp", StringComparison.OrdinalIgnoreCase)) continue;
                     local.Add(new(entry.Name, path, priority, entry.Offset, entry.Size,
-                        pak is not null ? (entry.Size > MmpPreviewDecoder.MaximumInputBytes ? "Ресурс превышает лимит предпросмотра 128 МиБ." : ReadPakHeaderProblem(pak, entry.Name)) : ReadHeaderProblem(stream, entry.Offset, entry.Size)));
+                        pak is not null ? (entry.Size > MmpPreviewDecoder.MaximumInputBytes ? "Ресурс превышает лимит предпросмотра 128 МиБ." : ReadPakHeaderProblem(pak, entry, token)) : ReadHeaderProblem(stream, entry.Offset, entry.Size)));
                 }
                 before.Refresh();
                 if (before.Length != length || before.LastWriteTimeUtc != written)
@@ -314,11 +316,11 @@ public sealed class TextureResourceCatalog
         return MmpPreviewDecoder.Decode(data, token);
     }, token);
 
-    private static string? ReadPakHeaderProblem(PakArchive pak, string name)
+    private static string? ReadPakHeaderProblem(NativePakReader pak, ResEntry entry, CancellationToken token)
     {
-        byte[] bytes = pak.Read(name);
+        byte[] bytes = pak.ReadPrefix(entry.Name, 76, token);
         using var stream = new MemoryStream(bytes, writable: false);
-        return ReadHeaderProblem(stream, 0, bytes.Length);
+        return ReadHeaderProblem(stream, 0, entry.Size);
     }
 
     private static string? ReadHeaderProblem(Stream stream, int offset, int length)

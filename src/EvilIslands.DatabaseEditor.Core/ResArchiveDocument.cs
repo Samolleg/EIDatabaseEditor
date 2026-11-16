@@ -25,9 +25,10 @@ public sealed class ResArchiveDocument
     public bool IsPak => _pak is not null;
     internal PakArchive? Pak => _pak;
 
-    private ResArchiveDocument(string sourcePath, byte[] data, PakArchive pak)
+    private ResArchiveDocument(string sourcePath, byte[] data, PakArchive pak, CancellationToken token)
     {
-        pak.Materialize();
+        try { pak.VerifyContents(token); }
+        catch { pak.Dispose(); throw; }
         SourcePath=sourcePath;_data=data;_pak=pak;Sha256=pak.Sha256;
         Entries=pak.Entries;DeclaredEntryCount=Entries.Count;DirectoryOffset=data.Length;NamePoolSize=0;
         _entriesByName=Entries.ToDictionary(e=>PakArchive.LookupKey(e.Name),StringComparer.Ordinal);
@@ -199,7 +200,7 @@ public sealed class ResArchiveDocument
         byte[] data,
         CancellationToken cancellationToken = default)
     {
-        if (PakArchive.IsPak(data)) return new ResArchiveDocument(sourcePath,data,PakArchive.FromBytes(data,cancellationToken));
+        if (PakArchive.IsPak(data)) return new ResArchiveDocument(sourcePath,data,PakArchive.FromBytes(data,cancellationToken),cancellationToken);
         if (data.Length < HeaderSize)
         {
             throw new DatabaseFormatException("RES header is truncated.", sourcePath, 0);
