@@ -1141,6 +1141,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     {
         if (ModuleDocuments.HasDirty) { ShowError("В модуле остались изменения. Экспортируйте проект или закройте документ модуля перед сменой БД."); return; }
         if (HasPendingLuaChanges) { ShowError("Сначала сохраните изменения Lua кнопкой «Сохранить» или отмените их через Undo."); return; }
+        CancelTextureLoad();
         CancelValidation();
         CancelOperation();
         _operationCancellation = new CancellationTokenSource();
@@ -1157,8 +1158,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             var workspace = await _service.OpenAsync(databasePath, cancellationToken);
             DisconnectLua();
             ApplyWorkspace(workspace);
-            BusyText = "Поиск текстур рядом с базой…";
-            await LoadNearbyTexturesAsync(cancellationToken);
+            _ = StartNearbyTextures();
             if (!Path.GetFullPath(path).Equals(databasePath, StringComparison.OrdinalIgnoreCase))
                 NotificationMessage = $"Выбран архив текстур {Path.GetFileName(path)}. Открыта соседняя database.res; текстуры подключены из её папки.";
             StatusText = $"Открыто безопасно: {Path.GetFileName(workspace.SourcePath)} · {DatabaseCount} БД · {TableCount} таблиц · {RecordCount:N0} записей";
@@ -1907,6 +1907,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         }
 
         _disposed = true;
+        CancelTextureLoad();
         _textureRefresh?.Cancel();
         _textureRefresh?.Dispose();
         _textureRevision++;

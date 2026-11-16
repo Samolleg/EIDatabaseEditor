@@ -60,6 +60,11 @@ internal sealed partial class MainWindowViewModel
 {
     private TextureResourceCatalog? _textureCatalog;
     private TextureSources? _textureSources;
+    private CancellationTokenSource? _textureLoadCancellation;
+    private int _textureLoadRevision;
+    private bool _isLoadingTextures;
+    public bool IsLoadingTextures { get => _isLoadingTextures; private set { if (SetProperty(ref _isLoadingTextures, value)) OnPropertyChanged(nameof(AttachTexturesButtonText)); } }
+    internal Task TextureLoadTask { get; private set; } = Task.CompletedTask;
     internal TextureSources? SpellPreviewTextureSources => _textureSources;
     private int _textureRevision;
     private CancellationTokenSource? _textureRefresh;
@@ -120,7 +125,7 @@ internal sealed partial class MainWindowViewModel
         set { if (SetProperty(ref _textureShowAll, value)) QueueTextureRefresh(); }
     }
     public string? TextureGameFolder { get; private set; }
-    public string AttachTexturesButtonText => _textureCatalog is null || _textureCatalog.ResourceCount == 0
+    public string AttachTexturesButtonText => IsLoadingTextures ? "▧  Поиск текстур в фоне… ▾" : _textureCatalog is null || _textureCatalog.ResourceCount == 0
         ? "▧  Подключить текстуры… ▾" : $"▧  Текстуры · {_textureCatalog.ResourceCount:N0} файлов ▾";
 
     private void NotifyTextureSources()
@@ -129,39 +134,72 @@ internal sealed partial class MainWindowViewModel
         OnPropertyChanged(nameof(AttachTexturesButtonText));
     }
 
-    private async Task LoadNearbyTexturesAsync(CancellationToken token)
+    private void CancelTextureLoad()
     {
-        _textureCatalog = null;
-        _textureSources = null;
-        _textureDocument = SourcePath;
-        TextureGameFolder = null;
-        SelectedTexture = null;
-        NotifyTextureSources();
-        try
-        {
-            var sources = await TextureSources.FromDatabaseFolderAsync(SourcePath, token);
-            var catalog = await TextureResourceCatalog.OpenAsync(sources, token);
-            _textureSources = sources;
-            _textureCatalog = catalog;
-            TextureGameFolder = sources.GameFolder;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _textureSources = new([], [], false, false, ["Не удалось подключить соседние текстуры: " + ex.Message])
-                { NearbyDatabasePath = SourcePath };
-        }
-        NotifyTextureSources();
-        await RecheckTexturesAsync(token);
+        if (IsLoadingTextures) TextureSummary = "Поиск текстур отменён.";
+        _textureLoadRevision++;
+        _textureLoadCancellation?.Cancel();
+        _textureLoadCancellation?.Dispose();
+        _textureLoadCancellation = null;
+        IsLoadingTextures = false;
+        _textureRefresh?.Cancel();
+        _textureRevision++;
     }
 
-    public async Task ConnectNearbyTexturesAsync()
+    private Task StartTextureLoad(Func<CancellationToken, Task<TextureSources>> findSources)
     {
-        if (!HasDocument || IsBusy) return;
-        IsBusy = true;
-        BusyText = "Поиск текстур рядом с database.res…";
-        try { await LoadNearbyTexturesAsync(CancellationToken.None); }
-        finally { IsBusy = false; BusyText = ""; }
+        CancelTextureLoad();
+        if (_disposed || !HasDocument) return Task.CompletedTask;
+        var cancellation = _textureLoadCancellation = new CancellationTokenSource();
+        int revision = _textureLoadRevision;
+        string document = SourcePath;
+        _textureCatalog = null;
+        _textureSources = null;
+        _textureDocument = document;
+        TextureGameFolder = null;
+        SelectedTexture = null;
+        IsLoadingTextures = true;
+        TextureSummary = "Поиск текстур выполняется в фоне. Таблицы доступны для работы.";
+        NotifyTextureSources();
+        return TextureLoadTask = LoadTextureSourcesAsync(findSources, document, revision, cancellation.Token);
     }
+
+    private async Task LoadTextureSourcesAsync(Func<CancellationToken, Task<TextureSources>> findSources, string document, int revision, CancellationToken token)
+    {
+        bool Current() => !_disposed && !token.IsCancellationRequested && revision == _textureLoadRevision && SourcePath == document;
+        // Return control to OpenPathAsync before any optional resource work.
+        await Task.Yield();
+        try
+        {
+            var sources = await findSources(token);
+            if (!Current()) return;
+            _textureSources = sources;
+            TextureGameFolder = sources.GameFolder;
+            NotifyTextureSources();
+            var catalog = await TextureResourceCatalog.OpenCachedAsync(sources, token);
+            if (!Current()) return;
+            _textureCatalog = catalog;
+            await RecheckTexturesAsync(token);
+            if (Current() && catalog.Problems.Count > 0) TextureSummary += $" · Не удалось прочитать источников: {catalog.Problems.Count}. Подробности — в списке источников.";
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (Current()) TextureSummary = "Не удалось подключить текстуры: " + ex.Message;
+        }
+        finally
+        {
+            if (Current()) { IsLoadingTextures = false; NotifyTextureSources(); }
+        }
+    }
+
+    private Task StartNearbyTextures()
+    {
+        string path = SourcePath;
+        return StartTextureLoad(token => TextureSources.FromDatabaseFolderAsync(path, token));
+    }
+
+    public Task ConnectNearbyTexturesAsync() => !HasDocument || IsBusy ? Task.CompletedTask : StartNearbyTextures();
 
     public Task ConnectTextureGameAsync(string gameFolder, string? configPath = null)
     {
@@ -174,23 +212,7 @@ internal sealed partial class MainWindowViewModel
         ConnectTextureSourcesAsync(TextureSources.Manual(
             (_textureSources?.Archives ?? []).Concat(paths)));
 
-    public async Task ConnectTextureSourcesAsync(TextureSources sources)
-    {
-        if (IsBusy) return;
-        IsBusy = true;
-        BusyText = "Чтение каталогов текстур…";
-        try
-        {
-            var catalog = await TextureResourceCatalog.OpenAsync(sources);
-            _textureCatalog = catalog;
-            _textureSources = sources;
-            _textureDocument = SourcePath;
-            NotifyTextureSources();
-        }
-        catch (Exception ex) { ShowError("Текстурные ресурсы не подключены: " + ex.Message); }
-        finally { IsBusy = false; }
-        await RecheckTexturesAsync();
-    }
+    public Task ConnectTextureSourcesAsync(TextureSources sources) => IsBusy ? Task.CompletedTask : StartTextureLoad(_ => Task.FromResult(sources));
 
     public Task ReloadTexturesAsync() => _textureSources is null || _textureSources.NearbyDatabasePath is not null ?
         ConnectNearbyTexturesAsync() : _textureSources.GameFolder is { } game ?

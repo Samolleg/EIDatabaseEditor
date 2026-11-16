@@ -155,7 +155,7 @@ public sealed record TextureMatch(string Name, string Source, int Priority, int 
 public sealed record TextureCheck(string ExpectedName, TextureCheckState State, string Source,
     string Explanation, IReadOnlyList<TextureMatch> Matches);
 
-public sealed class TextureResourceCatalog
+public sealed partial class TextureResourceCatalog
 {
     private readonly Dictionary<string, List<TextureMatch>> _byName = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<(string Path, long Length, DateTime Written)> _identity = [];
@@ -168,14 +168,15 @@ public sealed class TextureResourceCatalog
     public IReadOnlyList<string> ResourceNames => _byName.Values.Select(matches => matches[0].Name).Order(StringComparer.OrdinalIgnoreCase).ToArray();
     public bool Complete => Sources.Complete && _problems.Count == 0;
 
-    private TextureResourceCatalog(TextureSources sources) => Sources = sources;
+    private readonly bool _headersChecked;
+    private TextureResourceCatalog(TextureSources sources, bool headersChecked) { Sources = sources; _headersChecked = headersChecked; }
 
     public static Task<TextureResourceCatalog> OpenAsync(TextureSources sources, CancellationToken token = default) =>
         Task.Run(() => Open(sources, token), token);
 
-    private static TextureResourceCatalog Open(TextureSources sources, CancellationToken token)
+    private static TextureResourceCatalog Open(TextureSources sources, CancellationToken token, bool validateHeaders = true)
     {
-        var result = new TextureResourceCatalog(sources);
+        var result = new TextureResourceCatalog(sources, validateHeaders);
         int priority = 0;
         foreach(string folder in sources.OverrideFolders){
             if(!Directory.Exists(folder))continue;
@@ -207,7 +208,8 @@ public sealed class TextureResourceCatalog
                     token.ThrowIfCancellationRequested();
                     if (!entry.Name.EndsWith(".mmp", StringComparison.OrdinalIgnoreCase)) continue;
                     local.Add(new(entry.Name, path, priority, entry.Offset, entry.Size,
-                        pak is not null ? (entry.Size > MmpPreviewDecoder.MaximumInputBytes ? "Ресурс превышает лимит предпросмотра 128 МиБ." : ReadPakHeaderProblem(pak, entry, token)) : ReadHeaderProblem(stream, entry.Offset, entry.Size)));
+                        pak is not null ? (entry.Size > MmpPreviewDecoder.MaximumInputBytes ? "Ресурс превышает лимит предпросмотра 128 МиБ." :
+                            entry.Size < 76 ? "Заголовок MMP обрезан." : validateHeaders ? ReadPakHeaderProblem(pak, entry, token) : null) : ReadHeaderProblem(stream, entry.Offset, entry.Size)));
                 }
                 before.Refresh();
                 if (before.Length != length || before.LastWriteTimeUtc != written)
@@ -286,7 +288,8 @@ public sealed class TextureResourceCatalog
         var winner = matches[0];
         return new(name, winner.HeaderProblem is null ? TextureCheckState.Found : TextureCheckState.Corrupt,
             winner.Source, winner.HeaderProblem ?? (matches.Count > 1 ?
-                $"Первое совпадение; ещё {matches.Count - 1} перекрытых версий." : "Каталог и основной заголовок MMP проверены."), matches);
+                $"Первое совпадение; ещё {matches.Count - 1} перекрытых версий." : _headersChecked ? "Каталог и основной заголовок MMP проверены." :
+                "Ресурс найден; содержимое проверяется при просмотре и полной проверке (F5)."), matches);
     }
 
     public Task<MmpImage> ReadPreviewAsync(string name, CancellationToken token = default) => Task.Run(() =>
@@ -300,7 +303,8 @@ public sealed class TextureResourceCatalog
             throw new InvalidDataException("Ресурс превышает лимит предпросмотра 128 МиБ.");
         if (PakArchive.IsPak(match.Source))
         {
-            byte[] payload = PakArchive.Read(match.Source, match.Name, token);
+            using var archive = new ReadOnlyPakArchive(match.Source, token);
+            byte[] payload = archive.Read(match.Name, token);
             if (!IsCurrent()) throw new IOException("Ресурсы изменились при чтении. Обновите источники.");
             return MmpPreviewDecoder.Decode(payload, token);
         }
