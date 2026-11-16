@@ -14,6 +14,17 @@ public static class ResourceArchivePaths
         Path.GetExtension(path).Equals(".res", StringComparison.OrdinalIgnoreCase) ||
         Path.GetExtension(path).Equals(".pak", StringComparison.OrdinalIgnoreCase);
 
+    public static string? ResolveRecent(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || File.Exists(path)) return path;
+        if (Path.GetExtension(path).Equals(".res", StringComparison.OrdinalIgnoreCase))
+        {
+            string pak = Path.ChangeExtension(path, ".pak");
+            if (File.Exists(pak)) return pak;
+        }
+        return path;
+    }
+
     public static string Resolve(string path)
     {
         string full = Path.GetFullPath(path);

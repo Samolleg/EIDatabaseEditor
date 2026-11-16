@@ -9,7 +9,7 @@
     <Content Include="$(EiWorkspace)\deps\zstd\v1.5.7\LICENSE" Link="third-party\PAK\zstd-LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(EiWorkspace)\deps\zstd\v1.5.7\lib\common\xxhash.h" Link="third-party\PAK\xxhash.h" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
-  <Target Name="VerifyPakDependency" BeforeTargets="Build" Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
+  <Target Name="VerifyPakDependency" BeforeTargets="PrepareForBuild">
     <ReadLinesFromFile File="$(EiWorkspace)\builds\rebuild64\current\SHA256SUMS"><Output TaskParameter="Lines" ItemName="PakManifestLine" /></ReadLinesFromFile>
     <ItemGroup>
       <PakManifestEntry Include="@(PakManifestLine)" Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(Identity)', '^[0-9A-Fa-f]{64}  EIRebuild64Pack[.]exe$'))" />
@@ -21,6 +21,15 @@
     </PropertyGroup>
     <GetFileHash Files="$(PakToolPath)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="PakDependencyHash" /></GetFileHash>
     <Error Condition="'%(PakDependencyHash.FileHash)' != '$(PakExpectedHash)'" Text="PAK utility SHA-256 differs from builds/rebuild64/current/SHA256SUMS." />
+  </Target>
+  <!-- Pin the exact accepted dependency at compile time, rather than a historic
+       binary hash that drifts whenever rebuild64 is rebuilt. -->
+  <Target Name="GeneratePakUtilityIdentity" BeforeTargets="CoreCompile" DependsOnTargets="VerifyPakDependency"
+          Condition="'$(MSBuildProjectName)' == 'EvilIslands.DatabaseEditor.Core'">
+    <PropertyGroup><PakIdentityFile>$(IntermediateOutputPath)PakUtilityIdentity.g.cs</PakIdentityFile></PropertyGroup>
+    <WriteLinesToFile File="$(PakIdentityFile)" Overwrite="true" WriteOnlyWhenDifferent="true"
+      Lines="namespace EvilIslands.DatabaseEditor.Core { internal static class PakUtilityIdentity { internal const string Sha256 = &quot;$(PakExpectedHash)&quot;%3B } }" />
+    <ItemGroup><Compile Include="$(PakIdentityFile)" /></ItemGroup>
   </Target>
   <!-- The public module SDK did not change in this migration. Ship the accepted
        binary identity against which the independently built module is pinned. -->

@@ -55,6 +55,8 @@ public sealed class ResFileManagerArchive
 
     public string SourcePath { get; }
 
+    public bool IsPak => _pak is not null;
+
     public long FileLength { get; }
 
     public DateTime LastWriteTimeUtc { get; }
@@ -239,7 +241,7 @@ public sealed class ResFileManagerArchive
 
     private static ResFileManagerArchive Open(string path, CancellationToken cancellationToken)
     {
-        path=ResourceArchivePaths.Resolve(path);
+        // The file manager opens the explicit selection, including a shadowed RES.
         if(PakArchive.IsPak(path)) {
             var pak=PakArchive.Open(path,cancellationToken);
             return new ResFileManagerArchive(path,pak.Length,File.GetLastWriteTimeUtc(path),pak.Sha256,pak.Entries){_pak=pak};
@@ -520,7 +522,18 @@ public sealed class ResFileManagerArchive
         if(!PakArchive.IsPak(destination))throw new IOException("PAK output requires .pak extension.");
         var changes=new Dictionary<string,byte[]?>();var keys=new HashSet<string>();int added=0,replaced=0,deleted=0;
         if(!inPlace) {
-            foreach(var entry in Entries)changes.Add(entry.Name,_pak?.Read(entry.Name,token)??ReadResource(SourcePath,entry.Name,token));
+            // Preserve the explicitly selected RES even when a sibling PAK exists.
+            using var source = _pak is null ? OpenVerifiedSource(token) : null;
+            foreach(var entry in Entries) {
+                byte[] bytes;
+                if (_pak is not null) bytes = _pak.Read(entry.Name, token);
+                else {
+                    source!.Position = entry.Offset;
+                    bytes = new byte[entry.Size];
+                    source.ReadExactly(bytes);
+                }
+                changes.Add(entry.Name, bytes);
+            }
             if(_pak is not null)foreach(var name in _pak.Deleted)changes.Add(name,null);
         }
         foreach(var edit in edits) {

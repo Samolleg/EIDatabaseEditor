@@ -28,6 +28,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if(args.Length==3&&args[0]=="--pak-opening")return PakOpeningRegression.Run(args[1],args[2]);
         if(args.Length==3&&args[0]=="--pak")return PakIntegrationRegression.Run(args[1],args[2]);
         if (args.Length == 3 && args[0] == "--grid-help") return GridHelpRegression.Run(args[1], args[2]);
         if (args.Length == 3 && args[0] == "--home-page") return HomePageRegression.Run(args[1], args[2]);

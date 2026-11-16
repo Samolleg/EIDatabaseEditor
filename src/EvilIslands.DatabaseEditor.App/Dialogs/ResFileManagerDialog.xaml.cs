@@ -95,7 +95,7 @@ public partial class ResFileManagerDialog : Window
 
     private async Task LoadArchiveAsync(string path)
     {
-        SetBusy(true, "Читаю каталог RES…");
+        SetBusy(true, "Читаю каталог архива…");
         try
         {
             ResFileManagerArchive archive = await ResFileManagerArchive.OpenAsync(path);
@@ -108,12 +108,12 @@ public partial class ResFileManagerDialog : Window
             _redo.Clear();
             RebuildRows();
             ShowMessage(
-                $"RES открыт безопасно: {archive.Entries.Count:N0} файлов. До сохранения исходный архив не изменяется.",
+                $"Архив открыт: {archive.Entries.Count:N0} файлов. До сохранения исходный архив не изменяется.",
                 isError: false);
         }
         catch (Exception exception)
         {
-            ShowError("Не удалось открыть RES", exception);
+            ShowError("Не удалось открыть архив", exception);
         }
         finally
         {
@@ -173,7 +173,7 @@ public partial class ResFileManagerDialog : Window
 
     private void RebuildFolderTree()
     {
-        var root = new ResFolderNode("Корень RES", string.Empty) { IsExpanded = true };
+        var root = new ResFolderNode("Корень архива", string.Empty) { IsExpanded = true };
         var byPath = new Dictionary<string, ResFolderNode>(StringComparer.OrdinalIgnoreCase)
         {
             [string.Empty] = root,
@@ -246,7 +246,7 @@ public partial class ResFileManagerDialog : Window
     private void RebuildBreadcrumb()
     {
         BreadcrumbPanel.Children.Clear();
-        AddBreadcrumbPart("Корень RES", string.Empty);
+        AddBreadcrumbPart("Корень архива", string.Empty);
         if (!string.IsNullOrEmpty(_selectedFolder))
         {
             string current = string.Empty;
@@ -326,10 +326,10 @@ public partial class ResFileManagerDialog : Window
 
         if (_archive is null)
         {
-            ArchiveTitleText.Text = "Файловый менеджер RES";
+            ArchiveTitleText.Text = "Файловый менеджер RES/PAK";
             ArchivePathText.Text = _archivePath;
-            ArchiveSummaryText.Text = "RES не открыт";
-            SafetyText.Text = "Выберите корректный RES-контейнер.";
+            ArchiveSummaryText.Text = "Архив не открыт";
+            SafetyText.Text = "Выберите архив RES или PAK.";
             UpdateSelectionDetails(selected);
             return;
         }
@@ -339,22 +339,22 @@ public partial class ResFileManagerDialog : Window
         ArchivePathText.ToolTip = _archive.SourcePath;
         int visible = _filesView.Cast<object>().Count();
         CurrentFolderText.Text = string.IsNullOrWhiteSpace(SearchBox.Text)
-            ? (string.IsNullOrEmpty(_selectedFolder) ? "Корень RES" : _selectedFolder)
-            : "Результаты поиска по всему RES";
+            ? (string.IsNullOrEmpty(_selectedFolder) ? "Корень архива" : _selectedFolder)
+            : "Результаты поиска по всему архиву";
         SelectionSummaryText.Text = selected.Count > 0
             ? $"Выбрано: {selected.Count:N0}"
             : $"Показано: {visible:N0}";
         ArchiveSummaryText.Text =
-            $"{Path.GetFileName(_archive.SourcePath)} · {_rows.Count:N0} файлов · подготовлено изменений: {_edits.Count:N0}";
+            $"{(_archive.IsPak ? "PAK" : "RES")} · {_rows.Count:N0} файлов · подготовлено изменений: {_edits.Count:N0}";
         SafetyText.Text = IsCurrentWriteLocked
-            ? "🔒 Текущий RES используется основным редактором — доступно только безопасное сохранение копии."
-            : "Запись выполняется через временный RES, повторный разбор и SHA-256; при сохранении в текущий файл создаётся проверенная .bak-копия.";
+            ? "🔒 Текущий архив используется основным редактором — доступно только безопасное сохранение копии."
+            : "Запись выполняется через временный архив, повторный разбор и SHA-256; при сохранении в текущий файл создаётся проверенная .bak-копия.";
         SaveCurrentButton.Content = IsCurrentWriteLocked
-            ? "🔒 Текущий RES занят"
-            : "Перезаписать текущий RES…";
+            ? "🔒 Текущий архив занят"
+            : "Перезаписать текущий архив…";
         SaveCurrentButton.ToolTip = IsCurrentWriteLocked
-            ? "Сначала закройте основной редактор и откройте RES-менеджер до загрузки database.res."
-            : "Пересобрать открытый RES после подтверждения и создать резервную копию";
+            ? "Сначала закройте основной редактор и откройте менеджер архивов до загрузки базы."
+            : "Пересобрать открытый архив после подтверждения и создать резервную копию";
         UpdateSelectionDetails(selected);
         RebuildBreadcrumb();
     }
@@ -430,7 +430,7 @@ public partial class ResFileManagerDialog : Window
     {
         var dialog = new OpenFileDialog
         {
-            Title = "Добавить файлы в RES",
+            Title = "Добавить файлы в архив",
             Filter = "Все файлы (*.*)|*.*",
             Multiselect = true,
             CheckFileExists = true,
@@ -447,7 +447,7 @@ public partial class ResFileManagerDialog : Window
     {
         var dialog = new OpenFolderDialog
         {
-            Title = "Добавить папку в RES",
+            Title = "Добавить папку в архив",
             Multiselect = false,
         };
         if (dialog.ShowDialog(this) is true)
@@ -496,7 +496,7 @@ public partial class ResFileManagerDialog : Window
             if (candidates.Any(candidate =>
                     candidate.LocalPath.Equals(_archive.SourcePath, StringComparison.OrdinalIgnoreCase)))
             {
-                throw new InvalidOperationException("Нельзя вложить открытый RES сам в себя.");
+                throw new InvalidOperationException("Нельзя вложить открытый архив сам в себя.");
             }
 
             int replacementCount = candidates.Count(candidate =>
@@ -504,7 +504,7 @@ public partial class ResFileManagerDialog : Window
                 (_edits.TryGetValue(candidate.ResourceName, out ResFileEdit? edit) &&
                  edit.Kind == ResFileEditKind.AddOrReplace));
             if (replacementCount > 0 && !Confirm(
-                    "Заменить файлы в RES?",
+                    "Заменить файлы в архиве?",
                     $"Совпадающих путей: {replacementCount:N0}. Их содержимое будет заменено выбранными файлами.",
                     "Изменения пока останутся в памяти и попадут в архив только после нажатия кнопки сохранения.",
                     "Подготовить замену",
@@ -532,7 +532,7 @@ public partial class ResFileManagerDialog : Window
             }
 
             RebuildRows();
-            ShowMessage($"Подготовлено файлов: {imported.Count:N0}. Исходный RES ещё не изменён.", false);
+            ShowMessage($"Подготовлено файлов: {imported.Count:N0}. Исходный архив ещё не изменён.", false);
         }
         catch (Exception exception)
         {
@@ -614,7 +614,7 @@ public partial class ResFileManagerDialog : Window
     {
         var selected = GetFolderDeletionRows(_selectedFolder);
         if (_archive is null || _isBusy || selected.Count == 0) return;
-        if (!Confirm("Удалить папку из RES?",
+        if (!Confirm("Удалить папку из архива?",
             $"Папка: {_selectedFolder}. Файлов вместе с вложенными папками: {selected.Count:N0}.",
             "Удаление применяется после сохранения. До сохранения всё действие можно отменить через Ctrl+Z.",
             "Подготовить удаление", "−")) return;
@@ -631,9 +631,9 @@ public partial class ResFileManagerDialog : Window
             .Where(row => row.State != "Будет удалён")
             .ToList();
         if (selected.Count == 0 || !Confirm(
-                "Убрать файлы из RES?",
+                "Убрать файлы из архива?",
                 $"Будет удалено после сохранения: {selected.Count:N0}.",
-                "До сохранения действие можно отменить через Ctrl+Z. При записи исходный RES получит проверенную резервную копию.",
+                "До сохранения действие можно отменить через Ctrl+Z. При записи исходный архив получит проверенную резервную копию.",
                 "Подготовить удаление",
                 "−"))
         {
@@ -660,7 +660,7 @@ public partial class ResFileManagerDialog : Window
         }
 
         RebuildRows();
-        ShowMessage($"Подготовлено удаление файлов: {selected.Count:N0}. Исходный RES ещё не изменён.", false);
+        ShowMessage($"Подготовлено удаление файлов: {selected.Count:N0}. Исходный архив ещё не изменён.", false);
     }
 
     private async void ExtractButton_Click(object sender, RoutedEventArgs e)
@@ -684,7 +684,7 @@ public partial class ResFileManagerDialog : Window
             {
                 var dialog = new SaveFileDialog
                 {
-                    Title = "Извлечь файл из RES",
+                    Title = "Извлечь файл из архива",
                     FileName = selected[0].FileName,
                     Filter = "Все файлы (*.*)|*.*",
                     OverwritePrompt = true,
@@ -721,7 +721,7 @@ public partial class ResFileManagerDialog : Window
             if (existingCount > 0 && !Confirm(
                     "Перезаписать извлечённые файлы?",
                     $"В выбранной папке уже существуют пути: {existingCount:N0}.",
-                    "Совпадающие обычные файлы будут заменены. Папка RES сохранится.",
+                    "Совпадающие обычные файлы будут заменены. Папка архива сохранится.",
                     "Извлечь и заменить",
                     "⇩"))
             {
@@ -758,7 +758,7 @@ public partial class ResFileManagerDialog : Window
     {
         if (_archive is null)
         {
-            throw new InvalidOperationException("RES не открыт.");
+            throw new InvalidOperationException("Архив не открыт.");
         }
 
         if (_edits.TryGetValue(row.ResourceName, out ResFileEdit? edit) &&
@@ -791,17 +791,18 @@ public partial class ResFileManagerDialog : Window
         }
 
         string sourceName = Path.GetFileNameWithoutExtension(_archive.SourcePath);
+        string extension = _archive.IsPak ? ".pak" : ".res";
         var dialog = new SaveFileDialog
         {
-            Title = "Сохранить проверенную копию RES",
-            Filter = "Evil Islands PAK (*.pak)|*.pak",
-            DefaultExt = ".pak",
+            Title = "Сохранить проверенную копию архива",
+            Filter = _archive.IsPak ? "Evil Islands PAK (*.pak)|*.pak" : "Evil Islands RES (*.res)|*.res|Evil Islands PAK (*.pak)|*.pak",
+            DefaultExt = extension,
             AddExtension = true,
             OverwritePrompt = false,
             CreatePrompt = false,
             CheckPathExists = true,
             RestoreDirectory = true,
-            FileName = sourceName + ".edited.pak",
+            FileName = sourceName + ".edited" + extension,
         };
         if (dialog.ShowDialog(this) is not true)
         {
@@ -810,7 +811,7 @@ public partial class ResFileManagerDialog : Window
 
         try
         {
-            SetBusy(true, "Пересобираю и проверяю копию RES…");
+            SetBusy(true, "Пересобираю и проверяю копию архива…");
             ResFileManagerSaveResult result = await _archive.SaveCopyAsync(_edits.Values.ToArray(), dialog.FileName);
             ShowMessage(
                 $"Проверенная копия создана: {result.TargetPath} · файлов: {result.ResourceCount:N0} · SHA-256 {result.Sha256}",
@@ -818,7 +819,7 @@ public partial class ResFileManagerDialog : Window
         }
         catch (Exception exception)
         {
-            ShowError("Копия RES не создана", exception);
+            ShowError("Копия архива не создана", exception);
         }
         finally
         {
@@ -835,9 +836,9 @@ public partial class ResFileManagerDialog : Window
 
         bool gamePath = DatabaseSafetyPolicy.IsLikelyGameInstallationPath(_archive.SourcePath);
         string message = gamePath
-            ? "Открытый RES находится в каталоге игры. После проверки он будет заменён подготовленной версией."
-            : "Открытый RES будет заменён подготовленной и повторно проверенной версией.";
-        var saveDialog = new ConfirmDialog("Сохранить изменения в текущий RES?", message,
+            ? "Открытый архив находится в каталоге игры. После проверки он будет заменён подготовленной версией."
+            : "Открытый архив будет заменён подготовленной и повторно проверенной версией.";
+        var saveDialog = new ConfirmDialog("Сохранить изменения в текущий архив?", message,
             "По умолчанию создаётся резервная копия .bak. При выборе пункта ниже постоянный бэкап не создаётся.",
             "Сохранить с резервной копией", "✓") { Owner = this };
         saveDialog.AllowSavingWithoutBackup();
@@ -846,7 +847,7 @@ public partial class ResFileManagerDialog : Window
         try
         {
             string sourcePath = _archive.SourcePath;
-            SetBusy(true, "Проверяю и сохраняю новый RES…");
+            SetBusy(true, "Проверяю и сохраняю архив…");
             ResFileManagerSaveResult result = await _archive.SaveInPlaceAsync(
                 _edits.Values.ToArray(),
                 allowGameInstallationPath: gamePath, createBackup: createBackup);
@@ -856,12 +857,12 @@ public partial class ResFileManagerDialog : Window
             _redo.Clear();
             RebuildRows();
             ShowMessage(
-                createBackup ? $"RES сохранён и проверен. Резервная копия: {result.BackupPath}" : "RES сохранён и проверен без бэкапа.",
+                createBackup ? $"Архив сохранён и проверен. Резервная копия: {result.BackupPath}" : "Архив сохранён и проверен без бэкапа.",
                 false);
         }
         catch (Exception exception)
         {
-            ShowError("Текущий RES не сохранён", exception);
+            ShowError("Текущий архив не сохранён", exception);
         }
         finally
         {
@@ -900,9 +901,9 @@ public partial class ResFileManagerDialog : Window
     private async void OpenArchiveButton_Click(object sender, RoutedEventArgs e)
     {
         if (HasPendingChanges && !Confirm(
-                "Открыть другой RES?",
+                "Открыть другой архив?",
                 "Подготовленные, но не записанные изменения текущего архива будут забыты.",
-                "При необходимости сначала сохраните копию RES.",
+                "При необходимости сначала сохраните копию архива.",
                 "Открыть другой",
                 "▦"))
         {
@@ -911,7 +912,7 @@ public partial class ResFileManagerDialog : Window
 
         var dialog = new OpenFileDialog
         {
-            Title = "Открыть RES как архив",
+            Title = "Открыть архив RES/PAK",
             InitialDirectory = _preferences.GetLastResDirectory() ?? Path.GetDirectoryName(_archivePath),
             Filter = "Evil Islands PAK/RES (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             Multiselect = false,
@@ -1222,8 +1223,8 @@ public partial class ResFileManagerDialog : Window
         }
 
         if (HasPendingChanges && !Confirm(
-                "Закрыть RES-менеджер?",
-                "Подготовленные изменения не записаны в открытый RES.",
+                "Закрыть менеджер архивов?",
+                "Подготовленные изменения не записаны в открытый архив.",
                 "Если проверенная копия уже сохранена, исходный архив всё равно остался без изменений.",
                 "Закрыть без записи",
                 "×"))

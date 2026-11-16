@@ -76,7 +76,9 @@ try {
             $file = Resolve-ContainedFile $packSource $name
             if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) { throw "Хэш упаковщика не совпал: $file" }
             $target = Join-Path $temporary $name
-            Copy-Item -LiteralPath $file -Destination $target
+            # Keep the EXE copied by MSBuild, whose hash was embedded in Core.
+            # A concurrent rebuild64 update must fail packaging, never replace it.
+            if ($name -eq 'EIRebuild64Pack.pdb') { Copy-Item -LiteralPath $file -Destination $target }
             if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $expected) { throw "Ошибка проверки копии упаковщика: $target" }
         }
         $entries = @(Get-ChildItem -LiteralPath $temporary -Recurse -File | ForEach-Object {

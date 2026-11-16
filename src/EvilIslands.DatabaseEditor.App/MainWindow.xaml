@@ -562,13 +562,13 @@
                                     ToolTip="Открыть database.res (Ctrl+O)">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="＋" FontSize="17" Foreground="White" VerticalAlignment="Center" />
-                                    <TextBlock Text="  Открыть database.res…" Foreground="White" VerticalAlignment="Center" />
+                                    <TextBlock Text="  Открыть БД (RES/PAK)…" Foreground="White" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
                             
                             <Button x:Name="OpenResFileManagerButton"
                                     Style="{StaticResource RoundedButton}"
-                                    Content="▦  Открыть любой RES как архив…"
+                                    Content="▦  Открыть архив RES/PAK…"
                                     ToolTip="Посмотреть, извлечь, добавить, заменить или убрать файлы внутри любого RES"
                                     Margin="0,8,0,0"
                                     Padding="12,8"
