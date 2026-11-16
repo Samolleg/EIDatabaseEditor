@@ -4,11 +4,16 @@
     <PakToolPath Condition="'$(PakToolPath)' == ''">$(EiWorkspace)\builds\rebuild64\current\EIRebuild64Pack.exe</PakToolPath>
   </PropertyGroup>
   <ItemGroup Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
+    <Content Include="$(MSBuildThisFileDirectory)artifacts\pak-reader\EvilIslands.PakReader.dll" Link="EvilIslands.PakReader.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(MSBuildThisFileDirectory)artifacts\pak-reader\EvilIslands.PakReader.pdb" Link="EvilIslands.PakReader.pdb" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(PakToolPath)" Link="EIRebuild64Pack.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(EiWorkspace)\rebuild64\THIRD_PARTY.md" Link="third-party\PAK\THIRD_PARTY.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(EiWorkspace)\deps\zstd\v1.5.7\LICENSE" Link="third-party\PAK\zstd-LICENSE" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(EiWorkspace)\deps\zstd\v1.5.7\lib\common\xxhash.h" Link="third-party\PAK\xxhash.h" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
+  <Target Name="BuildNativePakReader" BeforeTargets="PrepareForBuild" Condition="'$(MSBuildProjectName)' == 'EvilIslands.DatabaseEditor.Core'">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)tools\Build-PakReader.ps1&quot;" />
+  </Target>
   <Target Name="VerifyPakDependency" BeforeTargets="PrepareForBuild">
     <ReadLinesFromFile File="$(EiWorkspace)\builds\rebuild64\current\SHA256SUMS"><Output TaskParameter="Lines" ItemName="PakManifestLine" /></ReadLinesFromFile>
     <ItemGroup>

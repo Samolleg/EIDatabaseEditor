@@ -5,16 +5,16 @@ using System.Text.Json;
 
 namespace EvilIslands.DatabaseEditor.Core;
 
-/// <summary>Immutable PAK snapshot; all codecs and writes belong to EIRebuild64Pack.</summary>
+/// <summary>Immutable PAK snapshot; native engine reader, transactional EIRebuild64Pack writer.</summary>
 public sealed class PakArchive : IDisposable
 {
     public const string UtilitySha256 = PakUtilityIdentity.Sha256;
     private readonly string _directory;
     private readonly string _snapshot;
-    private readonly Dictionary<string, Row> _rows;
+    private readonly IReadOnlyDictionary<string, NativePakReader.Row> _rows;
     private bool _disposed;
-    private sealed record Row(string Name, string Hex, uint Method, long Size,string DiskPath);
-    private string? _materialized;
+    private NativePakReader? _reader;
+    private bool _contentsVerified;
     public IReadOnlyList<ResEntry> Entries { get; }
     public string Sha256 { get; }
     public long Length { get; }
@@ -38,6 +38,7 @@ public sealed class PakArchive : IDisposable
     }
     public static PakArchive Open(string path, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         RecoverFor(path);
         // A single shared-delete handle supplies both hash and bytes: replacement
         // while opening cannot combine metadata and payload from different files.
@@ -55,36 +56,40 @@ public sealed class PakArchive : IDisposable
             token.ThrowIfCancellationRequested();
             Length = new FileInfo(_snapshot).Length;
             using (var input=File.OpenRead(_snapshot)) Sha256=Convert.ToHexString(SHA256.HashData(input));
-            using JsonDocument json=JsonDocument.Parse(Run(["list",_snapshot,"--json"],token));
-            _rows=new Dictionary<string,Row>(StringComparer.Ordinal);
-            foreach(var item in json.RootElement.EnumerateArray()) {
-                string hex=item.GetProperty("name_hex").GetString()!;
-                string name=Legacy.GetString(Convert.FromHexString(hex));
-                var row=new Row(name,hex,item.GetProperty("method").GetUInt32(),item.GetProperty("size").GetInt64(),item.GetProperty("path").GetString()!);
-                _rows.Add(LookupKey(name),row);
-            }
-            Entries=_rows.Values.Where(r=>r.Method!=2).Select((r,i)=>new ResEntry(i,r.Name,0,checked((int)r.Size),0,checked((ushort)(r.Hex.Length/2)),0)).ToArray();
+            _reader = NativePakReader.Open(_snapshot, token);
+            _rows = _reader.Rows;
+            Entries = _reader.Entries;
         } catch { Dispose(); throw; }
     }
     public byte[] Read(string name, CancellationToken token = default)
+        => ReadPrefix(name, int.MaxValue, token);
+
+    internal byte[] ReadPrefix(string name, int maximumBytes, CancellationToken token = default)
     {
         ObjectDisposedException.ThrowIf(_disposed,this);
+        ArgumentOutOfRangeException.ThrowIfNegative(maximumBytes);
+        token.ThrowIfCancellationRequested();
         if(!_rows.TryGetValue(LookupKey(name),out var row)||row.Method==2)throw new KeyNotFoundException(name);
-        if(_materialized is not null)return File.ReadAllBytes(Path.Combine(_materialized,row.DiskPath.Replace('/',Path.DirectorySeparatorChar)));
-        // Unique extraction paths make parallel preview requests independent.
-        string output=Path.Combine(_directory,Guid.NewGuid().ToString("N"));
-        try { Run(["extract",_snapshot,row.Name,output],token); return File.ReadAllBytes(output); }
-        finally { if(File.Exists(output))File.Delete(output); }
+        byte[] result = _reader!.Read(row.NativeIndex, checked((int)Math.Min(row.Size, maximumBytes)));
+        token.ThrowIfCancellationRequested();
+        return result;
     }
     public static byte[] Read(string path,string name,CancellationToken token=default)
     { using var archive=Open(path,token);return archive.Read(name,token); }
     public static IReadOnlyList<string> DeletedNames(string path,CancellationToken token=default)
     { using var archive=Open(path,token);return archive.Deleted; }
     internal byte[] OriginalBytes() => File.ReadAllBytes(_snapshot);
-    internal void Materialize()
+    internal void VerifyContents(CancellationToken token = default)
     {
-        if(_materialized is not null)return;
-        string folder=Path.Combine(_directory,"unpacked");Run(["unpack",_snapshot,folder],CancellationToken.None);_materialized=folder;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        token.ThrowIfCancellationRequested();
+        if (_contentsVerified) return;
+        foreach (var row in _rows.Values) {
+            token.ThrowIfCancellationRequested();
+            if (row.Method != 2) _reader!.Read(row.NativeIndex, 0);
+        }
+        token.ThrowIfCancellationRequested();
+        _contentsVerified = true;
     }
     internal byte[] Rebuild(IReadOnlyDictionary<int,byte[]> replacements,IReadOnlyList<AddedResResource> additions,IReadOnlySet<int>? removals)
     {
@@ -114,12 +119,12 @@ public sealed class PakArchive : IDisposable
 
     internal static byte[] MergeImages(string path,string expectedHash,IReadOnlyList<byte[]> images)
     {
-        using var baseline=Open(path);baseline.Materialize();
+        using var baseline=Open(path);baseline.VerifyContents();
         if(!baseline.Sha256.Equals(expectedHash,StringComparison.OrdinalIgnoreCase))throw new IOException("Shared archive changed since opening.");
         var original=baseline.Entries.ToDictionary(e=>LookupKey(e.Name),e=>baseline.Read(e.Name));
         var edits=new Dictionary<string,(string Name,byte[]? Bytes)>(StringComparer.Ordinal);
         foreach(var image in images){
-            using var prepared=FromBytes(image);prepared.Materialize();
+            using var prepared=FromBytes(image);prepared.VerifyContents();
             var candidates=prepared.Entries.Select(e=>(e.Name,Bytes:(byte[]?)prepared.Read(e.Name))).Concat(prepared.Deleted.Select(n=>(Name:n,Bytes:(byte[]?)null)));
             foreach(var row in candidates){
                 string key=LookupKey(row.Name);
@@ -190,6 +195,6 @@ public sealed class PakArchive : IDisposable
         if(process.ExitCode!=0)throw new IOException(stderr.Result+stdout.Result);
         token.ThrowIfCancellationRequested();return stdout.Result;
     }
-    public void Dispose(){if(_disposed)return;_disposed=true;try{Directory.Delete(_directory,true);}catch(IOException){}catch(UnauthorizedAccessException){}GC.SuppressFinalize(this);}
+    public void Dispose(){if(_disposed)return;_disposed=true;_reader?.Dispose();try{Directory.Delete(_directory,true);}catch(IOException){}catch(UnauthorizedAccessException){}GC.SuppressFinalize(this);}
     ~PakArchive(){Dispose();}
 }
