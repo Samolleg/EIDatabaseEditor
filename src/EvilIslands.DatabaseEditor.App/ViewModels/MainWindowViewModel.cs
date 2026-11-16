@@ -488,9 +488,9 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
     {
         WorkspaceSection.Overview when !HasDocument => "Рабочее пространство",
         WorkspaceSection.Records when SelectedTable is not null =>
-            $"database.res  ›  {SelectedTable.ResourceName}  ›  {SelectedTable.Title}",
+            $"{SourceFileName}  ›  {SelectedTable.ResourceName}  ›  {SelectedTable.Title}",
         WorkspaceSection.Texts => $"{TextsFileName}  ›  Все русские тексты",
-        _ => $"database.res  ›  {PageTitle}",
+        _ => $"{SourceFileName}  ›  {PageTitle}",
     };
 
     public string CurrentTableStatusText => SelectedTable?.StatusText ?? "—";
@@ -1063,7 +1063,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public string SourcePath => _workspace?.SourcePath ?? "Файл не открыт";
 
-    public string SourceFileName => _workspace is null ? "database.res не открыт" : Path.GetFileName(_workspace.SourcePath);
+    public string SourceFileName => _workspace is null ? "База не открыта" : Path.GetFileName(_workspace.SourcePath);
 
     public string SourceDirectory => _workspace is null ? "Выберите файл вручную — путь к игре не открывается автоматически." : Path.GetDirectoryName(_workspace.SourcePath) ?? string.Empty;
 
@@ -1089,7 +1089,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public string AttachTextsButtonText => HasTextsDocument
         ? $"✓ {TextsFileName} · {TextResourceCount:N0}"
-        : "＋ Подключить texts.res…";
+        : "＋ Подключить тексты RES/PAK…";
 
     public bool HasSoundArchives => (_workspace?.SoundArchives.Count ?? 0) > 0;
 
@@ -1103,7 +1103,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
 
     public string AttachSoundsButtonText => HasSoundArchives
         ? $"♪ Звук · {SoundArchiveCount:N0} RES · {SoundResourceCount:N0} файлов"
-        : "♪ Подключить звуковые RES…";
+        : "♪ Подключить звуки RES/PAK…";
 
     public IReadOnlyList<ManagedBackupViewModel> ManagedBackups => _workspace?.ManagedBackups ?? [];
 
@@ -1147,7 +1147,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         var cancellationToken = _operationCancellation.Token;
         IsBusy = true;
         IsOperationCancelable = true;
-        BusyText = "Чтение и проверка RES-контейнера…";
+        BusyText = "Чтение и проверка архива RES/PAK…";
         NotificationMessage = null;
         StatusText = "Открытие файла…";
 
@@ -1157,7 +1157,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
             var workspace = await _service.OpenAsync(databasePath, cancellationToken);
             DisconnectLua();
             ApplyWorkspace(workspace);
-            BusyText = "Поиск текстур рядом с database.res…";
+            BusyText = "Поиск текстур рядом с базой…";
             await LoadNearbyTexturesAsync(cancellationToken);
             if (!Path.GetFullPath(path).Equals(databasePath, StringComparison.OrdinalIgnoreCase))
                 NotificationMessage = $"Выбран архив текстур {Path.GetFileName(path)}. Открыта соседняя database.res; текстуры подключены из её папки.";
@@ -1169,7 +1169,7 @@ internal sealed partial class MainWindowViewModel : ObservableObject, IDisposabl
         }
         catch (Exception exception)
         {
-            ShowError($"Не удалось открыть database.res: {UnwrapMessage(exception)}");
+            ShowError($"Не удалось открыть {Path.GetFileName(path)}: {UnwrapMessage(exception)}");
             StatusText = "Ошибка открытия.";
         }
         finally

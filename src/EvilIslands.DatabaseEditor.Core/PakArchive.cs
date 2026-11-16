@@ -8,7 +8,7 @@ namespace EvilIslands.DatabaseEditor.Core;
 /// <summary>Immutable PAK snapshot; all codecs and writes belong to EIRebuild64Pack.</summary>
 public sealed class PakArchive : IDisposable
 {
-    public const string UtilitySha256 = "0BF903E62C1984D5AFE6C51BBB0642836C745540966037A4E44B621D57126F65";
+    public const string UtilitySha256 = PakUtilityIdentity.Sha256;
     private readonly string _directory;
     private readonly string _snapshot;
     private readonly Dictionary<string, Row> _rows;
@@ -176,7 +176,11 @@ public sealed class PakArchive : IDisposable
     private static string Run(IReadOnlyList<string> args,CancellationToken token)
     {
         string utility=Path.Combine(AppContext.BaseDirectory,"EIRebuild64Pack.exe");
-        using(var file=File.OpenRead(utility))if(!Convert.ToHexString(SHA256.HashData(file)).Equals(UtilitySha256,StringComparison.Ordinal))throw new IOException("PAK utility differs from the reviewed version.");
+        if (!File.Exists(utility))
+            throw new IOException("В комплекте редактора отсутствует EIRebuild64Pack.exe. Восстановите полный комплект редактора.");
+        using (var file = File.OpenRead(utility))
+            if (!Convert.ToHexString(SHA256.HashData(file)).Equals(UtilitySha256, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Утилита PAK не соответствует этой сборке редактора. Восстановите полный комплект редактора, включая EIRebuild64Pack.exe.");
         var info=new ProcessStartInfo(utility){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
         foreach(string arg in args)info.ArgumentList.Add(arg);
         using var process=Process.Start(info)??throw new IOException("Cannot start PAK utility.");

@@ -27,7 +27,7 @@ public partial class ResFileManagerDialog
         // Keep imported bytes alive for Save and Undo/Redo until this manager closes.
         _convertedMmpFolders.Add(folder);
         RebuildRows();
-        ShowMessage($"Добавлено map-текстур: {additions.Count}. Нажмите «Перезаписать текущий RES…» для сохранения в этот архив.", false);
+        ShowMessage($"Добавлено map-текстур: {additions.Count}. Нажмите «Перезаписать текущий архив…» для сохранения в этот архив.", false);
         return additions.Count;
     }
 
@@ -42,7 +42,7 @@ public partial class ResFileManagerDialog
     private void ConvertMmp_Click(object sender, RoutedEventArgs e)
     {
         if (_archive is null || _isBusy) return;
-        if (_edits.Count>0) { ShowMessage("Сначала сохраните изменения архива или отмените их: конвертация читает исходный RES.",true); return; }
+        if (_edits.Count>0) { ShowMessage("Сначала сохраните изменения архива или отмените их: конвертация читает исходный архив.",true); return; }
         var archive=_archive;
         string[] selected=GetSelectedRows().Where(r=>r.ResourceName.EndsWith(".mmp",StringComparison.OrdinalIgnoreCase)).Select(r=>r.ResourceName).ToArray();
         string[] all=archive.Entries.Where(r=>r.Name.EndsWith(".mmp",StringComparison.OrdinalIgnoreCase)).Select(r=>r.Name).ToArray();
@@ -61,7 +61,7 @@ public partial class ResFileManagerDialog
         },DisplayMemberPath="Label",SelectedValuePath="Choice",SelectedIndex=1,Margin=new Thickness(0,10,0,0)};root.Children.Add(format);
         var threshold=new TextBox { Text="128", Width=70, HorizontalAlignment=HorizontalAlignment.Left };
         root.Children.Add(new TextBlock { Text="Порог альфы для компактных режимов (0–255):", Margin=new Thickness(0,8,0,0) });root.Children.Add(threshold);
-        var output=new ComboBox {ItemsSource=new[]{"Новый RES в отдельной папке","Папка MMP","Добавить в открытый RES (сохранить затем)"},SelectedIndex=2,Margin=new Thickness(0,10,0,0)};root.Children.Add(output);
+        var output=new ComboBox {ItemsSource=new[]{"Новый PAK в отдельной папке","Папка MMP","Добавить в открытый архив (сохранить затем)"},SelectedIndex=2,Margin=new Thickness(0,10,0,0)};root.Children.Add(output);
         root.Children.Add(new TextBlock {Text="Имена: имя.x2.mmp → имя.x2map.mmp. Оригиналы сохраняются. Исходное качество: атлас 1024 из текстуры 512; оптимизированное: атлас 512. Оба режима используют DXT1.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,10,0,0)});
         root.Children.Add(new TextBlock {Text="PNT3 может быть слоем составной текстуры. Конвертация не собирает доспех, не исправляет UV и не гарантирует отображение объекта. Исходный архив не изменяется. DXT — сжатие с потерями.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,12)});
         var status=new TextBlock {Text="Выберите параметры и начните экспорт.",TextWrapping=TextWrapping.Wrap};root.Children.Add(status);
@@ -94,7 +94,7 @@ public partial class ResFileManagerDialog
                     new Progress<MmpBatchProgress>(p=>{bar.Value=p.Completed;status.Text=$"{p.Completed} / {p.Total}: {p.Name}";}),cancellation.Token,choice == MmpDxtChoice.CompactX2 ? compactThreshold : (byte)128);
                 int added = intoCurrent ? await StageConvertedMmpAsync(destination, rows, cancellation.Token) : 0;
                 report.Text=string.Join(Environment.NewLine,rows.Select(r=>$"{(r.Success?"OK":"ОШИБКА")} {r.Name}: {r.Detail}"));
-                status.Text=intoCurrent ? $"Подготовлено в открытом RES: {added}, ошибок: {rows.Count(r=>!r.Success)}. Закройте это окно и сохраните архив штатной кнопкой." : $"Готово: {rows.Count(r=>r.Success)}, ошибок: {rows.Count(r=>!r.Success)}. Результат: {destination}";
+                status.Text=intoCurrent ? $"Подготовлено в открытом архиве: {added}, ошибок: {rows.Count(r=>!r.Success)}. Закройте это окно и сохраните архив штатной кнопкой." : $"Готово: {rows.Count(r=>r.Success)}, ошибок: {rows.Count(r=>!r.Success)}. Результат: {destination}";
             }
             catch(OperationCanceledException){status.Text="Отменено. Готовый результат не создан.";}
             catch(Exception ex){status.Text="Экспорт не завершён: "+ex.Message;}

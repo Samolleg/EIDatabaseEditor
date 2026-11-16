@@ -252,7 +252,7 @@ public partial class MainWindow : Window
     {
         var fileDialog = new OpenFileDialog
         {
-            Title = "Открыть любой RES как архив",
+            Title = "Открыть архив RES/PAK",
             Filter = "Evil Islands PAK/RES (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
@@ -504,7 +504,7 @@ public partial class MainWindow : Window
 
         var fileDialog = new OpenFileDialog
         {
-            Title = "Выберите вторую database.res для сравнения",
+            Title = "Выберите вторую БД (RES/PAK) для сравнения",
             Filter = "Evil Islands database|database.pak;database.res;*.pak;*.res|PAK/RES-контейнеры (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,
@@ -2887,18 +2887,18 @@ public partial class MainWindow : Window
 
     private void RefreshLastDatabaseButton()
     {
-        var path = _preferences.GetLastDatabasePath();
+        var path = ResourceArchivePaths.ResolveRecent(_preferences.GetLastDatabasePath());
         OpenLastDatabaseButton.IsEnabled = File.Exists(path);
         OpenLastDatabaseButton.ToolTip = path ?? "Сначала откройте БД";
         HomeDatabaseName.Text = string.IsNullOrWhiteSpace(path) ? "База ещё не выбрана" : Path.GetFileName(path);
-        HomeDatabasePath.Text = path is null ? "Откройте database.res из папки вашей игры или мода." :
+        HomeDatabasePath.Text = path is null ? "Откройте database.pak или database.res из папки вашей игры или мода." :
             path + (File.Exists(path) ? "" : "\nФайл не найден. Выберите его новое расположение.");
     }
     private void OpenLastDatabase_Click(object sender, RoutedEventArgs e)
     {
         if (_viewModel.IsBusy) return;
-        string? path = _preferences.GetLastDatabasePath();
-        if (!File.Exists(path)) { _viewModel.ReportSpreadsheetError("Последняя БД не найдена. Откройте файл через «Открыть database.res…»."); return; }
+        string? path = ResourceArchivePaths.ResolveRecent(_preferences.GetLastDatabasePath());
+        if (!File.Exists(path)) { _viewModel.ReportSpreadsheetError("Последняя БД не найдена. Откройте файл через «Открыть БД (RES/PAK)…»."); return; }
         ViewModel_OpenFileRequested(path, EventArgs.Empty);
     }
 
@@ -2927,7 +2927,7 @@ public partial class MainWindow : Window
 
         var dialog = new OpenFileDialog
         {
-            Title = "Открыть database.res",
+            Title = "Открыть БД (RES/PAK)",
             Filter = "Evil Islands database|database.pak;database.res;*.pak;*.res|PAK/RES-контейнеры (*.pak;*.res)|*.pak;*.res|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             CheckPathExists = true,

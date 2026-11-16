@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:app="clr-namespace:EvilIslands.DatabaseEditor.App"
         xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
-        Title="Файловый менеджер RES" Width="1460" Height="860" MinWidth="760" MinHeight="400"
+        Title="Файловый менеджер RES/PAK" Width="1460" Height="860" MinWidth="760" MinHeight="400"
         ResizeMode="CanResize" WindowStyle="None" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner" Background="Transparent"
         Loaded="Window_Loaded" Closing="Window_Closing" PreviewKeyDown="Window_PreviewKeyDown">
@@ -48,12 +48,12 @@
                     <Border Grid.Column="0" ClipToBounds="True"><StackPanel Orientation="Horizontal" Margin="17,0,0,0" VerticalAlignment="Center">
                         <TextBlock Text="▦" Foreground="{StaticResource AccentBrush}" FontSize="20"/>
                         <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
-                            <TextBlock x:Name="ArchiveTitleText" Text="Файловый менеджер RES" FontSize="15" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="ArchiveTitleText" Text="Файловый менеджер RES/PAK" FontSize="15" FontWeight="SemiBold"/>
                             <TextBlock x:Name="ArchivePathText" Foreground="{StaticResource SubtleTextBrush}" FontSize="10" TextTrimming="CharacterEllipsis" MaxWidth="900"/>
                         </StackPanel>
                     </StackPanel>
                     </Border>
-                    <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Content="Открыть другой RES…" Margin="0,0,8,0" Padding="12,6" MinHeight="0"
+                    <Button Grid.Column="1" Style="{StaticResource RoundedButton}" Content="Открыть другой архив…" Margin="0,0,8,0" Padding="12,6" MinHeight="0"
                             Click="OpenArchiveButton_Click" shell:WindowChrome.IsHitTestVisibleInChrome="True"/>
                     <Button Grid.Column="2" Style="{StaticResource ChromeButton}" Content="−" ToolTip="Свернуть" Click="MinimizeWindow_Click" />
                     <Button Grid.Column="3" Style="{StaticResource ChromeButton}" Content="□" ToolTip="Развернуть / восстановить" Click="ToggleWindow_Click" />
@@ -69,7 +69,7 @@
             <Grid Grid.Row="2" Margin="16,12,16,0">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Button x:Name="UpFolderButton" Style="{StaticResource RoundedButton}" Content="↑" Width="38" Padding="0" ToolTip="На уровень выше" Click="UpFolderButton_Click"/>
-                <Border Grid.Column="1" Margin="7,0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="10,7" ToolTip="Текущая папка внутри RES">
+                <Border Grid.Column="1" Margin="7,0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="7" Padding="10,7" ToolTip="Текущая папка внутри архива">
                     <StackPanel x:Name="BreadcrumbPanel" Orientation="Horizontal"/>
                 </Border>
                 <Button x:Name="DetailsToggleButton" Grid.Column="2" Style="{StaticResource RoundedButton}" Content="Свойства" Padding="12,7" Click="DetailsToggleButton_Click"/>
@@ -90,8 +90,8 @@
                 <DockPanel Grid.Column="9">
                     <CheckBox x:Name="TileMode" Content="Плитки" DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center" Checked="TileMode_Changed" Unchecked="TileMode_Changed"/>
                 <Grid>
-                    <TextBox x:Name="SearchBox" Style="{StaticResource DarkTextBox}" Padding="34,8,10,8" TextChanged="SearchBox_TextChanged" ToolTip="Поиск по всему RES"/>
-                    <TextBlock x:Name="SearchHint" Text="Поиск по всему RES…" Margin="34,0,0,0" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                    <TextBox x:Name="SearchBox" Style="{StaticResource DarkTextBox}" Padding="34,8,10,8" TextChanged="SearchBox_TextChanged" ToolTip="Поиск по всему архиву"/>
+                    <TextBlock x:Name="SearchHint" Text="Поиск по всему архиву…" Margin="34,0,0,0" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" IsHitTestVisible="False"/>
                     <TextBlock Text="⌕" Margin="10,0,0,1" FontSize="17" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" IsHitTestVisible="False"/>
                 </Grid></DockPanel>
             </Grid>
@@ -133,7 +133,7 @@
                                 </Style.Triggers></Style></DataGrid.RowStyle>
                             <DataGrid.Columns>
                                 <DataGridTextColumn ElementStyle="{StaticResource ResText}" Header="Имя" Binding="{Binding FileName}" Width="*" MinWidth="220"/>
-                                <DataGridTextColumn ElementStyle="{StaticResource ResText}" x:Name="FolderPathColumn" Header="Папка в RES" Binding="{Binding FolderPath}" Width="260" Visibility="Collapsed"/>
+                                <DataGridTextColumn ElementStyle="{StaticResource ResText}" x:Name="FolderPathColumn" Header="Папка в архиве" Binding="{Binding FolderPath}" Width="260" Visibility="Collapsed"/>
                                 <DataGridTextColumn ElementStyle="{StaticResource ResText}" Header="Тип" Binding="{Binding FileType}" Width="88"/>
                                 <DataGridTextColumn ElementStyle="{StaticResource ResNumber}" Header="Размер" Binding="{Binding Size, Converter={StaticResource FileSizeConverter}}" Width="105"/>
                                 <DataGridTextColumn ElementStyle="{StaticResource ResText}" Header="Состояние" Binding="{Binding State}" Width="120"/>
@@ -163,7 +163,7 @@
                         <Border x:Name="DropHint" Grid.RowSpan="2" Background="#D9121513" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2" CornerRadius="9" Visibility="Collapsed" IsHitTestVisible="False">
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock Text="＋" FontSize="38" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
                                 <TextBlock Text="Перетащите сюда файлы или папки" FontSize="18" FontWeight="SemiBold"/>
-                                <TextBlock Text="Они будут добавлены в открытую папку RES" Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,0"/>
+                                <TextBlock Text="Они будут добавлены в открытую папку архива" Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,0"/>
                             </StackPanel>
                         </Border>
                     </Grid>
@@ -196,7 +196,7 @@
                                         <ComboBoxItem Content="Вписать"/><ComboBoxItem Content="100%"/><ComboBoxItem Content="200%"/><ComboBoxItem Content="400%"/>
                                     </ComboBox>
                                 </StackPanel>
-                                <TextBlock Text="Путь в RES" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,16,0,4"/>
+                                <TextBlock Text="Путь в архиве" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,16,0,4"/>
                                 <TextBox x:Name="DetailsPathText" Style="{StaticResource DarkTextBox}" IsReadOnly="True" TextWrapping="Wrap" Padding="9,7"/>
                                 <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                                     <StackPanel><TextBlock Text="Тип" Foreground="{StaticResource MutedTextBrush}" FontSize="10"/><TextBlock x:Name="DetailsTypeText" Margin="0,4,0,0"/></StackPanel>
@@ -233,8 +233,8 @@
                     <TextBlock TextTrimming="CharacterEllipsis" x:Name="OperationStatusText" Foreground="{StaticResource AccentBrush}" FontSize="11" Margin="0,3,0,0"/>
                     <TextBlock TextTrimming="CharacterEllipsis" x:Name="SafetyText" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,2,0,0"/></StackPanel>
                     <StackPanel Grid.Row="1" Margin="0,8,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
-                        <Button x:Name="SaveCopyButton" Style="{StaticResource AccentButton}" Content="Сохранить копию RES…" MinWidth="180" Click="SaveCopyButton_Click"/>
-                        <Button x:Name="SaveCurrentButton" Style="{StaticResource RoundedButton}" Content="Перезаписать текущий RES…" MinWidth="215" Margin="10,0,0,0" Click="SaveCurrentButton_Click"/>
+                        <Button x:Name="SaveCopyButton" Style="{StaticResource AccentButton}" Content="Сохранить копию архива…" MinWidth="180" Click="SaveCopyButton_Click"/>
+                        <Button x:Name="SaveCurrentButton" Style="{StaticResource RoundedButton}" Content="Перезаписать текущий архив…" MinWidth="215" Margin="10,0,0,0" Click="SaveCurrentButton_Click"/>
                         <Button Style="{StaticResource RoundedButton}" Content="Закрыть" MinWidth="105" Margin="10,0,0,0" Click="CloseButton_Click"/>
                     </StackPanel>
                 </Grid>
@@ -242,7 +242,7 @@
             <Border x:Name="BusyOverlay" Grid.Row="1" Grid.RowSpan="6" Background="#B0000000" Visibility="Collapsed" CornerRadius="0,0,12,12">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"><ProgressBar Width="320" Height="7" IsIndeterminate="True"/>
                     <TextBlock x:Name="BusyText" Margin="0,16,0,0" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-                    <TextBlock Text="Большие RES обрабатываются потоком и не загружаются целиком в память." Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,0"/>
+                    <TextBlock Text="RES читается потоком; для PAK создаётся временный снимок архива." Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,0"/>
                 </StackPanel>
             </Border>
         </Grid>
