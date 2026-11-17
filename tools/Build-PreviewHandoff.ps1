@@ -72,7 +72,7 @@ $publishRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 $publishPath = Join-Path $publishRoot 'publish'
 New-Item -ItemType Directory -Path $publishPath | Out-Null
 try {
-    & dotnet publish $appProject `
+    & (Join-Path $PSScriptRoot 'invoke-build.ps1') dotnet.exe publish $appProject `
         -c Release `
         -r $runtimeIdentifier `
         --self-contained true `

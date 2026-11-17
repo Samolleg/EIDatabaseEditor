@@ -31,6 +31,6 @@ foreach ($file in Get-ChildItem -LiteralPath $jsonRoot -Recurse -File) {
 $previousPdbEndpoint = $env:_MSPDBSRV_ENDPOINT_
 try {
     $env:_MSPDBSRV_ENDPOINT_ = 'DbPak-' + [guid]::NewGuid().ToString('N')
-    & $msbuild (Join-Path $projectRoot 'native/PakReader.vcxproj') /nologo /m:1 /v:minimal /p:Configuration=Release /p:Platform=x64 /p:PreferredToolArchitecture=x64 "/p:EiWorkspace=$workspaceRoot"
+    & (Join-Path $PSScriptRoot 'invoke-build.ps1') $msbuild (Join-Path $projectRoot 'native/PakReader.vcxproj') /nologo /m:1 /v:minimal /p:Configuration=Release /p:Platform=x64 /p:PreferredToolArchitecture=x64 "/p:EiWorkspace=$workspaceRoot"
     if ($LASTEXITCODE -ne 0) { throw "PAK reader build failed: $LASTEXITCODE" }
 } finally { $env:_MSPDBSRV_ENDPOINT_ = $previousPdbEndpoint }
