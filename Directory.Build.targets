@@ -1,6 +1,7 @@
 <Project>
   <PropertyGroup>
     <EiWorkspace>$([MSBuild]::GetDirectoryNameOfFileAbove('$(MSBuildThisFileDirectory)', 'RULES.md'))</EiWorkspace>
+    <ModuleSdkDir Condition="'$(ModuleSdkDir)' == ''">$(EiWorkspace)\builds\dbeditor\current</ModuleSdkDir>
     <PakToolPath Condition="'$(PakToolPath)' == ''">$(EiWorkspace)\builds\rebuild64\current\EIRebuild64Pack.exe</PakToolPath>
   </PropertyGroup>
   <ItemGroup Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
@@ -39,18 +40,18 @@
   <!-- The public module SDK did not change in this migration. Ship the accepted
        binary identity against which the independently built module is pinned. -->
   <Target Name="PreserveAcceptedModuleSdk" AfterTargets="Build" Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
-    <ItemGroup><FrozenSdk Include="$(EiWorkspace)\builds\dbeditor\current\ModuleContracts.V1.dll;$(EiWorkspace)\builds\dbeditor\current\ModuleContracts.Wpf.V1.dll" /></ItemGroup>
+    <ItemGroup><FrozenSdk Include="$(ModuleSdkDir)\ModuleContracts.V1.dll;$(ModuleSdkDir)\ModuleContracts.Wpf.V1.dll" /></ItemGroup>
     <GetFileHash Files="@(FrozenSdk)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="FrozenSdkHash" /></GetFileHash>
-    <Error Condition="'%(FrozenSdkHash.Filename)' == 'ModuleContracts.V1' and '%(FrozenSdkHash.FileHash)' != '465EA159720BD3F988A5E3C32561BBBE66B87EE6AB101FB4368FEBB2B45FB88C'" Text="Accepted ModuleContracts.V1 identity changed; review the module SDK dependency." />
-    <Error Condition="'%(FrozenSdkHash.Filename)' == 'ModuleContracts.Wpf.V1' and '%(FrozenSdkHash.FileHash)' != '6BAC0E4CE06B9E4045E3CA9FDE5DDAA537B094376FE0CF7582C6C646562A017D'" Text="Accepted WPF module SDK identity changed; review the module dependency." />
+    <Error Condition="'%(FrozenSdkHash.Filename)' == 'ModuleContracts.V1' and '%(FrozenSdkHash.FileHash)' != '56256C5C9FDB6F21F21E4AD2E07005B8F3B045F34498294FEEB26080D9FC73CE'" Text="Accepted ModuleContracts.V1 identity changed; review the module SDK dependency." />
+    <Error Condition="'%(FrozenSdkHash.Filename)' == 'ModuleContracts.Wpf.V1' and '%(FrozenSdkHash.FileHash)' != '594947A10A0C9499C2AB0A2554FA698D27181A65728FDFD935A6A8F26EE2DFFC'" Text="Accepted WPF module SDK identity changed; review the module dependency." />
     <Copy SourceFiles="@(FrozenSdk)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
   </Target>
   <Target Name="PreserveAcceptedModuleSdkInPublish" AfterTargets="Publish" DependsOnTargets="PreserveAcceptedModuleSdk" Condition="'$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe'">
     <Copy SourceFiles="@(FrozenSdk)" DestinationFolder="$(PublishDir)" />
     <ItemGroup><PublishedFrozenSdk Include="@(FrozenSdk->'$(PublishDir)%(Filename)%(Extension)')" /></ItemGroup>
     <GetFileHash Files="@(PublishedFrozenSdk)" Algorithm="SHA256"><Output TaskParameter="Items" ItemName="PublishedFrozenSdkHash" /></GetFileHash>
-    <Error Condition="'%(PublishedFrozenSdkHash.Filename)' == 'ModuleContracts.V1' and '%(PublishedFrozenSdkHash.FileHash)' != '465EA159720BD3F988A5E3C32561BBBE66B87EE6AB101FB4368FEBB2B45FB88C'" Text="Published ModuleContracts.V1 differs from the accepted module SDK." />
-    <Error Condition="'%(PublishedFrozenSdkHash.Filename)' == 'ModuleContracts.Wpf.V1' and '%(PublishedFrozenSdkHash.FileHash)' != '6BAC0E4CE06B9E4045E3CA9FDE5DDAA537B094376FE0CF7582C6C646562A017D'" Text="Published WPF module SDK differs from the accepted module SDK." />
+    <Error Condition="'%(PublishedFrozenSdkHash.Filename)' == 'ModuleContracts.V1' and '%(PublishedFrozenSdkHash.FileHash)' != '56256C5C9FDB6F21F21E4AD2E07005B8F3B045F34498294FEEB26080D9FC73CE'" Text="Published ModuleContracts.V1 differs from the accepted module SDK." />
+    <Error Condition="'%(PublishedFrozenSdkHash.Filename)' == 'ModuleContracts.Wpf.V1' and '%(PublishedFrozenSdkHash.FileHash)' != '594947A10A0C9499C2AB0A2554FA698D27181A65728FDFD935A6A8F26EE2DFFC'" Text="Published WPF module SDK differs from the accepted module SDK." />
     <Delete Files="$(PublishDir)ModuleContracts.V1.pdb;$(PublishDir)ModuleContracts.Wpf.V1.pdb" />
   </Target>
 </Project>

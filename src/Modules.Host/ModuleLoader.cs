@@ -39,7 +39,7 @@ public static class ModuleLoader
                     ?? throw new InvalidDataException("Пустой манифест.");
                 if (string.IsNullOrWhiteSpace(m.ModuleId) || !System.Text.RegularExpressions.Regex.IsMatch(m.ModuleId, "^[a-z0-9][a-z0-9.-]{0,63}$"))
                     throw new InvalidDataException("Недопустимый ID модуля.");
-                if (m.ContractMajor != 1 || m.ContractMinor != 0 || m.Runtime != "net9.0-windows" ||
+                if (m.ContractMajor != 1 || m.ContractMinor != 0 || m.Runtime != "net10.0-windows" ||
                     (m.Architecture != "any" && !m.Architecture.Equals(System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(), StringComparison.OrdinalIgnoreCase)))
                     throw new InvalidDataException("Несовместимый контракт или платформа.");
                 if (m.RequiredCapabilities is null || m.RequiredCapabilities.Except(host.Capabilities).Any())

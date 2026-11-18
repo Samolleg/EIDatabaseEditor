@@ -60,7 +60,7 @@ foreach ($sdk in $manifest.sdk) {
 }
 $contract = Get-Content -LiteralPath (Join-Path $source 'module.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($contract.moduleId -ne 'malachite' -or $contract.entryAssembly -ne 'Malachite.Module.dll' -or $contract.entryType -ne 'Malachite.Module.Entry' -or
-    $contract.contractMajor -ne 1 -or $contract.contractMinor -ne 0 -or $contract.runtime -ne 'net9.0-windows' -or $contract.architecture -ne 'any' -or
+    $contract.contractMajor -ne 1 -or $contract.contractMinor -ne 0 -or $contract.runtime -ne 'net10.0-windows' -or $contract.architecture -ne 'any' -or
     $null -eq $contract.requiredCapabilities -or @($contract.requiredCapabilities | Where-Object { $_ -notin $capabilities }).Count) { throw 'Incompatible module contract/capabilities.' }
 $hostManifestPath = Join-Path $hostRoot 'host-manifest.sha256.json'
 $oldManifestBytes = [IO.File]::ReadAllBytes($hostManifestPath)
