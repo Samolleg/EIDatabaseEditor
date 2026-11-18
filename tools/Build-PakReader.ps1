@@ -1,5 +1,6 @@
+#requires -Version 7.6.10
+#requires -PSEdition Core
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1')
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $workspaceRoot = $projectRoot
 while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md'))) {
