@@ -201,12 +201,12 @@ public sealed class DatabaseRecord
 
     public int IdentityFieldId { get; }
 
-    public string Name => Fields.FirstOrDefault(field => field.Id == _nameFieldId)?.Value.ToString()
+    public string Name => Fields.FirstOrDefault(entry => entry.Id == _nameFieldId)?.Value.ToString()
         ?? _fallbackName;
 
     public string DisplayName => Name;
 
-    public string IdentityValue => Fields.FirstOrDefault(field => field.Id == IdentityFieldId)?.Value.ToString()
+    public string IdentityValue => Fields.FirstOrDefault(entry => entry.Id == IdentityFieldId)?.Value.ToString()
         ?? string.Empty;
 
     public string Path { get; }
@@ -215,7 +215,7 @@ public sealed class DatabaseRecord
 
     public bool IsNew { get; }
 
-    public bool IsModified => IsNew || Fields.Any(field => field.IsModified);
+    public bool IsModified => IsNew || Fields.Any(entry => entry.IsModified);
 
     public string? GetString(string key) => Fields.FirstOrDefault(field =>
         string.Equals(field.Key, key, StringComparison.OrdinalIgnoreCase) ||
@@ -832,7 +832,7 @@ internal sealed record SectionSchema(
     bool CanAppendRecords,
     IReadOnlyDictionary<byte, FieldSchema> Fields)
 {
-    public bool IsEditable => Fields.Values.Any(field => field.Editable);
+    public bool IsEditable => Fields.Values.Any(entry => entry.Editable);
 }
 
 internal static class DatabaseValueCodec

@@ -860,9 +860,9 @@ internal sealed class RecordRowViewModel : ObservableObject
                 return;
             }
 
-            foreach (var field in _fieldCache.Values)
+            foreach (var entry in _fieldCache.Values)
             {
-                field.IsEditMode = value;
+                entry.IsEditMode = value;
             }
         }
     }

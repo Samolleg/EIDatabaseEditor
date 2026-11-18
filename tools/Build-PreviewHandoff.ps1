@@ -123,7 +123,7 @@ try {
         version = $version
         sourceCommit = $gitHead
         createdAt = (Get-Date).ToString('o')
-        framework = '.NET 9 self-contained'
+        framework = '.NET 10 self-contained'
         runtimeIdentifier = $runtimeIdentifier
         singleFile = $true
         distributableFile = $runtimeFile

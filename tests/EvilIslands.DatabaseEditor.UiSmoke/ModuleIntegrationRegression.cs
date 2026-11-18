@@ -115,7 +115,7 @@ internal static class ModuleIntegrationRegression
             var result = ModuleLoader.Load(folder, host);
             Require(result.Modules.Count == 0 && result.Errors.Count == 1, "Invalid module accepted: " + name);
         }
-        var baseline = new ModuleManifest("fixture", "1", "entry.dll", "Missing.Type", 1, 0, [], [], "net9.0-windows", "any", 1);
+        var baseline = new ModuleManifest("fixture", "1", "entry.dll", "Missing.Type", 1, 0, [], [], "net10.0-windows", "any", 1);
         Reject("major", baseline with { ContractMajor = 2 });
         Reject("capability", baseline with { RequiredCapabilities = ["unavailable.capability"] });
         Reject("traversal", baseline with { EntryAssembly = "../escape.dll" });

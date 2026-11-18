@@ -58,7 +58,7 @@ internal static class LuaColumnsRegression
         grid.SelectedCells.Clear(); grid.CurrentCell = new DataGridCellInfo(row, column); grid.SelectedCells.Add(grid.CurrentCell);
         Check(window.TryBuildClipboardMatrix(out var copied) && copied.Count == 1 && copied[0][0] == "5.34", "Lua copy returned empty/wrong text");
         var payload = MainWindow.CreateSpreadsheetClipboardDataObject(copied);
-        var parsed = SpreadsheetClipboardText.Parse((string)payload.GetData(DataFormats.UnicodeText));
+        var parsed = SpreadsheetClipboardText.Parse(payload.GetData(DataFormats.UnicodeText) as string ?? throw new InvalidDataException("Missing Unicode clipboard text"));
         var other = vm.SelectedTable.Records.Single(r => r.CoreRecord.Name == "thin");
         grid.SelectedCells.Clear(); grid.CurrentCell = new DataGridCellInfo(other, column);
         grid.SelectedCells.Clear(); grid.SelectedCells.Add(grid.CurrentCell);

@@ -65,15 +65,15 @@ try {
             $sourceFile = Resolve-ContainedFile $moduleSource $file.name
             if ((Get-FileHash -LiteralPath $sourceFile).Hash -ne $file.sha256 -or (Get-Item -LiteralPath $sourceFile).Length -ne $file.length) { throw "Module file mismatch: $($file.name)" }
         }
-        if (@($moduleManifest.sdk).Count -ne 2 -or @($moduleManifest.sdk.name | Sort-Object -Unique).Count -ne 2) { throw 'Invalid module SDK manifest.' }
-        foreach ($sdk in $moduleManifest.sdk) {
-            if ($sdk.name -notin @('ModuleContracts.V1.dll', 'ModuleContracts.Wpf.V1.dll') -or
-                (Get-FileHash -LiteralPath (Join-Path $workspaceRoot ('builds/dbeditor/current/' + $sdk.name))).Hash -ne $sdk.sha256) { throw 'Module SDK differs from the accepted host SDK.' }
-        }
         $temporary = Join-Path $taskTemporary ('database-editor-current-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $temporary | Out-Null
         & (Join-Path $PSScriptRoot 'invoke-build.ps1') dotnet.exe publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -o $temporary
         if ($LASTEXITCODE -ne 0) { throw "Сборка не завершена: $LASTEXITCODE" }
+        if (@($moduleManifest.sdk).Count -ne 2 -or @($moduleManifest.sdk.name | Sort-Object -Unique).Count -ne 2) { throw 'Invalid module SDK manifest.' }
+        foreach ($sdk in $moduleManifest.sdk) {
+            if ($sdk.name -notin @('ModuleContracts.V1.dll', 'ModuleContracts.Wpf.V1.dll') -or
+                (Get-FileHash -LiteralPath (Join-Path $temporary $sdk.name)).Hash -ne $sdk.sha256) { throw 'Module SDK differs from the published host SDK.' }
+        }
         $moduleTarget = Join-Path $temporary 'Modules\malachite\current'
         New-Item -ItemType Directory -Path $moduleTarget -Force | Out-Null
         Get-ChildItem -LiteralPath $moduleSource -Recurse -File | ForEach-Object {
