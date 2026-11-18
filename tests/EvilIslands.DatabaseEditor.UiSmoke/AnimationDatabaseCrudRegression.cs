@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using EvilIslands.DatabaseEditor.App;
 using EvilIslands.DatabaseEditor.App.Dialogs;
 using EvilIslands.DatabaseEditor.Core;
 
@@ -122,6 +123,27 @@ internal static class AnimationDatabaseCrudRegression
         Console.WriteLine("ADB Russian flags PASS: weapons/equipment, unknown bits, action modifiers, raw synchronization and serialized readback.");
     }
 
+    private static UnitModelPreviewView CreateComparisonView() => new()
+    {
+        AllowAnimationEditing = false,
+        // This window owns its prepared scene; database/visibility reloads must not clear it.
+        ExternalScene = true
+    };
+    private static async Task DisplayComparisonAsync(UnitModelPreviewView view, UnitModelScene scene,
+        FigureAnimationSet set, string name, bool loop)
+    {
+        view.PauseAnimation();
+        int frame = (int)view.AnimationFrame;
+        bool initial = view.ActiveAnimationName is null;
+        if (initial) view.Visibility = Visibility.Hidden;
+        var clip = await set.LoadAsync(name);
+        if (initial) view.ShowScene(scene with { Animations = set });
+        await view.ReplaceEditedAnimationAsync(set, clip, frame);
+        view.RestrictToEditedClip(); view.EditorLoop = loop;
+        if (initial) view.Visibility = Visibility.Visible;
+        await view.PlayAnimationAsync();
+    }
+
     private static async Task VerifyComparisonSwitch(UnitModelScene scene)
     {
         var source = scene.Animations!;
@@ -130,8 +152,8 @@ internal static class AnimationDatabaseCrudRegression
         var changed = new FigureAnimationEditor(source);
         var root = original.Tracks["hp"];
         await changed.SetPoseAsync(name, "hp", 7, root.Rotation(7), root.Position(7) + new System.Numerics.Vector3(.1f, 0, 0));
-        var view = AnimationEditorDialog.CreateGeneratedComparisonView();
-        await AnimationEditorDialog.DisplayGeneratedComparisonAsync(view, scene, source, name, true);
+        var view = CreateComparisonView();
+        await DisplayComparisonAsync(view, scene, source, name, true);
         view.PauseAnimation(); view.SetAnimationFrame(7);
         var visual = Field<System.Windows.Media.Media3D.ModelVisual3D>(view, "_visual");
         var geometry = visual.Content;
@@ -142,7 +164,7 @@ internal static class AnimationDatabaseCrudRegression
         for (int i = 0; i < 6; i++)
         {
             var previous = Field<FigureAnimationClip>(view, "_clip");
-            var task = AnimationEditorDialog.DisplayGeneratedComparisonAsync(view, scene, i % 2 == 0 ? changed.Preview() : source, name, true);
+            var task = DisplayComparisonAsync(view, scene, i % 2 == 0 ? changed.Preview() : source, name, true);
             Check(view.ActiveAnimationName == name && ReferenceEquals(geometry, visual.Content), "comparison exposed bind pose/recreated scene while loading");
             if (!task.IsCompleted) Check(ReferenceEquals(previous, Field<FigureAnimationClip>(view, "_clip")), "old pose removed before replacement ready");
             await task; view.PauseAnimation();
@@ -150,10 +172,10 @@ internal static class AnimationDatabaseCrudRegression
             Check(ReferenceEquals(geometry, visual.Content), "comparison rebuilt geometry");
         }
         Console.WriteLine("COMPARISON SWITCH PASS: original/variant six switches, pending pose retained, same geometry and frame7, playback resumed.");
-        await AnimationEditorDialog.DisplayGeneratedComparisonAsync(view, scene, changed.Preview(), name, true);
+        await DisplayComparisonAsync(view, scene, changed.Preview(), name, true);
         view.PauseAnimation();
         var reference = new EvilIslands.DatabaseEditor.App.UnitModelPreviewView { AllowAnimationEditing = false };
-        await AnimationEditorDialog.DisplayGeneratedComparisonAsync(reference, scene, source, name, true);
+        await DisplayComparisonAsync(reference, scene, source, name, true);
         reference.PauseAnimation();
         view.SetComparison(source, original, false, true);
         Check(view.GhostMeshCount > 0 && !view.ShowingOriginal, "ghost missing or candidate hidden");

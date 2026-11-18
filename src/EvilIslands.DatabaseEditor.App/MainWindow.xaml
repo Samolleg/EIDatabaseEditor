@@ -958,7 +958,6 @@
                                         <StackPanel>
                                             <TextBlock Text="Редактор анимаций" FontSize="17" FontWeight="SemiBold" />
                                             <TextBlock x:Name="HomeAnimationVersion" FontSize="19" Foreground="{StaticResource AccentBrush}" Margin="0,10,0,8" />
-                                            <TextBlock x:Name="HomeKimodoStatus" Foreground="{StaticResource MutedTextBrush}" />
                                         </StackPanel>
                                     </Border>
                                     <Border Style="{StaticResource HomeCard}">

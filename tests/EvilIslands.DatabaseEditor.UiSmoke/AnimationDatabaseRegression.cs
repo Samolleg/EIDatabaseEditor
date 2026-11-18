@@ -74,7 +74,7 @@ internal static class AnimationDatabaseRegression
             new uint[2], new uint[4], 0, 0, new uint[4]);
         Check(parsed.Entries[configured].Probability == 42 && parsed.Entries[configured].Length == 20, "configured append fields lost");
 
-        string temp = Path.Combine(Path.GetTempPath(), "ei-adb-test-" + Guid.NewGuid().ToString("N") + ".res");
+        string temp = Path.Combine(Path.GetTempPath(), "ei-adb-test-" + Guid.NewGuid().ToString("N") + Path.GetExtension(source.ArchivePath));
         File.WriteAllBytes(temp, originalArchive);
         var writable = await AnimationDatabaseSource.OpenAsync(temp, null, scene.Model) ?? throw new Exception("ADB source in copy missing");
         var discard = writable.CreateDraft();

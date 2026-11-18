@@ -87,23 +87,19 @@ internal static class HomePageRegression
         Check(!open.IsEnabled && Find<TextBlock>("HomeDatabasePath").Text.Contains("Файл не найден"), "Missing recent file misreported");
         string fixture=Path.Combine(output,"module-fixture"); Directory.CreateDirectory(fixture);
         foreach(string name in new[]{"Malachite.Core.dll","Malachite.Module.dll","Malachite.UI.Wpf.dll"}) File.WriteAllText(Path.Combine(fixture,name),name);
-        var paths=("absent-exe","absent-motion","absent-text");
-        var first=HomeComponentInfo.Read(fixture,null,paths);
+        var first=HomeComponentInfo.Read(fixture,null);
         File.AppendAllText(Path.Combine(fixture,"Malachite.Core.dll"),"changed");
-        Check(first.ModuleVersion!=HomeComponentInfo.Read(fixture,null,paths).ModuleVersion,"Core-only update did not change build identifier");
+        Check(first.ModuleVersion!=HomeComponentInfo.Read(fixture,null).ModuleVersion,"Core-only update did not change build identifier");
         File.WriteAllText(Path.Combine(fixture,"manifest.json"),"{\"buildRevision\":12}");
-        Check(HomeComponentInfo.Read(fixture,null,paths).ModuleVersion=="Сборка №12","Explicit revision unsupported");
+        Check(HomeComponentInfo.Read(fixture,null).ModuleVersion=="Сборка №12","Explicit revision unsupported");
         File.WriteAllText(Path.Combine(fixture,"manifest.json"),"malformed");
-        Check(HomeComponentInfo.Read(fixture,null,paths).Details.Contains("Метаданные сборки"),"Corrupt metadata not explained");
+        Check(HomeComponentInfo.Read(fixture,null).Details.Contains("Метаданные сборки"),"Corrupt metadata not explained");
         Check(!window.IsVisible,"Interactive window opened");
         if (Environment.GetEnvironmentVariable("DBE_HOME_INSTALLED_ROOT") is { Length: > 0 } installed)
         {
             var ui=AppDomain.CurrentDomain.GetAssemblies().First(a=>a.GetName().Name=="Malachite.UI.Wpf");
-            var real=HomeComponentInfo.Read(Path.Combine(installed,"Modules","malachite","current"),ui,
-                (Path.Combine(installed,"Kimodo","bin","kmd-generate.exe"),Path.Combine(installed,"Kimodo","motion.gguf"),
-                 Path.Combine(installed,"Kimodo","text","Llama-3-Kimodo-Q4_K.gguf")));
+            var real=HomeComponentInfo.Read(Path.Combine(installed,"Modules","malachite","current"),ui);
             Check(real.ModelName=="Qwen3.5-4B-Q4_K_M" && real.ModelStatus.StartsWith("Файлы найдены"),"Real installed Qwen resolution");
-            Check(real.KimodoStatus.StartsWith("Файлы Kimodo найдены"),"Real installed Kimodo files");
             File.WriteAllText(Path.Combine(output,"installed-components.txt"),real.ToString());
         }
         vm.Dispose();

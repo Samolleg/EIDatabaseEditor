@@ -12,13 +12,13 @@ internal static class AnimationRootHeightRegression
         if (!condition) throw new Exception("ANM ROOT HEIGHT: " + message);
     }
 
-    internal static int Run(string database, string kimodoOutput)
+    internal static int Run(string database)
     {
-        Verify(database, kimodoOutput).GetAwaiter().GetResult();
+        Verify(database).GetAwaiter().GetResult();
         return 0;
     }
 
-    private static async Task Verify(string database, string kimodoOutput)
+    private static async Task Verify(string database)
     {
         var records = DatabaseDocument.Open(database).Databases.SelectMany(group => group.Tables)
             .SelectMany(table => table.Records.Select(row => ModelRecord.Capture(table.Key, row))).ToArray();
@@ -31,13 +31,11 @@ internal static class AnimationRootHeightRegression
         Vector3 anchor = reference.Tracks["hp"].Position(0);
         Check(anchor.Z > .5f && bad.Tracks["hp"].Position(0).Z == 0,
             "input clips no longer reproduce the reported initial heights");
-        Check(await AnimationEditorDialog.SuggestKimodoReference(source, "twerk1") == "cidle09" &&
-              await AnimationEditorDialog.SuggestKimodoReference(source, "cidle09") == "cidle09",
+        Check(await AnimationEditorDialog.SuggestHeightReference(source, "twerk1") == "cidle09" &&
+              await AnimationEditorDialog.SuggestHeightReference(source, "cidle09") == "cidle09",
             "bad current clip did not suggest a same-model grounded reference");
 
-        int frames = checked((int)(new FileInfo(Path.Combine(kimodoOutput, "root_positions.f32")).Length / 12));
-        var draft = KimodoDraft.ReadSoma30(kimodoOutput, frames);
-        await KimodoLoopRegression.Verify(source, draft);
+        int frames = reference.FrameCount;
         var editor = new FigureAnimationEditor(source);
         byte[] original = source.ExportBytes();
         await editor.CreateAnimationAsync("cidle09", "height_copy", frames, false);
@@ -51,24 +49,7 @@ internal static class AnimationRootHeightRegression
         Check(created.Tracks["hp"].Rotations.All(rotation => Math.Abs(Quaternion.Dot(rotation, Quaternion.Identity)) > .99999f),
             "bind-pose creation did not reset root rotation");
 
-        await editor.ApplyKimodoDraftAsync("height_draft", draft);
-        var imported = await editor.Preview().LoadAsync("height_draft");
-        var root = imported.Tracks["hp"];
-        Check(Vector3.Distance(root.Position(0), anchor) < .00001f,
-            "Kimodo import lost the model-specific reference position");
-        float leg = source.Bones["ll1"].Length() + source.Bones["ll2"].Length() + source.Bones["ll3"].Length();
-        float scale = leg / (.0844f + .4322f + .4216f);
-        for (int frame = 0; frame < frames; frame++)
-        {
-            Vector3 motion = draft.RootPositions[frame] - draft.RootPositions[0];
-            Vector3 expected = anchor + new Vector3(motion.X, -motion.Z, motion.Y) * scale;
-            Check(Vector3.Distance(root.Position(frame), expected) < .00002f,
-                $"Kimodo axis, scale, or vertical motion differs at frame {frame}");
-        }
-        Check(root.Positions.Min(position => position.Z) < anchor.Z - .03f &&
-              root.Positions.Min(position => position.Z) > .85f,
-            "intentional downward motion was lost or the character remains submerged");
-
+        var root = created.Tracks["hp"];
         var repair = new FigureAnimationEditor(source);
         float shift = await repair.AlignRootHeightAsync("twerk1", "cidle09");
         var repaired = await repair.Preview().LoadAsync("twerk1");
@@ -113,19 +94,8 @@ internal static class AnimationRootHeightRegression
         repair.Redo();
         Check(repair.ExportBytes().AsSpan().SequenceEqual(repairedBytes), "reanchoring Redo changed repaired ANM");
 
-        var vertical = new KimodoDraft(3,
-            [new(0, 1, 0), new(0, 1.1f, 0), new(0, .9f, 0)],
-            Enumerable.Range(0, 3).Select(_ => Enumerable.Repeat(Quaternion.Identity, KimodoDraft.SomaJoints).ToArray()).ToArray());
-        var verticalEditor = new FigureAnimationEditor(source);
-        await verticalEditor.CreateAnimationAsync("cidle09", "height_updown", 3, true);
-        await verticalEditor.ApplyKimodoDraftAsync("height_updown", vertical);
-        var verticalRoot = (await verticalEditor.Preview().LoadAsync("height_updown")).Tracks["hp"];
-        Check(Math.Abs(verticalRoot.Position(1).Z - (anchor.Z + .1f * scale)) < .00002f &&
-              Math.Abs(verticalRoot.Position(2).Z - (anchor.Z - .1f * scale)) < .00002f,
-            "upward or downward displacement was flattened");
-
         byte[] saved = editor.ExportBytes();
-        AnimationSaveRegression.CheckNested(saved, "height_draft", imported.Tracks.Count);
+        AnimationSaveRegression.CheckNested(saved, "height_draft", created.Tracks.Count);
         var before = ResArchiveDocument.Parse("before", original);
         var after = ResArchiveDocument.Parse("after", saved);
         foreach (var entry in before.Entries)
@@ -184,6 +154,6 @@ internal static class AnimationRootHeightRegression
             }
         }
         finally { Directory.Delete(temp, recursive: true); }
-        Console.WriteLine($"ANM ROOT HEIGHT PASS: unhufe anchor Z={anchor.Z:F6}, Kimodo minimum Z={root.Positions.Min(position => position.Z):F6}, twerk1 range {repairedRoot.Positions.Min(position => position.Z):F6}..{repairedRoot.Positions.Max(position => position.Z):F6}, Undo/Redo, standalone ANM/RES readback");
+        Console.WriteLine($"ANM ROOT HEIGHT PASS: unhufe anchor Z={anchor.Z:F6}, root minimum Z={root.Positions.Min(position => position.Z):F6}, twerk1 range {repairedRoot.Positions.Min(position => position.Z):F6}..{repairedRoot.Positions.Max(position => position.Z):F6}, Undo/Redo, standalone ANM/RES readback");
     }
 }
