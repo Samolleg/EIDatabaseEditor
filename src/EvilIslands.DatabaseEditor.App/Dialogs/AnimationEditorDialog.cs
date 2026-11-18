@@ -18,7 +18,6 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
     private readonly UnitModelPreviewView _preview = new() { AllowAnimationEditing = false };
     private readonly TextBox _first = Number(), _last = Number(), _length = Number();
     private readonly TextBlock _message = Paragraph("");
-    private readonly TextBlock _generationSummary = Paragraph("");
     private readonly WrapPanel _actions = new();
     private byte[] _exported;
     private bool _busy;
@@ -140,8 +139,6 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         InitializeMotion(sidebar);
         InitializeCatalog(sidebar);
         InitializeStoryboard(sidebar);
-        InitializeKimodo(sidebar);
-        sidebar.Children.Add(_generationSummary);
         Compact(sidebar); Compact(_playback); _mapping.Height=90;
         Loaded += async (_, _) => await Run(Refresh);
         Closing += (_, e) =>
@@ -191,16 +188,8 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
         await RefreshMotion();
         RefreshStoryboard();
     }
-    internal async Task RefreshAfterHistory()
-    {
-        if (!_editor.Preview().Names.Contains(_name, StringComparer.OrdinalIgnoreCase))
-        {
-            string fallback = _workingClips.FirstOrDefault(name => _editor.Preview().Names.Contains(name, StringComparer.OrdinalIgnoreCase))
-                ?? throw new InvalidDataException("История не содержит доступного клипа для просмотра.");
-            await SwitchWorkingClip(fallback);
-        }
-        else await Refresh();
-    }
+    internal Task RefreshAfterHistory() => Refresh();
+
     internal static string[] EditableParts(UnitModelScene scene, FigureAnimationClip clip)
     {
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -255,9 +244,9 @@ internal sealed partial class AnimationEditorDialog : LuaToolWindow
     {
         if (_busy) return;
         _editor.MotionLimits = _limits.IsChecked == true; _editor.MotionPins = _pins;
-        _busy = true; _workingClipPicker.IsEnabled = false; _actions.IsEnabled = _poseActions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = false;
+        _busy = true; _actions.IsEnabled = _poseActions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = false;
         try { if (_storySidebar is not null) _storySidebar.IsEnabled = false; _storyTools.IsEnabled = false; _story.IsEnabled = false; _preview.PauseAnimation(); await action(); }
         catch (Exception ex) { _message.Text = ex.Message; }
-        finally { if (_storySidebar is not null) _storySidebar.IsEnabled = true; _storyTools.IsEnabled = _story.IsEnabled = true; _busy = false; _workingClipPicker.IsEnabled = true; _actions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = true; _poseActions.IsEnabled = !_preview.ShowingOriginal; }
+        finally { if (_storySidebar is not null) _storySidebar.IsEnabled = true; _storyTools.IsEnabled = _story.IsEnabled = true; _busy = false; _actions.IsEnabled = _motionTools.IsEnabled = _authoring.IsEnabled = _playback.IsEnabled = _timeline.IsEnabled = _preview.IsEnabled = true; _poseActions.IsEnabled = !_preview.ShowingOriginal; }
     }
 }

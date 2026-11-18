@@ -37,6 +37,21 @@ internal sealed partial class AnimationEditorDialog
     private sealed class CatalogWindow():LuaToolWindow("Новая анимация") {public void Add(UIElement panel)=>Body.Children.Add(panel);}
     private sealed class RootHeightWindow():LuaToolWindow("Высота таза анимации") {public void Add(UIElement panel)=>Body.Children.Add(panel);}
 
+    internal static async Task<string> SuggestHeightReference(FigureAnimationSet animations, string current)
+    {
+        string? idle = animations.Names.FirstOrDefault(name => name.Equals("cidle09", StringComparison.OrdinalIgnoreCase));
+        if (idle is null || idle.Equals(current, StringComparison.OrdinalIgnoreCase)) return current;
+        var currentClip = await animations.LoadAsync(current);
+        var idleClip = await animations.LoadAsync(idle);
+        if (!idleClip.Tracks.TryGetValue("hp", out var idleRoot) || idleRoot.Positions.Length == 0) return current;
+        if (!currentClip.Tracks.TryGetValue("hp", out var currentRoot) || currentRoot.Positions.Length == 0) return idle;
+        if (!animations.Bones.TryGetValue("ll1", out var upper) ||
+            !animations.Bones.TryGetValue("ll2", out var lower) ||
+            !animations.Bones.TryGetValue("ll3", out var foot)) return current;
+        float leg = upper.Length() + lower.Length() + foot.Length();
+        return leg > 0 && currentRoot.Position(0).Z < idleRoot.Position(0).Z - leg * .5f ? idle : current;
+    }
+
     private async Task AlignRootHeight()
     {
         var animations=_editor.Preview();
@@ -45,7 +60,7 @@ internal sealed partial class AnimationEditorDialog
             throw new ArgumentException("У этой анимации нет дорожки положения таза hp.");
         var choices=animations.Names.Where(name=>!name.Equals(_name,StringComparison.OrdinalIgnoreCase)).ToArray();
         if(choices.Length==0)throw new ArgumentException("Для этой модели нет другой опорной анимации.");
-        string suggested=await SuggestKimodoReference(animations,_name);
+        string suggested=await SuggestHeightReference(animations,_name);
         if(suggested.Equals(_name,StringComparison.OrdinalIgnoreCase))
             suggested=choices.FirstOrDefault(name=>name.Equals("cidle09",StringComparison.OrdinalIgnoreCase))??choices[0];
         var dialog=new RootHeightWindow{Owner=this,Width=560,Height=340};

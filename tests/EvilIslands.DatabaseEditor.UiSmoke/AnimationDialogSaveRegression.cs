@@ -27,7 +27,8 @@ internal static class AnimationDialogSaveRegression
             else File.WriteAllBytes(path, original);
             var target = new AnimationSaveTarget(path, nested ? "model.anm" : null, original);
             var set = new FigureAnimationSet(scene.Model, original, source.Parents, source.Bones, source.BindPositions) { SaveTarget = target };
-            var temporaryScene = scene with { Animations = set };
+            // This fixture writes only the temporary ANM. The installed ADB belongs to the input scene.
+            var temporaryScene = scene with { Animations = set, AnimationDatabase = null };
             var parent = new AnimationEditorDialog(temporaryScene, template);
             await parent.WorkingEditor.CreateAnimationAsync(template, "parentedit", 3, false);
             var child = new AnimationEditorDialog(temporaryScene with { Animations = parent.WorkingEditor.Preview() }, template);

@@ -99,8 +99,7 @@ internal static class AnimationNestedLayoutRegression
         }
         finally { Directory.Delete(directory, true); }
 
-        await KimodoDraftRegression.Verify(scene, template);
-        Console.WriteLine("ANM LAYOUT PASS: create, copy, Kimodo, flat resave, other clips, standalone and RES");
+        Console.WriteLine("ANM LAYOUT PASS: create, copy, flat resave, other clips, standalone and RES");
     }
 
     private static byte[] EmptyArchive()

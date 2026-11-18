@@ -46,7 +46,7 @@ function Resolve-ContainedFile([string]$Root, [string]$Relative) {
 function Assert-Closed {
     foreach ($process in @(Get-Process -Name EvilIslands.DatabaseEditor,kmd-generate -ErrorAction SilentlyContinue)) {
         if (-not $process.Path -or $process.Path.StartsWith($destination + '\', [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'Закройте редактор и генератор Kimodo из builds\dbeditor\current перед обновлением.'
+            throw 'Закройте редактор из builds\dbeditor\current перед обновлением.'
         }
     }
 }
@@ -101,11 +101,11 @@ try {
             [pscustomobject]@{ Path = $_.FullName.Substring($temporary.Length + 1); Length = $_.Length; SHA256 = (Get-FileHash -LiteralPath $_.FullName).Hash }
         })
         ConvertTo-Json -InputObject $entries -Depth 4 | Set-Content -LiteralPath (Join-Path $temporary $manifestName) -Encoding utf8
-        Copy-Item -LiteralPath (Join-Path $workspaceRoot 'builds/dbeditor/current/Kimodo') -Destination (Join-Path $temporary 'Kimodo') -Recurse
         $PackagePath = $temporary
     }
     $source = (Resolve-Path -LiteralPath $PackagePath).Path
     if ($source.Equals($destination, [StringComparison]::OrdinalIgnoreCase)) { throw 'Источник и назначение совпадают.' }
+    if (Test-Path -LiteralPath (Join-Path $source 'Kimodo')) { throw 'В исходном комплекте присутствует удалённый генератор.' }
     $entries = Get-Content -LiteralPath (Join-Path $source $manifestName) -Raw -Encoding UTF8 | ConvertFrom-Json
     if (-not ($entries.Path -contains 'EvilIslands.DatabaseEditor.exe')) { throw 'В комплекте нет редактора.' }
     $old = @()
@@ -114,35 +114,17 @@ try {
     }
     # Canonical separators prevent unchanged Windows paths being deleted as obsolete.
     foreach ($entry in @($entries) + @($old)) { $entry.Path = $entry.Path.Replace('/', '\') }
-    # Kimodo has its own manifest. Keep it separate so host-only updates never
-    # remove the installed generator, weights or user files.
-    $hostEntries = @($entries)
-    $nativeManifest = 'Kimodo\install-manifest.json'
-    $nativeSource = Resolve-ContainedFile $source $nativeManifest
-    $nativeTarget = Resolve-ContainedFile $destination $nativeManifest
-    $nativeManifestHash = $null
-    if (Test-Path -LiteralPath $nativeSource) {
-        $native = Get-Content -LiteralPath $nativeSource -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ($native.format -ne 'kimodo-editor-install-v1' -or -not $native.files -or
-            -not ($native.files.path -contains 'bin/kmd-generate.exe')) { throw 'Неполный манифест Kimodo.' }
-        $nativeOld = @()
-        if (Test-Path -LiteralPath $nativeTarget) {
-            $previousNative = Get-Content -LiteralPath $nativeTarget -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($previousNative.format -ne 'kimodo-editor-install-v1') { throw 'Неизвестный установленный манифест Kimodo.' }
-            $nativeOld = @($previousNative.files)
-            $nativeManifestHash = (Get-FileHash -LiteralPath $nativeTarget).Hash
+    # Migrate the old separately managed generator. Preserve unlisted user files.
+    $legacyManifest = 'Kimodo\install-manifest.json'
+    $legacyPath = Resolve-ContainedFile $destination $legacyManifest
+    if (Test-Path -LiteralPath $legacyPath) {
+        $legacy = Get-Content -Raw -Encoding utf8 -LiteralPath $legacyPath | ConvertFrom-Json
+        if ($legacy.format -ne 'kimodo-editor-install-v1') { throw 'Неизвестный формат старого манифеста генератора.' }
+        foreach ($item in $legacy.files) {
+            $null = Resolve-ContainedFile (Join-Path $destination 'Kimodo') $item.path
+            $old += [pscustomobject]@{ Path = 'Kimodo\' + $item.path.Replace('/', '\'); SHA256 = $item.sha256 }
         }
-        foreach ($file in $native.files) {
-            # Validate containment inside Kimodo itself, not just the package.
-            $null = Resolve-ContainedFile (Join-Path $source 'Kimodo') $file.path
-            $entries += [pscustomobject]@{ Path = 'Kimodo\' + $file.path.Replace('/', '\'); Length = $file.bytes; SHA256 = $file.sha256 }
-        }
-        foreach ($file in $nativeOld) {
-            $null = Resolve-ContainedFile (Join-Path $destination 'Kimodo') $file.path
-            $old += [pscustomobject]@{ Path = 'Kimodo\' + $file.path.Replace('/', '\'); Length = $file.bytes; SHA256 = $file.sha256 }
-        }
-        $entries += [pscustomobject]@{ Path = $nativeManifest; Length = (Get-Item -LiteralPath $nativeSource).Length; SHA256 = (Get-FileHash -LiteralPath $nativeSource).Hash }
-        if ($nativeManifestHash) { $old += [pscustomobject]@{ Path = $nativeManifest; SHA256 = $nativeManifestHash } }
+        $old += [pscustomobject]@{ Path = $legacyManifest; SHA256 = (Get-FileHash -LiteralPath $legacyPath).Hash }
     }
     $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $snapshots = @{}
@@ -164,7 +146,7 @@ try {
         $snapshots[$entry.Path] = $hash
         if ($hash -ne $entry.SHA256) { $changes += $entry }
     }
-    $obsolete = @($old | Where-Object { $_.Path -notlike 'Kimodo\*' -and $_.Path -notin $hostEntries.Path })
+    $obsolete = @($old | Where-Object { $_.Path -notin $entries.Path })
     foreach ($entry in $obsolete) {
         $file = Resolve-ContainedFile $destination $entry.Path
         if ((Test-Path -LiteralPath $file) -and (Get-FileHash -LiteralPath $file).Hash -ne $entry.SHA256) { throw "Старый файл изменён: $file" }

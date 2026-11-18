@@ -12,10 +12,32 @@ namespace EvilIslands.DatabaseEditor.UiSmoke;
 internal static class AnimationRootSpaceRegression
 {
     static void Check(bool value,string message) { if (!value) throw new Exception("ROOT SPACE: " + message); }
+    private static IReadOnlyList<FigureMesh> FootGeometry(FigureAnimationSet set, IReadOnlyList<FigureMesh> meshes)
+    {
+        string Foot(string name)
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            while (seen.Add(name))
+            {
+                if (name.Equals("ll3", StringComparison.OrdinalIgnoreCase)) return "ll3";
+                if (name.Equals("rl3", StringComparison.OrdinalIgnoreCase)) return "rl3";
+                if (!set.Parents.TryGetValue(name, out var parent) || parent.Length == 0) break;
+                name = parent;
+            }
+            return "";
+        }
+        var feet = meshes.Where(m => m.Positions.Length > 0 && Foot(m.Name).Length > 0).ToArray();
+        if (!feet.Any(m => Foot(m.Name) == "ll3") || !feet.Any(m => Foot(m.Name) == "rl3"))
+            throw new InvalidDataException("Для автоматической высоты нужна геометрия обеих стоп модели, включая надетую броню. Проверьте комплект модели и экипировки.");
+        if (feet.Any(m => !set.BindPositions.ContainsKey(m.Name) || !set.Bones.ContainsKey(m.Name)))
+            throw new InvalidDataException("Для геометрии стоп отсутствует привязка к скелету модели.");
+        return feet;
+    }
+
     static float Sole(UnitModelScene scene, FigureAnimationSet set, FigureAnimationClip clip, int frame)
     {
         var pose=set.Pose(clip,frame); float z=float.PositiveInfinity;
-        foreach(var mesh in new FigureAnimationEditor(set).KimodoFootGeometry(scene.Meshes))
+        foreach(var mesh in FootGeometry(set, scene.Meshes))
         {
             var node=pose[mesh.Name];var track=clip.Tracks.GetValueOrDefault(mesh.Name);
             foreach(int v in mesh.Indices.Distinct())

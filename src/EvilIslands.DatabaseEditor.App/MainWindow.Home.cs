@@ -38,15 +38,13 @@ public partial class MainWindow
             var uiAssembly = module is null ? null : System.Runtime.Loader.AssemblyLoadContext
                 .GetLoadContext(module.Instance.GetType().Assembly)?.Assemblies
                 .FirstOrDefault(a => a.GetName().Name == "Malachite.UI.Wpf");
-            var paths = AnimationEditorDialog.KimodoPaths;
-            var info = await Task.Run(() => HomeComponentInfo.Read(moduleDirectory, uiAssembly, paths));
+            var info = await Task.Run(() => HomeComponentInfo.Read(moduleDirectory, uiAssembly));
             HomeMalachiteVersion.Text = info.ModuleVersion;
             HomeMalachiteStatus.Text = module is null
                 ? (_modules?.Errors.Count > 0 ? "Ошибка загрузки — см. подробности" : "Модуль не установлен")
                 : "Модуль загружен · квесты и скрипты MOB";
             HomeModelName.Text = info.ModelName;
             HomeModelStatus.Text = info.ModelStatus;
-            HomeKimodoStatus.Text = info.KimodoStatus;
             HomeComponentDetails.Text = "Редактор: " + revision +
                 "\nПапка редактора: " + AppContext.BaseDirectory + "\n\n" + info.Details +
                 (_modules?.Errors.Count > 0 ? "\n\nОшибки модулей:\n" + string.Join("\n", _modules.Errors) : "");
@@ -56,10 +54,9 @@ public partial class MainWindow
 }
 
 internal sealed record HomeComponentInfo(string ModuleVersion, string ModelName, string ModelStatus,
-    string KimodoStatus, string Details)
+    string Details)
 {
-    internal static HomeComponentInfo Read(string? moduleDirectory, Assembly? uiAssembly,
-        (string Executable, string Motion, string Text) kimodo)
+    internal static HomeComponentInfo Read(string? moduleDirectory, Assembly? uiAssembly)
     {
         var details = new StringBuilder();
         string version = "Не загружен";
@@ -124,13 +121,6 @@ internal sealed record HomeComponentInfo(string ModuleVersion, string ModelName,
             modelStatus = "Подробности ошибки ниже.";
             details.AppendLine("Модель: " + ex.GetBaseException().Message);
         }
-        bool kimodoFound = File.Exists(kimodo.Executable) && File.Exists(kimodo.Motion) &&
-            (File.Exists(kimodo.Text) || Directory.Exists(kimodo.Text));
-        details.AppendLine("\nKimodo: " + kimodo.Executable);
-        details.AppendLine("Модель движения: " + kimodo.Motion);
-        details.AppendLine("Текстовая модель: " + kimodo.Text);
-        details.AppendLine("Проверка наличия файлов не запускает генератор.");
-        return new(version, modelName, modelStatus,
-            kimodoFound ? "Файлы Kimodo найдены · генерация движения по тексту" : "Kimodo: комплект не найден полностью. Покадровое редактирование доступно.", details.ToString());
+        return new(version, modelName, modelStatus, details.ToString());
     }
 }

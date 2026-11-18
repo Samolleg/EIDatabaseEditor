@@ -173,10 +173,6 @@ internal sealed partial class AnimationEditorDialog
         var settings = await restored.LoadProjectAsync(project, _scene.Model, target.Clip);
         _editor = restored; _name = target.Clip; _scene = _scene with { Animations = restored.SourceSet };
         _originalClip = null;
-        _workingClips.Clear(); _workingClips.Add(_name); _generatedBaselines.Clear(); _workingSettings.Clear(); _workingSavedProjects.Clear();
-        _settingWorkingClip = true;
-        try { _workingClipPicker.Items.Refresh(); _workingClipPicker.SelectedItem = _name; }
-        finally { _settingWorkingClip = false; }
         _saveBaseline = restored.ProjectMayWriteSource ? current.SaveTarget?.OriginalBytes.ToArray() : null;
         _exported = current.ExportBytes();
         Title = "Редактирование анимации — " + _name;
