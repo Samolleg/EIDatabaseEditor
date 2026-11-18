@@ -1,3 +1,5 @@
+#requires -Version 7.6.10
+#requires -PSEdition Core
 # A receipt skips MSBuild only after the reviewed-source check has passed.
 function Get-PakBuildHash([string]$Path) {
     $stream=[IO.File]::OpenRead($Path);$sha=[Security.Cryptography.SHA256]::Create()

@@ -12,7 +12,7 @@
     <Content Include="$(EiWorkspace)\deps\zstd\v1.5.7\lib\common\xxhash.h" Link="third-party\PAK\xxhash.h" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="BuildNativePakReader" BeforeTargets="PrepareForBuild" Condition="'$(MSBuildProjectName)' == 'EvilIslands.DatabaseEditor.Core'">
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)tools\Build-PakReader.ps1&quot;" />
+    <Exec Command="&quot;$(USERPROFILE)\AppData\Local\Programs\PowerShell\7.6.10\pwsh.exe&quot; -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)tools\Build-PakReader.ps1&quot;" />
   </Target>
   <Target Name="VerifyPakDependency" BeforeTargets="PrepareForBuild">
     <ReadLinesFromFile File="$(EiWorkspace)\builds\rebuild64\current\SHA256SUMS"><Output TaskParameter="Lines" ItemName="PakManifestLine" /></ReadLinesFromFile>

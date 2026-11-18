@@ -1,3 +1,5 @@
+#requires -Version 7.6.10
+#requires -PSEdition Core
 param([Parameter(Mandatory=$true)][string]$FixtureRoot)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'pak-build-cache.ps1')

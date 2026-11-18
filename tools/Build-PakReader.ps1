@@ -1,5 +1,6 @@
+#requires -Version 7.6.10
+#requires -PSEdition Core
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility/Microsoft.PowerShell.Utility.psd1')
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $workspaceRoot = $projectRoot
 while (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'RULES.md'))) {
@@ -62,7 +63,7 @@ $target=if([IO.File]::Exists($receipt)){'Rebuild'}else{'Build'}
 $previousPdbEndpoint = $env:_MSPDBSRV_ENDPOINT_
 try {
     $env:_MSPDBSRV_ENDPOINT_ = 'DbPak-' + [guid]::NewGuid().ToString('N')
-    & $msbuild (Join-Path $projectRoot 'native/PakReader.vcxproj') /nologo /m:1 /v:minimal /p:Configuration=Release /p:Platform=x64 /nr:false /p:PreferredToolArchitecture=x64 "/t:$target" "/p:VCToolsVersion=$vcVersion" "/p:WindowsTargetPlatformVersion=$sdkVersion" "/p:EiWorkspace=$workspaceRoot"
+    & (Join-Path $PSScriptRoot 'invoke-build.ps1') $msbuild (Join-Path $projectRoot 'native/PakReader.vcxproj') /nologo /m:1 /v:minimal /p:Configuration=Release /p:Platform=x64 /nr:false /p:PreferredToolArchitecture=x64 "/t:$target" "/p:VCToolsVersion=$vcVersion" "/p:WindowsTargetPlatformVersion=$sdkVersion" "/p:EiWorkspace=$workspaceRoot"
     if ($LASTEXITCODE -ne 0) { throw "PAK reader build failed: $LASTEXITCODE" }
 } finally { $env:_MSPDBSRV_ENDPOINT_ = $previousPdbEndpoint }
 

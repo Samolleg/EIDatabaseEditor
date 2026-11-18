@@ -1,3 +1,5 @@
+#requires -Version 7.6.10
+#requires -PSEdition Core
 param(
     [string]$PackagePath,
     [string]$ModulePackagePath
@@ -70,7 +72,7 @@ try {
         }
         $temporary = Join-Path $taskTemporary ('database-editor-current-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $temporary | Out-Null
-        & dotnet publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -o $temporary
+        & (Join-Path $PSScriptRoot 'invoke-build.ps1') dotnet.exe publish (Join-Path $projectRoot 'src\EvilIslands.DatabaseEditor.App') -c Release --no-restore -o $temporary
         if ($LASTEXITCODE -ne 0) { throw "Сборка не завершена: $LASTEXITCODE" }
         $moduleTarget = Join-Path $temporary 'Modules\malachite\current'
         New-Item -ItemType Directory -Path $moduleTarget -Force | Out-Null

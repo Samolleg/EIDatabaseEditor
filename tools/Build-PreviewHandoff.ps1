@@ -1,3 +1,5 @@
+#requires -Version 7.6.10
+#requires -PSEdition Core
 param(
     [string]$OutputDirectory
 )
@@ -72,7 +74,7 @@ $publishRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
 $publishPath = Join-Path $publishRoot 'publish'
 New-Item -ItemType Directory -Path $publishPath | Out-Null
 try {
-    & dotnet publish $appProject `
+    & (Join-Path $PSScriptRoot 'invoke-build.ps1') dotnet.exe publish $appProject `
         -c Release `
         -r $runtimeIdentifier `
         --self-contained true `
