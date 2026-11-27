@@ -375,7 +375,14 @@ internal static partial class LegacySchemaCatalog
         }
         else if (table == new TableKey("Units", 2))
         {
-            ReplaceEnum(fields, 5, "Ходьба", "Левитация", "Неподвижный", "Полёт");
+            Rename(fields, 5, "Тип движения");
+            ReplaceEnum(fields, 5, new Dictionary<int, string>
+            {
+                [0] = "Наземный (по умолчанию)",
+                [1] = "Наземный",
+                [2] = "Парящий",
+                [3] = "Летающий",
+            });
             ReplaceKind(fields, 47, DatabaseValueKind.Int32);
             ReplaceKind(fields, 48, DatabaseValueKind.Int32);
             ReplaceKind(fields, 49, DatabaseValueKind.Int32);
